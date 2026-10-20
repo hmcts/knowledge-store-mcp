@@ -87,17 +87,20 @@ _REPORT = "src/main/java/com/example/reporting/"
 _LIB = "src/main/java/com/example/lib/"
 
 # (repo, local id, label, source file, line, community, kind). The node id is
-# `<repo>::<local id>`, the namespacing a merged graph carries.
-NODES: tuple[tuple[str, str, str, str, int, int, str], ...] = (
+# `<repo>::<local id>`, the namespacing a merged graph carries. Two are traps
+# (DESIGN.md 3.4): a kind in its legacy form, and a label that is not a string.
+NODES: tuple[tuple[str, str, str | int, str, int, int, str], ...] = (
     ("accounts-web", "AccountPage", "AccountPage", "src/app/account/account-page.component.ts", 8, 0, ""),
     ("accounts-web", "PaymentForm", "PaymentForm", "src/app/payment/payment-form.component.ts", 15, 0, ""),
     ("accounts-web", "feature:pay", "Pay an outstanding balance", "features/pay.feature", 1, 0, "feature"),
     ("accounts-web", "scenario:pay-saved-card", "Pay with a saved card", "features/pay.feature", 6, 0, "scenario"),
+    ("accounts-web", "scenario:pay-new-card", "Pay with a new card", "features/pay.feature", 12, 0, "gherkin_scenario"),
     ("audit-service", "AuditTrail", "AuditTrail", _AUDIT + "AuditTrail.java", 9, 1, ""),
     ("audit-service", "AuditClient", "AuditClient", _AUDIT + "AuditClient.java", 4, 1, ""),
     ("audit-service", "AuditExporter", "AuditExporter", _AUDIT + "AuditExporter.java", 18, 1, ""),
     ("chart-web", "chart:web", "web chart", "Chart.yaml", 1, 1, ""),
     ("chart-web", "template:deployment", "web deployment template", "templates/deployment.yaml", 1, 1, ""),
+    ("chart-web", "value:replicas", 3, "values.yaml", 4, 1, ""),
     ("gateway-service", "GatewayRouter", "GatewayRouter", "src/router.ts", 4, 0, ""),
     ("gateway-service", "PaymentsProxy", "PaymentsProxy", "src/payments-proxy.ts", 10, 0, ""),
     ("gateway-service", "RateLimiter", "RateLimiter", "src/rate-limiter.ts", 2, 0, ""),
@@ -134,6 +137,19 @@ NODES: tuple[tuple[str, str, str, str, int, int, str], ...] = (
 # A Java package-hierarchy node: no label, no source file, no url, no community
 # (library CLAUDE.md 6.4).
 STRUCTURAL_NODE = "ledger-service::com.example.ledger"
+
+# Two more copies of one node, listed after the first and disagreeing on its label.
+# The index keeps the copy first in (repo, file, kind, label, url, community) order:
+# "FormField", the middle one, so neither the first nor the last listed copy is
+# the answer (DESIGN.md 3.4).
+DUPLICATE_NODES = (
+    ("ui-components", "FormFieldComponent", "FormField", "src/form-field/form-field.component.ts", 4, 1, ""),
+    ("ui-components", "FormFieldComponent", "FormFieldComponent (legacy)", "src/form-field/form-field.component.ts", 4, 1, ""),
+)  # fmt: skip
+
+# The library's `kinds._ALIASES`, flattened: a legacy kind and the kind it is now.
+# Copied, not imported from the server, so the fixture stays independent of it.
+LEGACY_KINDS = {"gherkin_feature": "feature", "gherkin_scenario": "scenario", "jira_ticket": "ticket"}  # fmt: skip
 
 # (source, relation, target), as `<repo>::<local id>`. The first two are the
 # 2-cycle.
@@ -271,7 +287,7 @@ TICKET_DESCRIPTIONS_DATA: dict[str, dict] = {
 # manifest's deployments flag is null - unknown, not false.
 TELEMETRY_DATA = {
     "intent.repositories_without_reach": 0,
-    "source_urls.linked": 40,
+    "source_urls.linked": 42,
 }
 
 # --- Relationships -----------------------------------------------------------
@@ -404,7 +420,7 @@ def _prose_metadata(prose: Iterable[str]) -> dict:
 
 def graph_document() -> dict:
     nodes: list[dict] = []
-    for repo, local, label, path, line, community, kind in NODES:
+    for repo, local, label, path, line, community, kind in (*NODES, *DUPLICATE_NODES):
         node = {
             "id": f"{repo}::{local}",
             "label": label,
@@ -537,6 +553,31 @@ def _ticket_rows() -> list[tuple[str, str, str, int, int]]:
     return rows
 
 
+def _label(node: dict) -> str | None:
+    """`store_index._text`: a label that is not a string is stored as its text."""
+    return None if node.get("label") is None else str(node["label"])
+
+
+def _node_kind(node: dict) -> str:
+    raw: str = (node.get("metadata") or {}).get("kind", "")
+    return LEGACY_KINDS.get(raw, raw)
+
+
+def _survivor_key(node: dict) -> tuple:
+    """`store_index._fill`'s order for a repeated id; None sorts first, as NULL does.
+    Every fixture node has a url and every copy a community, so only the label
+    can be NULL here."""
+    label = _label(node)
+    return (
+        node["repo"],
+        node.get("source_file") or "",
+        _node_kind(node),
+        (0, "") if label is None else (1, label),
+        node.get("url") or "",
+        node.get("community") or 0,
+    )
+
+
 def _index_rows(graph: dict) -> dict[str, list[tuple]]:
     """Every final table's rows, keyed and ordered as `store_index._fill` orders
     them: each table sorted on its content, so keys never follow input order."""
@@ -550,7 +591,12 @@ def _index_rows(graph: dict) -> dict[str, list[tuple]]:
     file_k = {pair: k for k, pair in enumerate(files, 1)}
     relations = sorted({link["relation"] for link in graph["links"]})
     relation_k = {name: k for k, name in enumerate(relations, 1)}
-    ordered = sorted(nodes, key=lambda n: n["id"])
+    survivors: dict[str, dict] = {}
+    for n in nodes:
+        held = survivors.get(n["id"])
+        if held is None or _survivor_key(n) < _survivor_key(held):
+            survivors[n["id"]] = n
+    ordered = sorted(survivors.values(), key=lambda n: n["id"])
     node_k = {n["id"]: k for k, n in enumerate(ordered, 1)}
     return {
         "repos": [(repo_k[name], name) for name in repos],
@@ -560,8 +606,8 @@ def _index_rows(graph: dict) -> dict[str, list[tuple]]:
             (
                 node_k[n["id"]],
                 n["id"],
-                n.get("label"),
-                (n.get("metadata") or {}).get("kind", ""),
+                _label(n),
+                _node_kind(n),
                 file_k[(n["repo"], n.get("source_file") or "")],
                 n.get("url"),
                 n.get("community"),

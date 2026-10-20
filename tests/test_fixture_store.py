@@ -262,7 +262,7 @@ class IndexTest(FixtureStoreCase):
             db.execute(
                 "SELECT community, count(*) FROM nodes GROUP BY community ORDER BY community"
             ).fetchall(),
-            [(None, 1), (0, 19), (1, 21)],
+            [(None, 1), (0, 20), (1, 22)],
         )
         self.assertEqual(
             db.execute(
@@ -275,6 +275,40 @@ class IndexTest(FixtureStoreCase):
         self.assertEqual(
             [name for (name,) in db.execute("SELECT name FROM repos ORDER BY k")],
             TWELVE_REPOSITORIES,
+        )
+
+    def test_the_nodes_the_index_normalises(self):
+        """Catches: the fixture losing a node a fallback reader must build as the
+        index does - a legacy kind, a label that is not a string, or a repeated
+        id whose surviving copy is not the first listed. DESIGN.md 3.4."""
+        self.assertInDesign("`gherkin_scenario`", "`chart-web::value:replicas`", "`FormField`")
+        graph = _json(self.root, "graphify-out/graph.json.gz")
+        listed = [n for n in graph["nodes"] if n["id"] == "ui-components::FormFieldComponent"]
+        self.assertEqual(
+            [n["label"] for n in listed],
+            ["FormFieldComponent", "FormField", "FormFieldComponent (legacy)"],
+        )
+        by_id = {n["id"]: n for n in graph["nodes"]}
+        self.assertEqual(
+            by_id["accounts-web::scenario:pay-new-card"]["metadata"]["kind"], "gherkin_scenario"
+        )
+        self.assertEqual(by_id["chart-web::value:replicas"]["label"], 3)
+        db = self._connect(self.root)
+        rows = db.execute(
+            "SELECT id, label, kind FROM nodes WHERE id IN (?, ?, ?) ORDER BY id",
+            (
+                "accounts-web::scenario:pay-new-card",
+                "chart-web::value:replicas",
+                "ui-components::FormFieldComponent",
+            ),
+        ).fetchall()
+        self.assertEqual(
+            rows,
+            [
+                ("accounts-web::scenario:pay-new-card", "Pay with a new card", "scenario"),
+                ("chart-web::value:replicas", "3", ""),
+                ("ui-components::FormFieldComponent", "FormField", ""),
+            ],
         )
 
     def test_index_modes(self):
@@ -322,9 +356,10 @@ class TrapTest(FixtureStoreCase):
         its 2-cycle, a pinned URL, or a community summary. DESIGN.md section 3."""
         graph = _json(self.root, "graphify-out/graph.json.gz")
         nodes = {node["id"]: node for node in graph["nodes"]}
-        self.assertEqual(len(nodes), 41)
+        self.assertEqual(len(graph["nodes"]), 45)
+        self.assertEqual(len(nodes), 43)
         labelled = [n for n in nodes.values() if "label" in n]
-        self.assertEqual(len(labelled), 40)
+        self.assertEqual(len(labelled), 42)
         for node in labelled:
             self.assertRegex(
                 node["url"], r"^https://github\.com/example-org/[a-z-]+/blob/[0-9a-f]{40}/.+#L\d+$"

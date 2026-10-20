@@ -10,9 +10,9 @@ Every SQL statement is a constant with bound parameters. Search matches word
 prefixes: the caller's text is split into words by FTS5's own `unicode61`
 tokenizer, the one the index was built with, and each word becomes a quoted
 prefix term. So FTS syntax in the text (`NEAR`, `*`, `OR`, a column filter, an
-unbalanced quote) is only ever a word, never an operator. Without the index, the
-graph's labels go into an FTS5 table in memory and the same query runs there, so
-the two modes match and rank alike by construction rather than by imitation.
+unbalanced quote) is only ever a word, never an operator. Without the index,
+`graph.GraphReader` runs the same query over an FTS5 table of the graph's labels,
+so the two modes match and rank alike by construction rather than by imitation.
 """
 
 import re
@@ -21,13 +21,20 @@ from collections.abc import Callable
 from contextlib import closing
 from typing import Any
 
-from . import results
+from . import graph, results
+from .graph import TOKENIZER, Edge, GraphReader, as_node
 from .index import IndexHandle
 from .results import DEFAULT_MAX_RESPONSE_BYTES, Known
 from .store import Notice, Session, Store
 
 DEFAULT_SEARCH_LIMIT = 20
 MAX_DEPTH = 2
+# Search text is bounded before it is tokenized or searched: every word is a prefix
+# scan of the label index, so an unbounded query is unbounded work.
+MAX_SEARCH_BYTES = 1024
+MAX_SEARCH_WORDS = 32
+# A community id is an SQLite INTEGER; anything wider cannot be bound.
+INT64 = range(-(2**63), 2**63)
 
 # The three flags the manifest may record, each of which may be null (unknown).
 FLAGS = (("graph", "source_urls"), ("intent", "reach"), ("deployments", "present"))
@@ -61,51 +68,38 @@ def _count(value: object, what: str, allowed: str, ok: Callable[[int], bool]) ->
 
 # --- The search query ---------------------------------------------------------------
 
-# The tokenizer the index's `labels` table declares (index schema 1.0).
-_TOKENIZER = "unicode61"
 
+def _words(text: str) -> list[str]:
+    """`text` split and folded by FTS5's own `unicode61` tokenizer, in order.
 
-def _query(text: str) -> str | None:
-    """The FTS5 query for `text`: each distinct word, as `unicode61` splits and folds
-    it, quoted and starred, so every word must begin some word of the label. None
-    when `text` holds no word. SQLite tokenizes, not Python: its Unicode tables are
-    its own, and an imitation would disagree with the index on some characters."""
+    A fresh in-memory connection per call is deliberate: it costs about 0.13 ms,
+    and keeps no state between callers. Do not replace it with a Python tokenizer:
+    SQLite's Unicode tables are its own, and an imitation measurably disagrees
+    with the index on some characters (unassigned code points, newer case pairs).
+    """
     with closing(sqlite3.connect(":memory:")) as db:
-        db.execute(f"CREATE VIRTUAL TABLE words USING fts5(text, tokenize='{_TOKENIZER}')")
+        db.execute(f"CREATE VIRTUAL TABLE words USING fts5(text, tokenize='{TOKENIZER}')")
         db.execute("CREATE VIRTUAL TABLE terms USING fts5vocab(words, instance)")
         db.execute("INSERT INTO words(text) VALUES (?)", (text,))
-        terms = [term for (term,) in db.execute("SELECT term FROM terms ORDER BY offset")]
-    words = dict.fromkeys(terms)
-    if not words:
-        return None
-    return " ".join('"' + word.replace('"', '""') + '"*' for word in words)
+        return [term for (term,) in db.execute("SELECT term FROM terms ORDER BY offset")]
+
+
+def _query(words: list[str]) -> str:
+    """The FTS5 query for `words`: each distinct word quoted and starred, so every
+    word must begin some word of the label."""
+    return " ".join('"' + word.replace('"', '""') + '"*' for word in dict.fromkeys(words))
 
 
 # --- The two readers --------------------------------------------------------------
 
 # One node as every tool returns it.
 Node = dict[str, Any]
-# (direction from the asking node, relation, the other node's id)
-Edge = tuple[str, str, str]
 
+# The columns of `graph.Row`, in its order.
 _NODE_SELECT = (
-    "SELECT n.id, n.label, n.kind, r.name, f.path, n.url, n.community"
+    "SELECT n.id, n.label, r.name, n.kind, f.path, n.url, n.community"
     " FROM nodes n JOIN files f ON f.k = n.file JOIN repos r ON r.k = f.repo"
 )
-
-
-def _indexed_node(row: tuple) -> Node:
-    node_id, label, kind, repo, path, url, community = row
-    return {
-        "id": node_id,
-        "label": label,
-        "repo": repo,
-        "kind": kind,
-        # A structural node's file row has an empty path: it has no source file.
-        "file": path or None,
-        "url": url,
-        "community": community,
-    }
 
 
 class _Indexed:
@@ -118,7 +112,7 @@ class _Indexed:
 
     def node(self, node_id: str) -> Node | None:
         row = self._db.execute(_NODE_SELECT + " WHERE n.id = ?", (node_id,)).fetchone()
-        return _indexed_node(row) if row else None
+        return as_node(row) if row else None
 
     def edges(self, node_id: str, relation: str | None) -> list[Edge]:
         rows = self._db.execute(
@@ -137,13 +131,13 @@ class _Indexed:
 
     def members(self, community: int) -> list[Node]:
         rows = self._db.execute(_NODE_SELECT + " WHERE n.community = ? ORDER BY n.id", (community,))
-        return [_indexed_node(row) for row in rows]
+        return [as_node(row) for row in rows]
 
     def search(self, query: str, repo: str | None, kind: str | None) -> list[Node]:
         # The id tiebreak is load-bearing although the fixture cannot show it: there,
         # rowids follow id order, so SQLite's own order for a tie looks the same.
         rows = self._db.execute(
-            "SELECT n.id, n.label, n.kind, r.name, f.path, n.url, n.community"
+            "SELECT n.id, n.label, r.name, n.kind, f.path, n.url, n.community"
             " FROM labels JOIN nodes n ON n.k = labels.rowid"
             " JOIN files f ON f.k = n.file JOIN repos r ON r.k = f.repo"
             " WHERE labels MATCH ?1 AND (?2 IS NULL OR r.name = ?2)"
@@ -151,101 +145,16 @@ class _Indexed:
             " ORDER BY bm25(labels), n.id",
             (query, repo, kind),
         )
-        return [_indexed_node(row) for row in rows]
+        return [as_node(row) for row in rows]
 
 
-def _graph_node(raw: dict) -> Node:
-    metadata = raw.get("metadata")
-    kind = metadata.get("kind", "") if isinstance(metadata, dict) else ""
-    return {
-        "id": raw["id"],
-        "label": raw.get("label"),
-        "repo": raw.get("repo"),
-        "kind": kind or "",
-        "file": raw.get("source_file") or None,
-        "url": raw.get("url"),
-        "community": raw.get("community"),
-    }
-
-
-class _InMemory:
-    """The graph read whole, for a store whose index is absent or unusable. Built
-    once per loaded store."""
-
-    layer = "graph"
-
-    def __init__(self, graph: Any):
-        raw_nodes = graph.get("nodes") if isinstance(graph, dict) else None
-        raw_links = graph.get("links") if isinstance(graph, dict) else None
-        self._nodes: dict[str, Node] = {}
-        for raw in raw_nodes or []:
-            if isinstance(raw, dict) and isinstance(raw.get("id"), str):
-                self._nodes[raw["id"]] = _graph_node(raw)
-        self._ids = sorted(self._nodes)
-        # Each node's edges, both ways, once each: the index's edge key is unique.
-        edges: dict[str, set[Edge]] = {}
-        for link in raw_links or []:
-            if not isinstance(link, dict):
-                continue
-            source, relation, target = link.get("source"), link.get("relation"), link.get("target")
-            if source in self._nodes and target in self._nodes and isinstance(relation, str):
-                edges.setdefault(source, set()).add(("out", relation, target))
-                edges.setdefault(target, set()).add(("in", relation, source))
-        self._edges = {node_id: sorted(found) for node_id, found in edges.items()}
-        self._labels: sqlite3.Connection | None = None
-
-    def node(self, node_id: str) -> Node | None:
-        return self._nodes.get(node_id)
-
-    def edges(self, node_id: str, relation: str | None) -> list[Edge]:
-        found = self._edges.get(node_id, [])
-        return [edge for edge in found if relation is None or edge[1] == relation]
-
-    def members(self, community: int) -> list[Node]:
-        return [self._nodes[i] for i in self._ids if self._nodes[i]["community"] == community]
-
-    def search(self, query: str, repo: str | None, kind: str | None) -> list[Node]:
-        rows = self._label_index().execute(
-            "SELECT rowid, bm25(labels) FROM labels WHERE labels MATCH ?", (query,)
-        )
-        ranked = sorted((score, self._ids[rowid]) for rowid, score in rows)
-        found = [self._nodes[node_id] for _, node_id in ranked]
-        return [
-            node
-            for node in found
-            if (repo is None or node["repo"] == repo) and (kind is None or node["kind"] == kind)
-        ]
-
-    def _label_index(self) -> sqlite3.Connection:
-        """The labelled nodes in an FTS5 table in memory, as the index's `labels`
-        holds them, built on the first search. bm25 reads only the table's own
-        statistics, so the same labels rank the same here as in the index."""
-        if self._labels is None:
-            db = sqlite3.connect(":memory:")
-            db.execute(f"CREATE VIRTUAL TABLE labels USING fts5(label, tokenize='{_TOKENIZER}')")
-            db.executemany(
-                "INSERT INTO labels(rowid, label) VALUES (?, ?)",
-                (
-                    (k, self._nodes[node_id]["label"])
-                    for k, node_id in enumerate(self._ids)
-                    if isinstance(self._nodes[node_id]["label"], str)
-                ),
-            )
-            self._labels = db
-        return self._labels
-
-
-Reader = _Indexed | _InMemory
+Reader = _Indexed | GraphReader
 
 
 def _reader(store: Store) -> Reader:
     if isinstance(store.index, IndexHandle):
         return _Indexed(store.index.connection)
-    return _in_memory(store)
-
-
-def _in_memory(store: Store) -> _InMemory:
-    return store.memo("graph.in_memory", lambda: _InMemory(store.layer("graph")))
+    return graph.read(store)
 
 
 # --- Responses ----------------------------------------------------------------------
@@ -385,9 +294,15 @@ def search(
     are returned, paged under the cap; `matches` counts every node that matched.
     If the index's full-text table cannot be read, the graph answers and
     `fallback` says why."""
-    query = _query(_text(text, "search text"))
-    if query is None:
+    text = _text(text, "search text")
+    if len(text.encode("utf-8")) > MAX_SEARCH_BYTES:
+        raise ArgumentRefused(f"search text must be at most {MAX_SEARCH_BYTES} bytes")
+    words = _words(text)
+    if not words:
         raise ArgumentRefused("search text holds no word to match")
+    if len(words) > MAX_SEARCH_WORDS:
+        raise ArgumentRefused(f"search text must hold at most {MAX_SEARCH_WORDS} words")
+    query = _query(words)
     limit = _count(limit, "limit", "a whole number of 1 or more", lambda n: n >= 1)
     if kind is not None:
         kind = _text(kind, "kind")
@@ -418,7 +333,7 @@ def search(
         if not isinstance(reader, _Indexed):
             raise
         # A damaged full-text table: the graph still holds every label.
-        reader = _in_memory(store)
+        reader = graph.read(store)
         layers_used = [reader.layer]
         fields["fallback"] = f"the index could not be searched ({error}): graph read whole"
         found = reader.search(query, repo, kind)
@@ -520,7 +435,9 @@ def community(
 ) -> dict[str, Any]:
     """One community: its label and summary, and its member nodes by id, paged. The
     summary is store text, returned as data."""
-    community_id = _count(id, "community id", "a whole number", lambda n: True)
+    community_id = _count(
+        id, "community id", "a whole number from -2**63 to 2**63 - 1", lambda n: n in INT64
+    )
     store, notice = session.current()
     reader = _reader(store)
     members = reader.members(community_id)

@@ -65,18 +65,20 @@ re-sorted by (similarity descending, name ascending).
 
 ### 3.1 Nodes
 
-41 nodes. 40 carry a `label`, a `source_file`, a `source_location` and a pinned
-`url` of the form `https://github.com/example-org/<repo>/blob/<sha>/<path>#L<line>`.
-`source_urls.linked` in telemetry is therefore 40.
+45 node entries, 43 distinct ids: one id is listed three times (section 3.4). 42 ids
+carry a `label`, a `source_file`, a `source_location` and a pinned `url` of the
+form `https://github.com/example-org/<repo>/blob/<sha>/<path>#L<line>`.
+`source_urls.linked` in telemetry is therefore 42.
 
-The 41st is the structural node `ledger-service::com.example.ledger`: no `label`,
+The 43rd is the structural node `ledger-service::com.example.ledger`: no `label`,
 no `source_file`, no `url`, no `community` (library CLAUDE.md 6.4). A reader must
 not fail on it, and it is never a search hit: the index's FTS table holds only
 labelled nodes.
 
-Node ids are `<repo>::<local id>`. Two nodes carry kinds: `accounts-web::feature:pay`
-(`feature`) and `accounts-web::scenario:pay-saved-card` (`scenario`); every other
-node's kind is `""`.
+Node ids are `<repo>::<local id>`. Three nodes carry kinds:
+`accounts-web::feature:pay` (`feature`), `accounts-web::scenario:pay-saved-card`
+(`scenario`) and `accounts-web::scenario:pay-new-card` (`gherkin_scenario`, the
+legacy form of `scenario`: section 3.4). Every other node's kind is `""`.
 
 ### 3.2 Edges and the 2-cycle
 
@@ -98,11 +100,30 @@ summary (`knowledge/summaries/communities.json`):
 
 | Id | Label | Members |
 |---|---|---|
-| `0` | Payments and the ledger | 19: every node of accounts-web, gateway-service, ledger-service (bar the structural node), payment-apis and payments-api |
-| `1` | Platform and delivery | 21: every node of audit-service, chart-web, infra-modules, notifications-service, reporting-worker, shared-lib-java and ui-components |
+| `0` | Payments and the ledger | 20: every node of accounts-web, gateway-service, ledger-service (bar the structural node), payment-apis and payments-api |
+| `1` | Platform and delivery | 22: every node of audit-service, chart-web, infra-modules, notifications-service, reporting-worker, shared-lib-java and ui-components |
 
 The summaries file carries the library's `_metadata` block, which is not a
 community.
+
+### 3.4 Nodes the index normalises
+
+A reader without the index must build each node as the library's index builder
+does (`store_index._node_rows` and `_fill`), or the two modes disagree. Three
+nodes test that:
+
+- **A legacy kind.** `accounts-web::scenario:pay-new-card` ("Pay with a new card")
+  is written with `metadata.kind` `gherkin_scenario`. The index stores `scenario`
+  (`kinds.node_kind`), so a `kind="scenario"` search finds it beside
+  `pay-saved-card`.
+- **A label that is not a string.** `chart-web::value:replicas` has the label `3`,
+  a JSON number. The index stores the text `"3"`, and a search for `3` finds it.
+- **A repeated id.** `ui-components::FormFieldComponent` is listed three times,
+  otherwise identical: first with the label `FormFieldComponent`, then, after
+  every other node, with `FormField` and with `FormFieldComponent (legacy)`.
+  The index keeps the copy first in `(repo, file, kind, label, url, community)`
+  order, whatever order the graph listed them in: `FormField`, the middle one.
+  A reader keeping the first listed copy or the last keeps the wrong one.
 
 ## 4. Index
 
@@ -111,14 +132,15 @@ Built from the same graph and ticket layer with the schema in
 `1.0`, `meta.graph` is `graphify-out/graph.json.gz`, and `graph_sha256` and
 `file_tickets_sha256` are the 16-hex digests of those two files.
 
-- `repos` 12, `files` 40, `relations` 4, `nodes` 41, `edges` 36, `tickets` 5.
-- `nodes.community`: 19 rows `0`, 21 rows `1`, one `NULL`.
+- `repos` 12, `files` 41, `relations` 4, `nodes` 43, `edges` 36, `tickets` 5.
+- `nodes.community`: 20 rows `0`, 22 rows `1`, one `NULL`.
 - `tickets.landed`: `EX-201` is the only row with `0`.
-- FTS5 `labels` holds the 40 labels. `"RefundHandler"` matches one node,
+- FTS5 `labels` holds the 42 labels. `"RefundHandler"` matches one node,
   `payments-api::RefundHandler`.
 
 The index was checked against the library's own `store_index.build` over the same
-two inputs: every table's rows are identical, and so is the plain file.
+two inputs (`feat/query-index` at 3aea1e4, with the section 3.4 nodes): every
+table's rows are identical, and so is the plain file.
 
 ## 5. Relationships
 
@@ -284,7 +306,7 @@ gets the wrong one.
 
 ### 9.3 Flags
 
-- `layers.graph.source_urls`: `true` (`source_urls.linked` is 40).
+- `layers.graph.source_urls`: `true` (`source_urls.linked` is 42).
 - `layers.intent.reach`: `true`.
 - `layers.deployments.present`: `null`. Nothing recorded `deployments.pairs`, so
   it is unknown - not `false`, which would mean measured and absent.

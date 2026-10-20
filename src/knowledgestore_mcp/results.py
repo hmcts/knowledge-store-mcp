@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import graph
 from .index import IndexHandle
 from .locate import contained
 from .manifest import KNOWN_LAYERS
@@ -88,9 +89,7 @@ def repository_names(store: Store) -> list[str]:
     if isinstance(store.index, IndexHandle):
         rows = store.index.connection.execute("SELECT name FROM repos ORDER BY name")
         return [name for (name,) in rows]
-    graph = store.layer("graph")
-    nodes = graph.get("nodes", []) if isinstance(graph, dict) else []
-    return sorted({n["repo"] for n in nodes if isinstance(n, dict) and n.get("repo")})
+    return graph.read(store).repositories()
 
 
 def _join(names: list[str]) -> str:

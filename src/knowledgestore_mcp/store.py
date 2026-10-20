@@ -58,22 +58,35 @@ class Store:
         self.archive_state = archive_state
         self._layers: dict[str, Any] = {}
         self._memo: dict[str, Any] = {}
+        self._closers: list[Callable[[], None]] = []
 
     def layer(self, name: str) -> Any:
         """The parsed JSON of a file layer, or None when the manifest says it is
         absent. The path comes from the manifest and stays inside the store."""
         if name not in self._layers:
-            self._layers[name] = self._read(name)
+            self._layers[name] = self.read(name)
         return self._layers[name]
 
-    def memo(self, key: str, compute: Callable[[], Any]) -> Any:
+    def memo(
+        self,
+        key: str,
+        compute: Callable[[], Any],
+        *,
+        close: Callable[[Any], None] | None = None,
+    ) -> Any:
         """`compute()` once per loaded store: a reload builds a new `Store`, so
-        anything kept here is read again from the store that replaced it."""
+        anything kept here is read again from the store that replaced it. `close`,
+        if given, is called on the value when this store is closed."""
         if key not in self._memo:
-            self._memo[key] = compute()
+            value = compute()
+            self._memo[key] = value
+            if close is not None:
+                self._closers.append(lambda: close(value))
         return self._memo[key]
 
-    def _read(self, name: str) -> Any:
+    def read(self, name: str) -> Any:
+        """`layer(name)` without keeping it: for a layer turned into another form at
+        once, so the parsed JSON can be freed rather than held beside that form."""
         entry = self.manifest.layers.get(name)
         if not isinstance(entry, dict) or entry.get("present") is not True:
             return None
@@ -91,6 +104,9 @@ class Store:
     def close(self) -> None:
         if isinstance(self.index, IndexHandle):
             self.index.close()
+        for closer in self._closers:
+            closer()
+        self._closers.clear()
 
 
 def open_store(
