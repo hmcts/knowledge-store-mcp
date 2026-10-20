@@ -1,6 +1,6 @@
 # knowledge-store-mcp: design
 
-**Status:** draft 2. Reviewed by the first consuming store; awaiting owner sign-off.
+**Status:** draft 3. Reviewed by the first consuming store; the library contract moved to knowledge-store-builder; awaiting owner sign-off.
 **Scope:** the server in this repository. The store contract it reads is designed in `knowledge-store-builder` (see *What the server depends on*).
 
 **Names:** each runs from least specific to most.
@@ -39,8 +39,6 @@ The same evaluation showed that guidance alone moves accuracy a long way. A shor
    - Still to confirm, for completeness: whether a plugin-hosting agent platform in use can mount a plugin's stdio server.
 3. **Read-only, and one store per process.** The store root is fixed at start-up with `--store PATH`. There is no runtime path argument.
 
----
-
 ## What the server depends on
 
 The store is built by `knowledge-store-builder`, and everything the server serves comes from it. The server holds no credentials and makes no network calls. It needs only a path to a built store.
@@ -69,7 +67,7 @@ A store's plugin can declare this, so an asker installs the plugin and never edi
 
 ## The server
 
-### B1. Start-up
+### Start-up
 
 `knowledge-store-mcp --store PATH` starts the server:
 1. **Resolve the store root.** Every later path is checked against it after `realpath`, so symlinks and `..` can't escape.
@@ -78,7 +76,7 @@ A store's plugin can declare this, so an asker installs the plugin and never edi
    - A newer **minor** version starts, and reports the unknown layers as present but unread.
 3. **Load the graph once,** and build in-memory indexes: by repository name, by node id, a text index over labels, and edges by kind. Layers load lazily on first use.
 
-### B2. Tools
+### Tools
 
 Every result carries `store`, which holds the format, library version, build date and the layers used. An empty result also says what was searched.
 
@@ -106,7 +104,7 @@ It never returns a bare empty list. A call such as `dependents("<a name the esta
 
 **Absence semantics.** An empty result never stands alone. It always says something like "searched N repositories in the graph layer; the relationships layer is absent". The counts are the store's own.
 
-### B3. Security
+### Security
 
 **Threat model:**
 - The store is semi-trusted: its text comes from commit messages and documents that anyone could write.
@@ -120,13 +118,13 @@ It never returns a bare empty list. A call such as `dependents("<a name the esta
 - **No outbound network, and no subprocesses.**
 - **Masking is the library's job.** The library masks secrets at build time, and the server re-serves only what the store committed.
 
-### B4. Contract tests
+### Contract tests
 
 The server's CI downloads the latest library release's fixture store (knowledge-store-builder#456) and runs every tool against it, asserting exact results that were hand-derived from the fixture's design. A scheduled job also runs against the library's `main` fixture, so a contract change is seen before it is released.
 
-### B5. Acceptance
+### Acceptance
 
-The first consuming store re-runs its evaluation question set through the tools, against a store whose relationships layer (#455) comes from **the library stage**, not the store's script, so parity is tested end to end. The comparison arm is the best existing Claude Code arm (E).
+The first consuming store re-runs its evaluation question set through the tools, against a store whose relationships layer (hmcts/knowledge-store-builder#455) comes from **the library stage**, not the store's script, so parity is tested end to end. The comparison arm is the best existing Claude Code arm (E).
 
 **Measured with `knowledgestore answers --compare`.** The server passes when all of these hold:
 - **Non-inferior on accuracy.** The lower 95% confidence bound of (MCP − E) is above −0.03. "At least equal" would flip on noise near the ceiling.
@@ -153,5 +151,5 @@ The first consuming store re-runs its evaluation question set through the tools,
 ## Delivery order
 
 1. Library: #454, #455 and #456, in `knowledge-store-builder`. Each ships in a library minor release and is useful without the server.
-2. Server: B1–B4, here.
-3. First store: B5 acceptance.
+2. Server: start-up, tools, security and contract tests, here.
+3. First store: acceptance.
