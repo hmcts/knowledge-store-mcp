@@ -93,6 +93,20 @@ def _words(text: str) -> list[str]:
         return [term for (term,) in db.execute("SELECT term FROM terms ORDER BY offset")]
 
 
+def _search_words(value: object, what: str) -> list[str]:
+    """The words of a caller's search text, bounded before and after splitting:
+    every word is a prefix scan, so an unbounded query is unbounded work."""
+    text = _text(value, what)
+    if len(text.encode("utf-8")) > MAX_SEARCH_BYTES:
+        raise ArgumentRefused(f"{what} must be at most {MAX_SEARCH_BYTES} bytes")
+    words = _words(text)
+    if not words:
+        raise ArgumentRefused(f"{what} holds no word to match")
+    if len(words) > MAX_SEARCH_WORDS:
+        raise ArgumentRefused(f"{what} must hold at most {MAX_SEARCH_WORDS} words")
+    return words
+
+
 def _query(words: list[str]) -> str:
     """The FTS5 query for `words`: each distinct word quoted and starred, so every
     word must begin some word of the label."""
@@ -306,15 +320,7 @@ def search(
     are returned, paged under the cap; `matches` counts every node that matched.
     If the index's full-text table cannot be read, the graph answers and
     `fallback` says why."""
-    text = _text(text, "search text")
-    if len(text.encode("utf-8")) > MAX_SEARCH_BYTES:
-        raise ArgumentRefused(f"search text must be at most {MAX_SEARCH_BYTES} bytes")
-    words = _words(text)
-    if not words:
-        raise ArgumentRefused("search text holds no word to match")
-    if len(words) > MAX_SEARCH_WORDS:
-        raise ArgumentRefused(f"search text must hold at most {MAX_SEARCH_WORDS} words")
-    query = _query(words)
+    query = _query(_search_words(text, "search text"))
     limit = _count(limit, "limit", "a whole number of 1 or more", lambda n: n >= 1)
     if kind is not None:
         kind = _text(kind, "kind")
