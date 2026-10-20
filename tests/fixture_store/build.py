@@ -270,6 +270,20 @@ FILE_TICKETS_DATA: dict[str, dict[str, dict]] = {
     },
 }
 
+# A repository only the ticket layer names: no clone, no graph node, no provenance
+# (DESIGN.md 6.4). Written only by `build(..., ticket_only=True)`, so the default
+# store keeps its estate of twelve.
+TICKET_ONLY_REPOSITORY = "retired-batch"
+TICKET_ONLY_DATA: dict[str, dict[str, dict]] = {
+    TICKET_ONLY_REPOSITORY: {
+        "jobs/nightly-settlement.sh": {
+            "tickets": {"EX-105": 1},
+            "first": "2026-06-02",
+            "last": "2026-06-02",
+        },
+    },
+}
+
 # ticket -> record, keys in the order `_ticket_record` writes them.
 TICKET_DESCRIPTIONS_DATA: dict[str, dict] = {
     "EX-101": {
@@ -576,11 +590,11 @@ def _write_relationships(root: Path) -> None:
 # --- The query index (#457) -------------------------------------------------------
 
 
-def _ticket_rows() -> list[tuple[str, str, str, int, int]]:
+def _ticket_rows(file_tickets: dict) -> list[tuple[str, str, str, int, int]]:
     """(repo, path, ticket, count, landed); a ticket landed in a file is not also
     proposed there, as `store_index._ticket_rows` keeps it."""
     rows = []
-    for repo, paths in FILE_TICKETS_DATA.items():
+    for repo, paths in file_tickets.items():
         for path, entry in paths.items():
             seen: set[str] = set()
             for section, landed in (("tickets", 1), ("proposed", 0)):
@@ -629,10 +643,10 @@ def _survivor_key(node: dict) -> tuple:
     )
 
 
-def _index_rows(graph: dict) -> dict[str, list[tuple]]:
+def _index_rows(graph: dict, file_tickets: dict) -> dict[str, list[tuple]]:
     """Every final table's rows, keyed and ordered as `store_index._fill` orders
     them: each table sorted on its content, so keys never follow input order."""
-    tickets = _ticket_rows()
+    tickets = _ticket_rows(file_tickets)
     nodes = [_staged(n) for n in graph["nodes"]]
     links = [
         {**link, "source": str(link["source"]), "target": str(link["target"])}
@@ -692,7 +706,7 @@ _INSERTS = {
 }
 
 
-def _build_index(path: Path, graph: dict, meta: dict[str, str]) -> None:
+def _build_index(path: Path, graph: dict, file_tickets: dict, meta: dict[str, str]) -> None:
     """The index, with the pragmas and statement order `store_index` uses for
     byte-identical output: fixed page size, no journal, FTS optimised, VACUUM last."""
     path.unlink(missing_ok=True)
@@ -703,7 +717,7 @@ def _build_index(path: Path, graph: dict, meta: dict[str, str]) -> None:
         connection.execute("PRAGMA synchronous=OFF")
         connection.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
         connection.execute("BEGIN")
-        for table, rows in _index_rows(graph).items():
+        for table, rows in _index_rows(graph, file_tickets).items():
             connection.executemany(_INSERTS[table], rows)
         connection.execute(
             "INSERT INTO labels(rowid, label) SELECT k, label FROM nodes"
@@ -717,7 +731,7 @@ def _build_index(path: Path, graph: dict, meta: dict[str, str]) -> None:
         connection.close()
 
 
-def _write_index(root: Path, graph: dict, mode: str) -> None:
+def _write_index(root: Path, graph: dict, file_tickets: dict, mode: str) -> None:
     if mode == "none":
         return
     meta = {
@@ -729,7 +743,7 @@ def _write_index(root: Path, graph: dict, mode: str) -> None:
     plain = root / INDEX_PLAIN
     plain.parent.mkdir(parents=True, exist_ok=True)
     building = plain.with_name(plain.name + ".building")
-    _build_index(building, graph, meta)
+    _build_index(building, graph, file_tickets, meta)
     if mode == "plain":
         os.replace(building, plain)
         return
@@ -872,6 +886,7 @@ def build(
     index: str = "gz",
     manifest_minor: int = 0,
     extra: dict | None = None,
+    ticket_only: bool = False,
 ) -> Path:
     """Write the complete synthetic store at `root` and return it.
 
@@ -880,8 +895,9 @@ def build(
     the graph). `manifest_minor` sets the manifest's minor format version, and
     `extra` maps layer names a newer library would add to their manifest entries,
     merged into `layers` - together they make the newer-minor manifest a reader
-    must still load. The manifest is written last, so its digests describe the
-    files as they finally are.
+    must still load. `ticket_only` adds a repository that only the ticket layer
+    names (DESIGN.md 6.4). The manifest is written last, so its digests describe
+    the files as they finally are.
     """
     if index not in INDEX_MODES:
         raise ValueError(f"index must be one of {INDEX_MODES}, not {index!r}")
@@ -896,7 +912,8 @@ def build(
     }
     _write(root, PROVENANCE, _library_json({"repositories": provenance}))
     _write(root, TELEMETRY, _library_json({"measurements": dict(sorted(TELEMETRY_DATA.items()))}))
-    _write(root, FILE_TICKETS, _gzip_json(FILE_TICKETS_DATA))
+    file_tickets = {**FILE_TICKETS_DATA, **(TICKET_ONLY_DATA if ticket_only else {})}
+    _write(root, FILE_TICKETS, _gzip_json(file_tickets))
     _write(root, TICKET_DESCRIPTIONS, _gzip_json(TICKET_DESCRIPTIONS_DATA))
     _write(
         root,
@@ -911,7 +928,7 @@ def build(
     _write(root, EXTRA_LAYERS_CONFIG, _library_json(EXTRA_LAYERS_DECLARED))
     _write(root, FAQ, _library_json(FAQ_DATA))
     _write_relationships(root)
-    _write_index(root, graph, index)
+    _write_index(root, graph, file_tickets, index)
 
     _write(root, MANIFEST, _sorted_json(manifest_document(root, manifest_minor, extra or {})))
     return root

@@ -2,7 +2,7 @@
 
 Every node is built exactly as the library's index builder builds its row, so the
 fallback answers as the index would. The source is knowledge-store-builder
-`src/knowledgestore/store_index.py` (#457, `feat/query-index` at 3aea1e4):
+`src/knowledgestore/store_index.py` (#457, `feat/query-index` at f9a0320):
 `_node_rows` and `_link_rows` for each field, `graph_files.iter_edges` for which
 key holds the edges, and the staging tables and `_fill` for how SQLite stores each
 value, which copy of a repeated id survives, which repositories are listed, and
@@ -102,7 +102,7 @@ def _links(graph: dict) -> list:
 
 # The library's staging tables and the parts of `_fill` that decide which nodes and
 # edges the index holds, copied from `store_index.py` (STAGING and `_fill`, at
-# 3aea1e4). Staging through SQLite, not imitating it, is the point: column affinity
+# f9a0320). Staging through SQLite, not imitating it, is the point: column affinity
 # turns 7 into "7", " 0" and "1e3" into integers, and -0.0 into "0.0", and rejects
 # what cannot be bound, exactly as it does for the index.
 _STAGING = """
@@ -252,6 +252,26 @@ class GraphReader:
     def close(self) -> None:
         if self._labels is not None:
             self._labels.close()
+
+
+# The builder's `_TICKET_SECTIONS`: the two kinds of ticket-layer entry.
+_TICKET_SECTIONS = ("tickets", "proposed")
+
+
+def ticket_repositories(layer: Any) -> set[str]:
+    """The repositories `store_index._ticket_rows` stages from the ticket layer
+    (`file-tickets.json.gz`): those with at least one ticket under a path, as the
+    builder walks it, skipping any entry that is not an object."""
+    found: set[str] = set()
+    for repo, paths in (layer if isinstance(layer, dict) else {}).items():
+        if not isinstance(paths, dict):
+            continue
+        for entry in paths.values():
+            if not isinstance(entry, dict):
+                continue
+            if any(isinstance(entry.get(s), dict) and entry[s] for s in _TICKET_SECTIONS):
+                found.add(repo)
+    return found
 
 
 def read(store: Store) -> GraphReader:

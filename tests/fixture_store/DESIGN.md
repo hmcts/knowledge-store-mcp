@@ -39,8 +39,9 @@ checks that every trap is still in the store, by its literal value.
 Every repository has graph nodes, and every repository has a `by-repo` file. The
 index's `repos` table holds all twelve, and also the empty name, because one graph
 node has no repository (section 3.5): `""` sorts first, so it is `k` 1 and the
-twelve are `k` 2 to 13 in the order above. A reader that counts repositories from
-the index counts 13, and the fallback reader lists them as the index does.
+twelve are `k` 2 to 13 in the order above. The empty name is not a repository: the
+server leaves it out of every list and count in both modes, so it reports an
+estate of twelve, and refuses a repository name that is empty after stripping.
 
 ## 2. Near misses
 
@@ -163,7 +164,8 @@ Built from the same graph and ticket layer with the schema in
   `payments-api::RefundHandler`.
 
 The index was checked against the library's own `store_index.build` over the same
-two inputs (`feat/query-index` at 3aea1e4, with the section 3.4 nodes): every
+two inputs (`feat/query-index` at f9a0320, with the section 3.4 and 3.5 nodes, and
+with and without the section 6.4 option): every
 table's rows are identical, and so is the plain file.
 
 ## 5. Relationships
@@ -283,6 +285,15 @@ It has no `proposed` field: the ticket landed, only that text did not.
 
 Telemetry records `intent.repositories_without_reach` as 0, so the manifest's
 `layers.intent.reach` is `true`.
+
+### 6.4 A repository only the ticket layer names (opt-in)
+
+`build(root, ticket_only=True)` adds `retired-batch` to `file-tickets.json.gz`:
+`jobs/nightly-settlement.sh` with `EX-105` (1 commit, landed). No clone, graph node,
+provenance entry or `by-repo` file names it. The index builder stages ticket rows
+as well as nodes, so its `repos` lists `retired-batch`, and a reader without the
+index must list it too: the estate is then thirteen, in both modes. The default
+store does not write it, and keeps its twelve.
 
 ## 7. Answers
 

@@ -60,6 +60,15 @@ def _text(value: object, what: str) -> str:
     return value
 
 
+def _repository(value: object, what: str) -> str:
+    """A repository name to look up. One that is empty after stripping names no
+    repository, so it is refused rather than looked up."""
+    name = _text(value, what)
+    if not name.strip():
+        raise ArgumentRefused(f"{what} is empty: a repository name needs a word")
+    return name
+
+
 def _count(value: object, what: str, allowed: str, ok: Callable[[int], bool]) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not ok(value):
         raise ArgumentRefused(f"{what} must be {allowed}")
@@ -269,6 +278,7 @@ def find_repo(session: Session, name: str) -> dict[str, Any]:
     """The three-way answer for a repository name: an exact match, near misses
     (each labelled as one, never as the answer), or a target the estate references
     and does not hold."""
+    name = _repository(name, "repository name")
     store, notice = session.current()
     base = _reader(store).layer
     answer = results.repository(store, name)
@@ -311,7 +321,7 @@ def search(
     layers_used = [reader.layer]
     fields: dict[str, Any] = {}
     if repo is not None:
-        answer = results.repository(store, _text(repo, "repo"))
+        answer = results.repository(store, _repository(repo, "repo"))
         fields["repository"] = answer.as_dict()
         if not isinstance(answer, Known):
             layers_used = _repository_layers(store, reader.layer, answer)

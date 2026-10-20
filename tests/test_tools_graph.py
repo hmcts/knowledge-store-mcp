@@ -243,9 +243,7 @@ def searched_in(base: str, *more: str) -> str:
     """The `searched` sentence for the layer that answered, and any more it read."""
     layers = " and ".join((base, *more))
     noun = "layers" if more else "layer"
-    # DESIGN.md 1: the index lists 13, the empty name among them, and so does the
-    # fallback.
-    return f"searched 13 repositories in the {layers} {noun}"
+    return f"searched 12 repositories in the {layers} {noun}"
 
 
 class ToolTestCase(unittest.TestCase):
@@ -898,10 +896,7 @@ class NormalisedNodeTest(ToolTestCase):
                 members = tools_graph.community(session, 1)["items"]
                 self.assertIn(RETRY, members)
                 self.assertIn(SMS_TEMPLATE, members)
-                self.assertEqual(
-                    results.repository_names(session.current()[0]),
-                    ["", *sorted(SHA_DIGIT)],
-                )
+                self.assertEqual(results.repository_names(session.current()[0]), sorted(SHA_DIGIT))
                 self.assertEqual(tools_graph.search(session, "glossary")["items"], [GLOSSARY])
 
     def test_a_graph_the_index_builder_refuses_is_refused(self):
@@ -946,6 +941,12 @@ class NormalisedNodeTest(ToolTestCase):
             }
         )
         self.assertEqual(reader.repositories(), ["r", "s"])
+        # The reader mirrors the index's `repos` exactly, empty name included; the
+        # server leaves "" out above it (results.repository_names), in both modes.
+        corpus = graph.GraphReader(
+            {"nodes": [{"id": "page", "label": "Page"}, {"id": "r::a", "repo": "r"}]}
+        )
+        self.assertEqual(corpus.repositories(), ["", "r"])
         self.assertEqual(
             reader.node("r::a"),
             {"id": "r::a", "label": "A", "repo": "r", "kind": "", "file": None, "url": None, "community": None},
@@ -996,6 +997,62 @@ class NormalisedNodeTest(ToolTestCase):
         loaded.close()
         with self.assertRaises(sqlite3.ProgrammingError):
             reader.search('"pay"*', None, None)
+
+
+class RepositoryListTest(ToolTestCase):
+    def test_the_empty_name_is_never_a_repository(self):
+        """Catches: the empty name, which the index lists for the glossary page that
+        has no repository (DESIGN.md 1, 3.5), counted or listed as a repository in
+        either mode, or looked up as one."""
+        for session, index, _ in self.modes():
+            with self.subTest(index=index):
+                self.assertEqual(results.repository_names(session.current()[0]), sorted(SHA_DIGIT))
+                for empty in ("", "   ", "\t"):
+                    with self.assertRaises(ArgumentRefused):
+                        tools_graph.find_repo(session, empty)
+                    with self.assertRaises(ArgumentRefused):
+                        tools_graph.search(session, "Pay", repo=empty)
+
+    def test_a_repository_only_the_ticket_layer_names_is_listed_in_both_modes(self):
+        """Catches: a fallback that lists only the graph's repositories, where the
+        index also lists those its builder staged from the ticket layer - so
+        `retired-batch`, named only in `file-tickets.json.gz`, would be "not in
+        the estate" without the index and "in the estate" with it (DESIGN.md 6.4)."""
+        for index, base in (("gz", "index"), ("none", "graph")):
+            with self.subTest(index=index):
+                session = self.session(index, ticket_only=True)
+                self.assertEqual(
+                    results.repository_names(session.current()[0]),
+                    sorted([*SHA_DIGIT, "retired-batch"]),
+                )
+                self.assertEqual(
+                    tools_graph.find_repo(session, "retired-batch"),
+                    {
+                        **envelope(INDEXED if index == "gz" else FALLBACK, [base]),
+                        "answer": "in the estate",
+                        "exact": "retired-batch",
+                        "matched_case_insensitively": False,
+                    },
+                )
+                missing = tools_graph.node(session, "retired-batch::nothing")
+                self.assertEqual(
+                    missing["searched"], f"searched 13 repositories in the {base} layer"
+                )
+
+    def test_ticket_repositories_are_collected_as_the_index_builder_stages_them(self):
+        """Catches: a repository listed from the ticket layer that the builder would
+        stage no row for - a path with no tickets, empty sections, or an entry that
+        is not an object (library `store_index._ticket_rows`)."""
+        layer = {
+            "landed": {"a.py": {"tickets": {"EX-1": 1}}},
+            "proposed": {"a.py": {"proposed": {"EX-2": 1}}},
+            "dates-only": {"a.py": {"first": "2026-01-01", "last": "2026-01-02"}},
+            "empty-sections": {"a.py": {"tickets": {}, "proposed": {}}},
+            "list-section": {"a.py": {"tickets": ["EX-3"]}},
+            "not-an-object": "x",
+            "entry-not-an-object": {"a.py": ["EX-4"]},
+        }
+        self.assertEqual(graph.ticket_repositories(layer), {"landed", "proposed"})
 
 
 class BoundsTest(ToolTestCase):

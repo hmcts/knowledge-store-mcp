@@ -85,11 +85,19 @@ def envelope(store: Store, layers_used: list[str], notice: Notice | None) -> dic
 
 
 def repository_names(store: Store) -> list[str]:
-    """The estate's repositories, sorted: the index's `repos`, or the graph's."""
+    """The estate's repositories, sorted: the index's `repos`, or, without it, the
+    graph's and the ticket layer's, collected as the index builder collects them.
+    Never the empty name: a node with no repository is not one, whatever the index
+    holds."""
     if isinstance(store.index, IndexHandle):
-        rows = store.index.connection.execute("SELECT name FROM repos ORDER BY name")
+        rows = store.index.connection.execute(
+            "SELECT name FROM repos WHERE name <> '' ORDER BY name"
+        )
         return [name for (name,) in rows]
-    return graph.read(store).repositories()
+    names = set(graph.read(store).repositories()) | store.memo(
+        "intent.repositories", lambda: graph.ticket_repositories(store.layer("intent"))
+    )
+    return sorted(name for name in names if name)
 
 
 def _join(names: list[str]) -> str:
