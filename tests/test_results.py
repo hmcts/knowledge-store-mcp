@@ -262,6 +262,30 @@ class RepositoryTest(StoreTestCase):
             NotHeld("legacy-network", referenced_by=("ledger-service", "payments-api")),
         )
 
+    def test_the_stores_own_organisation_is_matched_ignoring_case(self):
+        """Catches: a case-sensitive organisation match, so a Terraform source
+        written `Example-Org/...` - which GitHub and the library's resolver both
+        treat as the store's own organisation - reads as not in the estate."""
+        loaded = self.open()
+        registry = loaded.root / RELATIONSHIPS / "repository-dependencies.json"
+        detail = {"references": 2, "referenced_by": ["ledger-service"]}
+        registry.write_text(
+            json.dumps(
+                {
+                    "unresolved_targets_outside_estate": {
+                        "terraform_module": {"Example-Org/vpc": detail}
+                    }
+                }
+            )
+        )
+        self.assertEqual(
+            results.repository(loaded, "vpc"), NotHeld("vpc", referenced_by=("ledger-service",))
+        )
+        self.assertEqual(
+            results.outside_estate(loaded, "vpc"),
+            (results.Outside("terraform_module", "Example-Org/vpc", 2, ("ledger-service",)),),
+        )
+
     def test_without_the_relationships_layer_a_target_is_not_in_the_estate(self):
         """Catches: reading the relationships files when the manifest says the layer
         is absent."""

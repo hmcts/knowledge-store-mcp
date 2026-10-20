@@ -223,9 +223,10 @@ def repository(store: Store, name: str) -> Known | Unknown | NotHeld:
     if folded:
         # Case-only twins: the name cannot say which is meant, so offer each.
         return Unknown(tuple(folded))
-    referrers = _outside_estate(store).get(name)
-    if referrers is not None:
-        return NotHeld(name, referrers)
+    entries = outside_estate(store, name)
+    if entries:
+        referrers = {r for entry in entries for r in entry.referenced_by}
+        return NotHeld(name, tuple(sorted(referrers)))
     return Unknown(near_misses(name, names))
 
 
@@ -239,13 +240,41 @@ def near_misses(name: str, names: list[str]) -> tuple[str, ...]:
     return tuple(close[:NEAR_MISS_COUNT])
 
 
-def _outside_estate(store: Store) -> dict[str, tuple[str, ...]]:
-    """Each target outside the estate, with every repository that references it.
-    Read once per loaded store."""
+@dataclass(frozen=True)
+class Outside:
+    """One target outside the estate, under one kind, as the registry holds it.
+    `target` is the registry's key, which may be `<org>/<repo>` for a name asked
+    without its organisation."""
+
+    kind: str
+    target: str
+    references: Any
+    referenced_by: tuple[str, ...]
+
+    def as_dict(self) -> dict:
+        return {
+            "kind": self.kind,
+            "target": self.target,
+            "references": self.references,
+            "referenced_by": list(self.referenced_by),
+        }
+
+
+def outside_estate(store: Store, name: str) -> tuple[Outside, ...]:
+    """Every registry entry `name` names, by (kind, target): its own key, and a
+    Terraform-style `<org>/<name>` whose organisation is the store's own, compared
+    ignoring case as GitHub and the library's resolver compare it. Another
+    organisation's repository of the same name is a different target."""
+    return _outside_estate(store).get(name, ())
+
+
+def _outside_estate(store: Store) -> dict[str, tuple[Outside, ...]]:
+    """Each name a target outside the estate answers to, with its entries. Read
+    once per loaded store."""
     return store.memo("relationships.outside_estate", lambda: _read_outside_estate(store))
 
 
-def _read_outside_estate(store: Store) -> dict[str, tuple[str, ...]]:
+def _read_outside_estate(store: Store) -> dict[str, tuple[Outside, ...]]:
     entry = store.manifest.layers.get("relationships")
     if not isinstance(entry, dict) or entry.get("present") is not True:
         return {}
@@ -256,11 +285,28 @@ def _read_outside_estate(store: Store) -> dict[str, tuple[str, ...]]:
     by_kind = (
         document.get("unresolved_targets_outside_estate") if isinstance(document, dict) else None
     )
-    referrers: dict[str, set[str]] = {}
-    for targets in (by_kind or {}).values():
-        for target, detail in (targets or {}).items():
-            referrers.setdefault(target, set()).update(detail.get("referenced_by") or [])
-    return {target: tuple(sorted(names)) for target, names in referrers.items()}
+    own = store.manifest.github_org.casefold()
+    found: dict[str, list[Outside]] = {}
+    for kind, targets in (by_kind if isinstance(by_kind, dict) else {}).items():
+        for target, detail in (targets if isinstance(targets, dict) else {}).items():
+            detail = detail if isinstance(detail, dict) else {}
+            referrers = detail.get("referenced_by")
+            outside = Outside(
+                kind,
+                target,
+                detail.get("references"),
+                tuple(sorted(set(referrers))) if isinstance(referrers, list) else (),
+            )
+            names = {target}
+            org, slash, rest = target.partition("/")
+            if own and slash and org.casefold() == own and rest and "/" not in rest:
+                names.add(rest)
+            for name in names:
+                found.setdefault(name, []).append(outside)
+    return {
+        name: tuple(sorted(entries, key=lambda o: (o.kind, o.target)))
+        for name, entries in found.items()
+    }
 
 
 # --- Paging -----------------------------------------------------------------------

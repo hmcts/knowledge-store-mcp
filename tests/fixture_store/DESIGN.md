@@ -244,15 +244,45 @@ cleanly over `depended_on_by`.
 
 ### 5.4 The target outside the estate
 
-`legacy-network` is a `terraform_module` target no clone holds, referenced 3
-times by two repositories:
+The writer lists `unresolved_targets_outside_estate` per kind, every kind
+included, and keys a target as its resolver does: a Terraform GitHub source the
+estate does not hold as `<org>/<repo>`, a chart no clone defines by its bare name.
+`legacy-network` is therefore three targets:
 
 ```json
-{"terraform_module": {"legacy-network": {"references": 3, "referenced_by": ["ledger-service", "payments-api"]}}}
+{"helm_chart": {"legacy-network": {"references": 1, "referenced_by": ["payments-api"]}},
+ "maven_artifact": {},
+ "npm_package": {},
+ "terraform_module": {
+   "example-org/legacy-network": {"references": 3, "referenced_by": ["ledger-service", "payments-api"]},
+   "other-org/legacy-network": {"references": 1, "referenced_by": ["audit-service"]}}}
 ```
 
 Asked about `legacy-network`, a reader answers "referenced but not held", naming
-both referrers - never "unknown", and never an empty list.
+`ledger-service` and `payments-api` - never "unknown", and never an empty list. The
+name matches the chart's key exactly, and `example-org/legacy-network` because
+`example-org` is the store's own organisation (`store.github_org`, compared
+ignoring case, as GitHub and the writer compare it). **The trap:**
+`other-org/legacy-network` is another organisation's repository, so a reader that
+matches on the part after the `/` alone adds `audit-service` to the referrers.
+Reported per kind, the answer is the chart entry and the `example-org` entry, each
+under its own kind and key; with `kind="helm_chart"`, the chart entry only.
+
+### 5.5 `kinds.json`
+
+As the writer writes it: every built-in kind, each with `origin`, `edges`,
+`references`, `unresolved` (the number of its targets outside the estate),
+`skipped` by reason and `notes`:
+
+| Kind | Edges | References | Unresolved | Skipped |
+|---|---|---|---|---|
+| helm_chart | 2 | 2 | 1 | `{}` |
+| maven_artifact | 6 | 6 | 0 | `{"self": 1}` |
+| npm_package | 3 | 3 | 0 | `{}` |
+| terraform_module | 7 | 20 | 2 | `{"local": 2}` |
+
+`notes` is `{}` for every kind: the writer notes only an unread Flux file, which
+depends on the machine that built the store.
 
 ## 6. Tickets
 
@@ -359,13 +389,12 @@ Present: `graph`, `labels`, `provenance`, `intent`, `ticket_descriptions`,
 - **Manifest (#454):** `feat/store-manifest` at `b0a7841`, the review fix that
   replaced `built` with `digest` and `sources_as_of`. All field names are in one
   section of `build.py`.
-- **Relationships (#455):** the shapes follow the #455 plan's interface. The
-  writer now exists, in progress on `feat/relationships-registry`, and adds keys
-  this fixture does not write: `skipped`, `notes`, every registered kind listed in
-  `kinds.json` (edges or not), and its own form of
-  `unresolved_targets_outside_estate`. Task 10 reconciles those against the merged
-  format. `kinds.json`'s `unresolved` is here the number of unresolved targets of
-  that kind.
+- **Relationships (#455):** the shapes follow the writer as committed on
+  `feat/relationships-registry` at `85be01e` (`relationships.build` and `write`):
+  every built-in kind in `kinds.json` and in `unresolved_targets_outside_estate`,
+  `skipped` and `notes` per kind, Terraform targets keyed `<org>/<repo>`, and each
+  file written sorted, indented by one, with a final newline. Task 10 re-checks this
+  against the merged format.
 - **Index (#457):** the schema is `feat/query-index` at `e4c55a2`, where the DDL
   is unchanged from the copied `a839a4e`. The plain file is byte-identical to the
   library's.

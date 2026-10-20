@@ -366,10 +366,36 @@ DECLARATIONS: tuple[tuple[str, str, str, str, str, str, str, tuple[int, ...]], .
     ("reporting-worker", "ledger-service", "", "maven_artifact", "com.example:ledger-client", "1.0.0", "pom.xml", (44,)),
 )  # fmt: skip
 
+# The built-in kinds, in the writer's `relationships.BUILTIN` order. The writer
+# lists every one in `kinds.json` and in `unresolved_targets_outside_estate`,
+# whether or not it met a reference, so "none" reads differently from "not run".
+KINDS = ("terraform_module", "helm_chart", "maven_artifact", "npm_package")
+
+# A Terraform GitHub source the estate does not hold is keyed `<org>/<repo>`, as the
+# writer's resolver keys it; a chart no clone defines is keyed by its bare name. So
+# `legacy-network` is three targets: the estate's own organisation's repository, a
+# same-named one in another organisation, and a chart (DESIGN.md 5.4).
 UNRESOLVED_OUTSIDE_ESTATE = {
-    "terraform_module": {
-        "legacy-network": {"references": 3, "referenced_by": ["ledger-service", "payments-api"]},
+    "helm_chart": {
+        "legacy-network": {"references": 1, "referenced_by": ["payments-api"]},
     },
+    "maven_artifact": {},
+    "npm_package": {},
+    "terraform_module": {
+        f"{ORG}/legacy-network": {
+            "references": 3,
+            "referenced_by": ["ledger-service", "payments-api"],
+        },
+        "other-org/legacy-network": {"references": 1, "referenced_by": ["audit-service"]},
+    },
+}
+
+# What each kind set aside, by reason, as `kinds.json`'s `skipped` (DESIGN.md 5.5).
+SKIPPED = {
+    "helm_chart": {},
+    "maven_artifact": {"self": 1},
+    "npm_package": {},
+    "terraform_module": {"local": 2},
 }
 
 EXAMPLES_PER_EDGE = 3  # the library's default RELATIONSHIP_EXAMPLES
@@ -550,21 +576,24 @@ def by_repo_documents(edges: list[dict]) -> dict[str, dict]:
 
 
 def kinds_document(edges: list[dict]) -> dict:
-    kinds: dict[str, dict] = {}
-
-    def entry(kind: str) -> dict:
-        # A kind can have unresolved targets and no edge, so either loop may be
-        # the first to meet it.
-        return kinds.setdefault(
-            kind, {"origin": "builtin", "edges": 0, "references": 0, "unresolved": 0}
-        )
-
+    """`kinds.json` as `relationships.build` writes it: every registered kind, with
+    its counts, what it skipped, and its notes (none here: the writer notes only an
+    unread Flux file, which depends on the machine that built the store)."""
+    kinds = {
+        kind: {
+            "origin": "builtin",
+            "edges": 0,
+            "references": 0,
+            "unresolved": len(UNRESOLVED_OUTSIDE_ESTATE[kind]),
+            "skipped": SKIPPED[kind],
+            "notes": {},
+        }
+        for kind in KINDS
+    }
     for edge in edges:
         for kind, references in edge["kinds"].items():
-            entry(kind)["edges"] += 1
-            entry(kind)["references"] += references
-    for kind, targets in UNRESOLVED_OUTSIDE_ESTATE.items():
-        entry(kind)["unresolved"] = len(targets)
+            kinds[kind]["edges"] += 1
+            kinds[kind]["references"] += references
     return kinds
 
 

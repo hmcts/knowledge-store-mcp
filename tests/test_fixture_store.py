@@ -414,16 +414,71 @@ class TrapTest(FixtureStoreCase):
         self.assertEqual(gateway["references"], 4)
         self.assertEqual(len(gateway["examples"]), 3)
         dependencies = _json(self.root, "knowledge/relationships/repository-dependencies.json")
-        self.assertInDesign("legacy-network")
+        self.assertInDesign(
+            '"example-org/legacy-network"', '"other-org/legacy-network"', '"legacy-network"'
+        )
         self.assertEqual(
             dependencies["unresolved_targets_outside_estate"],
             {
+                "helm_chart": {
+                    "legacy-network": {"references": 1, "referenced_by": ["payments-api"]}
+                },
+                "maven_artifact": {},
+                "npm_package": {},
                 "terraform_module": {
-                    "legacy-network": {
+                    "example-org/legacy-network": {
                         "references": 3,
                         "referenced_by": ["ledger-service", "payments-api"],
-                    }
-                }
+                    },
+                    "other-org/legacy-network": {
+                        "references": 1,
+                        "referenced_by": ["audit-service"],
+                    },
+                },
+            },
+        )
+
+    def test_kinds_json_carries_the_writers_additive_keys(self):
+        """Catches: a fixture `kinds.json` missing what `relationships.build` writes
+        for every kind - `skipped` by reason and `notes` - or omitting a kind whose
+        counts are zero, so a reader written against the fixture fails on a real
+        store. DESIGN.md 5.5."""
+        kinds = _json(self.root, "knowledge/relationships/kinds.json")
+        self.assertEqual(
+            kinds,
+            {
+                "helm_chart": {
+                    "origin": "builtin",
+                    "edges": 2,
+                    "references": 2,
+                    "unresolved": 1,
+                    "skipped": {},
+                    "notes": {},
+                },
+                "maven_artifact": {
+                    "origin": "builtin",
+                    "edges": 6,
+                    "references": 6,
+                    "unresolved": 0,
+                    "skipped": {"self": 1},
+                    "notes": {},
+                },
+                "npm_package": {
+                    "origin": "builtin",
+                    "edges": 3,
+                    "references": 3,
+                    "unresolved": 0,
+                    "skipped": {},
+                    "notes": {},
+                },
+                "terraform_module": {
+                    "origin": "builtin",
+                    "edges": 7,
+                    "references": 20,
+                    "unresolved": 2,
+                    "skipped": {"local": 2},
+                    "notes": {},
+                },
             },
         )
 
@@ -440,16 +495,22 @@ class TrapTest(FixtureStoreCase):
 
     def test_an_unresolved_kind_with_no_edges_is_still_listed(self):
         """Catches: `kinds_document` assuming every kind with an unresolved target
-        also has an edge, and raising when a variant fixture has none."""
+        also has an edge, and raising when a variant fixture has none; or listing
+        only the kinds that met an edge, where the writer lists every registered
+        kind (DESIGN.md 5.5)."""
+        empty = kinds_document([])
         self.assertEqual(
-            kinds_document([]),
+            sorted(empty), ["helm_chart", "maven_artifact", "npm_package", "terraform_module"]
+        )
+        self.assertEqual(
+            empty["terraform_module"],
             {
-                "terraform_module": {
-                    "origin": "builtin",
-                    "edges": 0,
-                    "references": 0,
-                    "unresolved": 1,
-                }
+                "origin": "builtin",
+                "edges": 0,
+                "references": 0,
+                "unresolved": 2,
+                "skipped": {"local": 2},
+                "notes": {},
             },
         )
 
