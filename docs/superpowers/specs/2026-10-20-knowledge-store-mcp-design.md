@@ -104,7 +104,7 @@ It never returns a bare empty list. A call such as `dependents("<a name the esta
 ### Security
 
 **Threat model:**
-- The store is semi-trusted: its text comes from commit messages and documents that anyone could write.
+- **The store's structure is trusted; its text is not.** Repository names, ids, edges, ticket keys and URLs are produced deterministically by the library and can be relied on. Commit messages, ticket text, documents and summaries were written by people and are untrusted: the server returns them only as data, never as instructions.
 - The caller is an agent that may be steered by that same text.
 
 **Controls:**
