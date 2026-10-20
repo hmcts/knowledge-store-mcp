@@ -353,7 +353,9 @@ store does not write it, and keeps its twelve.
   `config/store-extra-layers.json`, at `knowledge/answers/faq.json`. Its one entry
   is `how-refunds-reach-the-ledger`, titled "How does a refund reach the ledger?".
 
-All three files carry the library's `_metadata` block, which is not an entry.
+The briefs and deep-dives files carry the library's `_metadata` block, which
+is not an entry. `faq.json` carries none: the library writes no extra layer's
+file, so nothing adds one.
 
 ## 8. Hostile text
 

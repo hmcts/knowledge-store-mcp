@@ -564,6 +564,44 @@ class AnswersTest(TicketsTestCase):
             ],
         )
 
+    def test_a_question_ranks_by_its_subject_words_not_common_ones(self):
+        """Catches: common words scoring, so `how does a refund reach the ledger`
+        returns the deployments brief, which shares only `how`, `a` and `the` with
+        it. The FAQ entry matches all three subject words."""
+        found = tools_tickets.answers(self.session(), "how does a refund reach the ledger")
+        self.assertEqual(
+            [(i["layer"], i["id"], i["score"]) for i in found["items"]],
+            [
+                ("faq", FAQ_MATCH["id"], 3),
+                ("topics", "payments", 1),
+                ("deep_dives", "payments-api", 1),
+            ],
+        )
+
+    def test_a_short_word_matches_a_whole_word_only(self):
+        """Catches: a query word under three letters matched as a prefix, so `le`
+        finds every answer that mentions the ledger; it says what it searched."""
+        found = tools_tickets.answers(self.session(), "le")
+        self.assertEqual(found["items"], [])
+        self.assertEqual(
+            found["searched"], "searched 4 answers in the deep_dives, faq and topics layers"
+        )
+
+    def test_the_sentence_counts_answers_and_names_absent_layers(self):
+        """Catches: the sentence counting repositories, or anything but the entries
+        searched; a singular miscounted; or an absent library layer left unnamed."""
+        faq = {"one": {"title": "Settlement", "html": "<p>nightly</p>", "source": "a.md"}}
+
+        def absent(document):
+            for name in ("topics", "deep_dives"):
+                document["layers"][name]["present"] = False
+
+        session = self.session(edit=absent, files={FAQ: json.dumps(faq).encode("utf-8")})
+        self.assertEqual(
+            tools_tickets.answers(session, "kubernetes")["searched"],
+            "searched 1 answer in the faq layer; the deep_dives and topics layers are absent",
+        )
+
     def test_limit_keeps_the_best_and_counts_every_match(self):
         """Catches: `limit` ignored, or `matches` counting only what was returned."""
         found = tools_tickets.answers(self.session(), "refund ledger", limit=1)
@@ -594,7 +632,7 @@ class AnswersTest(TicketsTestCase):
         self.assertEqual((found["items"], found["matches"]), ([], 0))
         self.assertEqual(
             found["searched"],
-            "searched 12 repositories in the deep_dives, faq and topics layers",
+            "searched 4 answers in the deep_dives, faq and topics layers",
         )
 
     def test_an_absent_or_other_kind_extra_layer_is_not_searched(self):
@@ -608,7 +646,7 @@ class AnswersTest(TicketsTestCase):
         self.assertEqual(found["items"], [])
         self.assertEqual(
             found["searched"],
-            "searched 12 repositories in the deep_dives and topics layers; the faq layer is absent",
+            "searched 3 answers in the deep_dives and topics layers; the faq layer is absent",
         )
 
         def other(document):
@@ -617,7 +655,7 @@ class AnswersTest(TicketsTestCase):
         found = tools_tickets.answers(self.session(edit=other), "reach")
         self.assertEqual(found["items"], [])
         self.assertEqual(
-            found["searched"], "searched 12 repositories in the deep_dives and topics layers"
+            found["searched"], "searched 3 answers in the deep_dives and topics layers"
         )
 
     def test_an_answers_layer_that_is_not_a_file_of_entries_is_named_not_read(self):
@@ -637,12 +675,16 @@ class AnswersTest(TicketsTestCase):
         self.assertEqual(found["not_read"], {"faq": tools_tickets.A_DIRECTORY})
 
     def test_unusable_queries_are_refused(self):
-        """Catches: a query with no word searched as "match everything", or a limit
-        below one accepted."""
+        """Catches: a query with no word, or only common words, searched as "match
+        everything" or answered empty without a reason; or a limit below one
+        accepted."""
         session = self.session()
         for query in ("", "  ", "<>"):
             with self.subTest(query=query), self.assertRaises(ArgumentRefused):
                 tools_tickets.answers(session, query)
+        with self.assertRaises(ArgumentRefused) as raised:
+            tools_tickets.answers(session, "how does the A")
+        self.assertIn("only common words", str(raised.exception))
         with self.assertRaises(ArgumentRefused):
             tools_tickets.answers(session, "ledger", limit=0)
 

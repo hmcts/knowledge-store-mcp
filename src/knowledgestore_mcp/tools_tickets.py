@@ -40,6 +40,7 @@ from .manifest import KNOWN_LAYERS
 from .results import DEFAULT_MAX_RESPONSE_BYTES, Known
 from .store import Notice, Session, Store
 from .tools_graph import (
+    ArgumentRefused,
     _count,
     _paged,
     _repository,
@@ -60,6 +61,17 @@ REACH_NOTE = (
     "the store does not record that every repository's history separates landed "
     "from branch-only work, so the landed list may include work that never landed"
 )
+
+# Common English words, as FTS5 `unicode61` folds them. They never count toward an
+# answer's score: OR-matched, they would rank an answer for "how" and "the" alone.
+STOPWORDS = frozenset(
+    "a an and are as at be by can do does for from has how in is it of on or that "
+    "the this to was what when where which who why will with".split()
+)
+
+# A query word shorter than this matches a whole word only: as a prefix, `le` would
+# match most of the store.
+PREFIX_MIN = 3
 
 # Why an answers layer was not searched.
 A_DIRECTORY = "a directory: an answers layer is read as one JSON file of entries"
@@ -351,19 +363,26 @@ def answers(
 ) -> dict[str, Any]:
     """Written answers - topic briefs, deep dives and extra layers declared with
     `"kind": "answers"` - whose title or body holds a word beginning with a word
-    of `query`, case and Latin accents ignored. Ranked by how many of the query's
+    of `query`, case and Latin accents ignored. Common words (`STOPWORDS`) never
+    count, a query word under three letters matches a whole word only, and a query
+    of common words alone is refused. Ranked by how many of the query's other
     words match, then by id, then layer; the first `limit` are returned, paged,
     and `matches` counts them all. Each match carries its layer, id, the
     store-relative `source` its entry declares (null when that is not a plain
     relative path), the store's id, its title as `summary` and its body as
     `text`."""
-    words = list(dict.fromkeys(_search_words(query, "query")))
+    words = [w for w in dict.fromkeys(_search_words(query, "query")) if w not in STOPWORDS]
+    if not words:
+        raise ArgumentRefused(
+            "query holds only common words (such as how, the, does), which never count "
+            "toward a match: add a word that names the subject"
+        )
     limit = _count(limit, "limit", "a whole number of 1 or more", lambda n: n >= 1)
     store, notice = session.current()
     library = store.memo("answers.library", lambda: _library(store))
     scored = []
     for layer, entry_id, terms, item in library.entries:
-        score = sum(1 for word in words if any(term.startswith(word) for term in terms))
+        score = sum(1 for word in words if _matches(word, terms))
         if score:
             scored.append((-score, entry_id, layer, {**item, "score": score}))
     scored.sort(key=lambda found: found[:3])
@@ -375,7 +394,7 @@ def answers(
     if library.skipped:
         fields["entries_skipped"] = library.skipped
     if not ranked:
-        fields["searched"] = results.searched(store, library.searched)
+        fields["searched"] = _answers_searched(store, library)
     return _paged(
         store,
         notice,
@@ -386,6 +405,39 @@ def answers(
         cap_bytes=cap_bytes,
         **fields,
     )
+
+
+def _matches(word: str, terms: frozenset[str]) -> bool:
+    if len(word) < PREFIX_MIN:
+        return word in terms
+    return any(term.startswith(word) for term in terms)
+
+
+def _answers_searched(store: Store, library: "_Library") -> str:
+    """What an empty `answers` searched: `searched 4 answers in the deep_dives, faq
+    and topics layers; the context layer is absent`. Built from counts and layer
+    names `results` accepts as nameable, so no store text reaches it."""
+    count = len(library.entries)
+    noun = "answer" if count == 1 else "answers"
+    present = library.read
+    if present:
+        layer = "layer" if len(present) == 1 else "layers"
+        parts = [f"searched {count} {noun} in the {results._join(present)} {layer}"]
+    else:
+        parts = ["searched no layer"]
+    nameable = results._nameable(store)
+    absent, unrecorded = [], []
+    for name in library.searched:
+        if name in present:
+            continue
+        entry = nameable[name]
+        state = entry.get("present") if isinstance(entry, dict) else False
+        (unrecorded if state is None else absent).append(name)
+    if absent:
+        parts.append(results._layers(absent, "absent"))
+    if unrecorded:
+        parts.append(results._layers(unrecorded, "not recorded"))
+    return "; ".join(parts)
 
 
 class _Library:
