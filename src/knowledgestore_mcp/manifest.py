@@ -9,7 +9,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .locate import MANIFEST, contained
+from .locate import MANIFEST, OutsideStore, contained
 
 SUPPORTED_MAJORS = (1,)
 
@@ -63,7 +63,12 @@ class Manifest:
 
 
 def load(root: Path) -> Manifest:
-    path = contained(root, MANIFEST)
+    try:
+        path = contained(root, MANIFEST)
+    except OutsideStore as error:
+        raise Refused(
+            f"a manifest outside the store ({error.resolved})", SUPPORTED_MAJORS
+        ) from error
     if not path.is_file():
         raise Refused(f"no {MANIFEST.as_posix()} under {root}", SUPPORTED_MAJORS)
     try:
@@ -109,5 +114,10 @@ def load(root: Path) -> Manifest:
         sources_as_of=document.get("sources_as_of"),
         layers=layers,
         extra_layers=extra_layers,
-        unread=sorted(name for name in layers if name not in KNOWN_LAYERS),
+        unread=sorted(
+            name
+            for name, entry in layers.items()
+            if name not in KNOWN_LAYERS
+            and not (isinstance(entry, dict) and entry.get("present") is False)
+        ),
     )

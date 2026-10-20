@@ -63,6 +63,17 @@ class LoadTest(ManifestTestCase):
         got = manifest.load(root)
         self.assertEqual(got.unread, ["aardvark", "zebra"])
 
+    def test_an_absent_unknown_layer_is_not_unread_but_an_unknown_state_is(self):
+        """Catches: reporting a layer as present-but-unread when the manifest says it
+        is absent (present false), or dropping one whose state is unknown (null)."""
+        root = build(self.tmp / "s", index="none", manifest_minor=1)
+        entry = lambda present: {"paths": [], "present": present, "digest": None}  # noqa: E731
+        edit_manifest(
+            root,
+            lambda d: d["layers"].update(gone=entry(False), here=entry(True), unsure=entry(None)),
+        )
+        self.assertEqual(manifest.load(root).unread, ["here", "unsure"])
+
 
 class RefusalTest(ManifestTestCase):
     def test_major_two_is_refused_naming_what_was_found_and_what_is_supported(self):

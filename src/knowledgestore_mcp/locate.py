@@ -81,36 +81,47 @@ def _store_id_of(root: Path) -> str | None:
     return store_id if isinstance(store_id, str) else None
 
 
-def locations_file(env: Mapping[str, str], home: Path) -> Path:
-    config = env.get("XDG_CONFIG_HOME") or str(home / ".config")
-    return Path(config) / "knowledge-store" / "locations"
+def locations_file(home: Path) -> Path:
+    """Fixed at ~/.config: the library's skill appends there whatever XDG_CONFIG_HOME says."""
+    return home / ".config" / "knowledge-store" / "locations"
 
 
-def _listed_clones(path: Path) -> list[Path]:
-    """Clone roots in file order: blank lines, `#` comments and vanished paths skipped."""
+def _listed_clones(path: Path) -> tuple[list[Path], list[str]]:
+    """Clone roots in file order, and a reason for each entry skipped.
+
+    Blank lines and `#` comments are not entries. A comment is never an absolute
+    path, so it would be skipped as one; it is dropped first so it is not counted.
+    """
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError):
-        return []
-    clones = []
+        return [], []
+    clones: list[Path] = []
+    skipped: list[str] = []
     for line in lines:
         entry = line.strip()
-        # A `#` comment is never an absolute path, so the is_absolute test drops it.
+        if not entry or entry.startswith("#"):
+            continue
         candidate = Path(entry)
-        if candidate.is_absolute() and candidate.is_dir():
+        if not candidate.is_absolute():
+            skipped.append(f"{entry} (not absolute)")
+        elif not candidate.is_dir():
+            skipped.append(f"{entry} (not a directory)")
+        else:
             clones.append(candidate.resolve())
-    return clones
+    return clones, skipped
 
 
-def _by_store_id(store_id: str, listing: Path) -> Path | None:
+def _by_store_id(store_id: str, listing: Path) -> tuple[Path | None, list[str]]:
     matches: list[Path] = []
-    for clone in _listed_clones(listing):
+    clones, skipped = _listed_clones(listing)
+    for clone in clones:
         # The same clone listed twice, or by a symlinked path, is one entry.
         if _store_id_of(clone) == store_id and clone not in matches:
             matches.append(clone)
     if len(matches) > 1:
         raise AmbiguousStoreId(store_id, matches)
-    return matches[0] if matches else None
+    return (matches[0] if matches else None), skipped
 
 
 def resolve(args: argparse.Namespace, env: Mapping[str, str], home: Path) -> Resolved:
@@ -129,20 +140,27 @@ def resolve(args: argparse.Namespace, env: Mapping[str, str], home: Path) -> Res
 
     store_id = getattr(args, "store_id", None)
     if store_id:
-        listing = locations_file(env, home)
-        found = _by_store_id(store_id, listing)
+        listing = locations_file(home)
+        found, skipped = _by_store_id(store_id, listing)
         if found is not None:
             return Resolved(found, "--store-id")
-        checked.append(f"--store-id {store_id!r} (no clone with that store.id listed in {listing})")
+        note = f"no clone with that store.id listed in {listing}"
+        if skipped:
+            note += f"; {len(skipped)} entries skipped: " + ", ".join(skipped)
+        checked.append(f"--store-id {store_id!r} ({note})")
     else:
         checked.append("--store-id (not given)")
 
     plugin_root = env.get("CLAUDE_PLUGIN_ROOT")
     if plugin_root:
         root = Path(plugin_root).resolve()
-        if _has_manifest(root):
+        held = _store_id_of(root)
+        if _has_manifest(root) and (not store_id or held == store_id):
             return Resolved(root, "CLAUDE_PLUGIN_ROOT")
-        checked.append(f"CLAUDE_PLUGIN_ROOT ({root} holds no {MANIFEST.as_posix()})")
+        if _has_manifest(root):
+            checked.append(f"CLAUDE_PLUGIN_ROOT holds store {held!r}, not {store_id!r}")
+        else:
+            checked.append(f"CLAUDE_PLUGIN_ROOT ({root} holds no {MANIFEST.as_posix()})")
     else:
         checked.append("CLAUDE_PLUGIN_ROOT (not set)")
 

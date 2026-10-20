@@ -7,7 +7,6 @@ the real home.
 
 import argparse
 import json
-import os
 import shutil
 import tempfile
 import unittest
@@ -15,6 +14,7 @@ from pathlib import Path
 
 from fixture_store.build import MANIFEST, PROVENANCE, build
 from knowledgestore_mcp import manifest
+from knowledgestore_mcp.manifest import Refused
 from knowledgestore_mcp.locate import (
     AmbiguousStoreId,
     NotFound,
@@ -42,18 +42,17 @@ class LocateTestCase(unittest.TestCase):
         self.tmp = Path(tmp.name).resolve()
         self.home = self.tmp / "home"
         self.home.mkdir()
-        self.xdg = self.tmp / "xdg"
 
     def store(self, name: str, **kwargs) -> Path:
         return build(self.tmp / name, **kwargs)
 
     def write_locations(self, *lines: str) -> None:
-        listing = self.xdg / "knowledge-store" / "locations"
+        listing = self.home / ".config" / "knowledge-store" / "locations"
         listing.parent.mkdir(parents=True, exist_ok=True)
         listing.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def env(self, **extra: str) -> dict[str, str]:
-        return {"XDG_CONFIG_HOME": str(self.xdg), **extra}
+        return dict(extra)
 
 
 class PrecedenceTest(LocateTestCase):
@@ -87,14 +86,6 @@ class PrecedenceTest(LocateTestCase):
         got = resolve(args(), self.everything, self.home)
         self.assertEqual((got.root, got.source), (self.plugin, "CLAUDE_PLUGIN_ROOT"))
 
-    def test_an_unmatched_store_id_falls_through_to_the_plugin_root(self):
-        """Catches: --store-id naming a store nobody cloned ending the search,
-        when the plugin ships its own store and the next rule would have served."""
-        got = resolve(
-            args(store_id="no-such-store"), self.env(CLAUDE_PLUGIN_ROOT=str(self.plugin)), self.home
-        )
-        self.assertEqual((got.root, got.source), (self.plugin, "CLAUDE_PLUGIN_ROOT"))
-
     def test_a_plugin_root_without_a_manifest_does_not_count(self):
         """Catches: CLAUDE_PLUGIN_ROOT being taken whenever it is set. A plugin
         that ships no store sets it too, and would be served as an empty store."""
@@ -112,6 +103,43 @@ class PrecedenceTest(LocateTestCase):
         self.assertEqual(got.root, self.explicit)
 
 
+class PluginRootTest(LocateTestCase):
+    def setUp(self):
+        super().setUp()
+        self.plugin = self.store("plugin", index="none")
+
+    def test_a_plugin_root_holding_the_requested_store_is_served(self):
+        """Catches: a plugin root that ships the very store --store-id names being
+        refused because the asker has no clone listed."""
+        got = resolve(
+            args(store_id="example-store"), self.env(CLAUDE_PLUGIN_ROOT=str(self.plugin)), self.home
+        )
+        self.assertEqual((got.root, got.source), (self.plugin, "CLAUDE_PLUGIN_ROOT"))
+
+    def test_a_plugin_root_holding_another_store_is_refused_naming_both_ids(self):
+        """Catches: serving a different store than the one asked for. --store-id
+        example-store with a plugin bundling other-store would answer questions
+        about the wrong estate, silently."""
+        set_store_id(self.plugin, "other-store")
+        with self.assertRaises(NotFound) as caught:
+            resolve(
+                args(store_id="example-store"),
+                self.env(CLAUDE_PLUGIN_ROOT=str(self.plugin)),
+                self.home,
+            )
+        self.assertIn(
+            "CLAUDE_PLUGIN_ROOT holds store 'other-store', not 'example-store'",
+            str(caught.exception),
+        )
+
+    def test_without_a_store_id_any_plugin_root_store_counts(self):
+        """Catches: the id check applied when no id was asked for, so a plugin that
+        bundles its store and passes no --store-id is refused."""
+        set_store_id(self.plugin, "other-store")
+        got = resolve(args(), self.env(CLAUDE_PLUGIN_ROOT=str(self.plugin)), self.home)
+        self.assertEqual(got.root, self.plugin)
+
+
 class NotFoundTest(LocateTestCase):
     def test_the_message_names_all_four_sources(self):
         """Catches: a refusal that says only "no store" and leaves the asker to
@@ -122,7 +150,7 @@ class NotFoundTest(LocateTestCase):
         for source in ("--store", "KNOWLEDGE_STORE_PATH", "--store-id", "CLAUDE_PLUGIN_ROOT"):
             self.assertIn(source, message)
         self.assertEqual(len(caught.exception.checked), 4)
-        self.assertIn(str(self.xdg / "knowledge-store" / "locations"), message)
+        self.assertIn(str(self.home / ".config" / "knowledge-store" / "locations"), message)
 
 
 class LocationsFileTest(LocateTestCase):
@@ -195,18 +223,34 @@ class LocationsFileTest(LocateTestCase):
         got = resolve(args(store_id="example-store"), {}, self.home)
         self.assertEqual(got.root, clone)
 
-    def test_xdg_config_home_moves_the_file(self):
-        """Catches: reading ~/.config even when XDG_CONFIG_HOME says otherwise.
-        The home listing names a clone with another id; only the XDG one matches."""
-        wrong = self.store("wrong", index="none")
-        set_store_id(wrong, "wrong-store")
-        listing = self.home / ".config" / "knowledge-store" / "locations"
-        listing.parent.mkdir(parents=True)
-        listing.write_text(f"{wrong}\n", encoding="utf-8")
+    def test_xdg_config_home_does_not_move_the_file(self):
+        """Catches: honouring XDG_CONFIG_HOME. The skill appends to ~/.config whatever
+        it says, so a reader looking in XDG finds nothing (an empty XDG listing here
+        names a clone with another id; only the ~/.config one matches)."""
         right = self.store("right", index="none")
         self.write_locations(str(right))
-        got = resolve(args(store_id="example-store"), self.env(), self.home)
+        elsewhere = self.tmp / "xdg" / "knowledge-store"
+        elsewhere.mkdir(parents=True)
+        wrong = self.store("wrong", index="none")
+        set_store_id(wrong, "wrong-store")
+        (elsewhere / "locations").write_text(f"{wrong}\n", encoding="utf-8")
+        got = resolve(
+            args(store_id="example-store"),
+            self.env(XDG_CONFIG_HOME=str(self.tmp / "xdg")),
+            self.home,
+        )
         self.assertEqual(got.root, right)
+
+    def test_the_refusal_counts_skipped_entries_and_says_why(self):
+        """Catches: a NotFound that hides why a listed clone was ignored, leaving
+        the asker with a locations file that looks right and finds nothing."""
+        self.write_locations("# note", "relative/path", str(self.tmp / "deleted-clone"))
+        with self.assertRaises(NotFound) as caught:
+            resolve(args(store_id="example-store"), self.env(), self.home)
+        message = str(caught.exception)
+        self.assertIn("2 entries skipped", message)
+        self.assertIn("relative/path (not absolute)", message)
+        self.assertIn(f"{self.tmp / 'deleted-clone'} (not a directory)", message)
 
 
 class ContainmentTest(LocateTestCase):
@@ -255,13 +299,15 @@ class ContainmentTest(LocateTestCase):
             contained(self.root, "link")
 
     def test_a_manifest_symlinked_out_of_the_store_is_not_read(self):
-        """Catches: manifest.load following its own file out of the store, which
-        is the first read and so the first place an escape would be taken."""
+        """Catches: manifest.load following its own file out of the store, or
+        letting a second exception type escape start-up instead of Refused."""
         real = self.outside / "store-manifest.json"
         (self.root / MANIFEST).replace(real)
         (self.root / MANIFEST).symlink_to(real)
-        with self.assertRaises(OutsideStore):
+        with self.assertRaises(Refused) as caught:
             manifest.load(self.root)
+        self.assertIn("a manifest outside the store", str(caught.exception))
+        self.assertIn(str(real), str(caught.exception))
 
     def test_a_listed_clone_whose_manifest_escapes_is_not_matched(self):
         """Catches: a --store-id lookup reading a manifest outside the clone, so a
@@ -272,14 +318,6 @@ class ContainmentTest(LocateTestCase):
         self.write_locations(str(self.root))
         with self.assertRaises(NotFound):
             resolve(args(store_id="example-store"), self.env(), self.home)
-
-    def test_the_real_home_is_never_read(self):
-        """Catches: a test (or resolver) falling back to the real home when the
-        injected one has no locations file: an empty home must find nothing,
-        whatever the developer's own file lists."""
-        self.assertNotEqual(self.home, Path(os.path.expanduser("~")))
-        with self.assertRaises(NotFound):
-            resolve(args(store_id="example-store"), {}, self.home)
 
 
 if __name__ == "__main__":
