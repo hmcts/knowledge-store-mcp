@@ -6,14 +6,19 @@ Every answer comes from the query index when it is open, and from the graph,
 read whole, when it is not: the two sources sit behind one small reader, so a
 tool gives the same items either way, and only the envelope says which answered.
 
-Every SQL statement is a constant with bound parameters. Caller text reaches FTS5
-only as a quoted phrase, so its syntax (`NEAR`, `*`, `OR`, a column filter, an
-unbalanced quote) is searched for as words rather than obeyed.
+Every SQL statement is a constant with bound parameters. Search matches word
+prefixes: the caller's text is split into words by FTS5's own `unicode61`
+tokenizer, the one the index was built with, and each word becomes a quoted
+prefix term. So FTS syntax in the text (`NEAR`, `*`, `OR`, a column filter, an
+unbalanced quote) is only ever a word, never an operator. Without the index, the
+graph's labels go into an FTS5 table in memory and the same query runs there, so
+the two modes match and rank alike by construction rather than by imitation.
 """
 
 import re
 import sqlite3
 from collections.abc import Callable
+from contextlib import closing
 from typing import Any
 
 from . import results
@@ -52,6 +57,28 @@ def _count(value: object, what: str, allowed: str, ok: Callable[[int], bool]) ->
     if isinstance(value, bool) or not isinstance(value, int) or not ok(value):
         raise ArgumentRefused(f"{what} must be {allowed}")
     return value
+
+
+# --- The search query ---------------------------------------------------------------
+
+# The tokenizer the index's `labels` table declares (index schema 1.0).
+_TOKENIZER = "unicode61"
+
+
+def _query(text: str) -> str | None:
+    """The FTS5 query for `text`: each distinct word, as `unicode61` splits and folds
+    it, quoted and starred, so every word must begin some word of the label. None
+    when `text` holds no word. SQLite tokenizes, not Python: its Unicode tables are
+    its own, and an imitation would disagree with the index on some characters."""
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute(f"CREATE VIRTUAL TABLE words USING fts5(text, tokenize='{_TOKENIZER}')")
+        db.execute("CREATE VIRTUAL TABLE terms USING fts5vocab(words, instance)")
+        db.execute("INSERT INTO words(text) VALUES (?)", (text,))
+        terms = [term for (term,) in db.execute("SELECT term FROM terms ORDER BY offset")]
+    words = dict.fromkeys(terms)
+    if not words:
+        return None
+    return " ".join('"' + word.replace('"', '""') + '"*' for word in words)
 
 
 # --- The two readers --------------------------------------------------------------
@@ -112,7 +139,9 @@ class _Indexed:
         rows = self._db.execute(_NODE_SELECT + " WHERE n.community = ? ORDER BY n.id", (community,))
         return [_indexed_node(row) for row in rows]
 
-    def search(self, text: str, repo: str | None, kind: str | None) -> list[Node]:
+    def search(self, query: str, repo: str | None, kind: str | None) -> list[Node]:
+        # The id tiebreak is load-bearing although the fixture cannot show it: there,
+        # rowids follow id order, so SQLite's own order for a tie looks the same.
         rows = self._db.execute(
             "SELECT n.id, n.label, n.kind, r.name, f.path, n.url, n.community"
             " FROM labels JOIN nodes n ON n.k = labels.rowid"
@@ -120,15 +149,9 @@ class _Indexed:
             " WHERE labels MATCH ?1 AND (?2 IS NULL OR r.name = ?2)"
             " AND (?3 IS NULL OR n.kind = ?3)"
             " ORDER BY bm25(labels), n.id",
-            (_phrase(text), repo, kind),
+            (query, repo, kind),
         )
         return [_indexed_node(row) for row in rows]
-
-
-def _phrase(text: str) -> str:
-    """`text` as one FTS5 string: in double quotes, each quote inside doubled. FTS5
-    reads everything inside as the words of a phrase, never as operators."""
-    return '"' + text.replace('"', '""') + '"'
 
 
 def _graph_node(raw: dict) -> Node:
@@ -169,6 +192,7 @@ class _InMemory:
                 edges.setdefault(source, set()).add(("out", relation, target))
                 edges.setdefault(target, set()).add(("in", relation, source))
         self._edges = {node_id: sorted(found) for node_id, found in edges.items()}
+        self._labels: sqlite3.Connection | None = None
 
     def node(self, node_id: str) -> Node | None:
         return self._nodes.get(node_id)
@@ -180,20 +204,35 @@ class _InMemory:
     def members(self, community: int) -> list[Node]:
         return [self._nodes[i] for i in self._ids if self._nodes[i]["community"] == community]
 
-    def search(self, text: str, repo: str | None, kind: str | None) -> list[Node]:
-        needle = text.casefold()
-        found = []
-        for node_id in self._ids:
-            node = self._nodes[node_id]
-            label = node["label"]
-            if not isinstance(label, str) or needle not in label.casefold():
-                continue
-            if repo is not None and node["repo"] != repo:
-                continue
-            if kind is not None and node["kind"] != kind:
-                continue
-            found.append(node)
-        return found
+    def search(self, query: str, repo: str | None, kind: str | None) -> list[Node]:
+        rows = self._label_index().execute(
+            "SELECT rowid, bm25(labels) FROM labels WHERE labels MATCH ?", (query,)
+        )
+        ranked = sorted((score, self._ids[rowid]) for rowid, score in rows)
+        found = [self._nodes[node_id] for _, node_id in ranked]
+        return [
+            node
+            for node in found
+            if (repo is None or node["repo"] == repo) and (kind is None or node["kind"] == kind)
+        ]
+
+    def _label_index(self) -> sqlite3.Connection:
+        """The labelled nodes in an FTS5 table in memory, as the index's `labels`
+        holds them, built on the first search. bm25 reads only the table's own
+        statistics, so the same labels rank the same here as in the index."""
+        if self._labels is None:
+            db = sqlite3.connect(":memory:")
+            db.execute(f"CREATE VIRTUAL TABLE labels USING fts5(label, tokenize='{_TOKENIZER}')")
+            db.executemany(
+                "INSERT INTO labels(rowid, label) VALUES (?, ?)",
+                (
+                    (k, self._nodes[node_id]["label"])
+                    for k, node_id in enumerate(self._ids)
+                    if isinstance(self._nodes[node_id]["label"], str)
+                ),
+            )
+            self._labels = db
+        return self._labels
 
 
 Reader = _Indexed | _InMemory
@@ -202,6 +241,10 @@ Reader = _Indexed | _InMemory
 def _reader(store: Store) -> Reader:
     if isinstance(store.index, IndexHandle):
         return _Indexed(store.index.connection)
+    return _in_memory(store)
+
+
+def _in_memory(store: Store) -> _InMemory:
     return store.memo("graph.in_memory", lambda: _InMemory(store.layer("graph")))
 
 
@@ -209,9 +252,19 @@ def _reader(store: Store) -> Reader:
 
 
 def _respond(
-    store: Store, notice: Notice | None, layers_used: list[str], **fields: Any
+    store: Store,
+    notice: Notice | None,
+    layers_used: list[str],
+    *,
+    graph_read_whole: bool = False,
+    **fields: Any,
 ) -> dict[str, Any]:
-    return {**results.envelope(store, layers_used, notice), **fields}
+    """The envelope and `fields`. `graph_read_whole` marks an answer the graph gave
+    although the index is open, because the index failed mid-call."""
+    envelope = results.envelope(store, layers_used, notice)
+    if graph_read_whole:
+        envelope["store"]["index"] = results.INDEX_ABSENT
+    return {**envelope, **fields}
 
 
 def _paged(
@@ -223,11 +276,12 @@ def _paged(
     key: Callable[[Any], Any],
     cursor: str | None,
     cap_bytes: int,
+    graph_read_whole: bool = False,
     **fields: Any,
 ) -> dict[str, Any]:
     """One page of `items`, framed by the envelope and `fields`. An empty list
     says what was searched."""
-    frame = _respond(store, notice, layers_used, **fields)
+    frame = _respond(store, notice, layers_used, graph_read_whole=graph_read_whole, **fields)
     if not items and "searched" not in frame:
         frame["searched"] = results.searched(store, layers_used)
     return results.page(
@@ -326,12 +380,14 @@ def search(
     *,
     cap_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
 ) -> dict[str, Any]:
-    """Nodes whose label matches `text`, best first: by FTS5 `bm25` then id with the
-    index, by id in the fallback. The first `limit` are returned, paged under the
-    cap; `matches` counts every node that matched."""
-    text = _text(text, "search text")
-    if not text.strip():
-        raise ArgumentRefused("search text is empty")
+    """Nodes whose label has a word beginning with each word of `text`, case and
+    Latin accents ignored, best first: by FTS5 `bm25`, then id. The first `limit`
+    are returned, paged under the cap; `matches` counts every node that matched.
+    If the index's full-text table cannot be read, the graph answers and
+    `fallback` says why."""
+    query = _query(_text(text, "search text"))
+    if query is None:
+        raise ArgumentRefused("search text holds no word to match")
     limit = _count(limit, "limit", "a whole number of 1 or more", lambda n: n >= 1)
     if kind is not None:
         kind = _text(kind, "kind")
@@ -356,7 +412,16 @@ def search(
                 **fields,
             )
         repo = answer.name
-    found = reader.search(text, repo, kind)
+    try:
+        found = reader.search(query, repo, kind)
+    except sqlite3.Error as error:
+        if not isinstance(reader, _Indexed):
+            raise
+        # A damaged full-text table: the graph still holds every label.
+        reader = _in_memory(store)
+        layers_used = [reader.layer]
+        fields["fallback"] = f"the index could not be searched ({error}): graph read whole"
+        found = reader.search(query, repo, kind)
     ranked = found[:limit]
     rank = {item["id"]: position for position, item in enumerate(ranked)}
     return _paged(
@@ -368,6 +433,7 @@ def search(
         cursor=cursor,
         cap_bytes=cap_bytes,
         matches=len(found),
+        graph_read_whole="fallback" in fields,
         **fields,
     )
 

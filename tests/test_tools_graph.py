@@ -9,14 +9,16 @@ stand-ins are the clock and the cache directory.
 
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from fixture_store.build import MANIFEST, build
+from fixture_store.build import INDEX_PLAIN, MANIFEST, build
 from knowledgestore_mcp import results, store, tools_graph
 from knowledgestore_mcp.tools_graph import ArgumentRefused
 
@@ -417,17 +419,47 @@ class SearchTest(ToolTestCase):
                 tools_graph.search(session, "refundhandler")["items"], [REFUND_HANDLER]
             )
 
-    def test_the_index_ranks_by_bm25_then_id_and_the_fallback_by_id(self):
-        """Catches: ignoring the rank, reversing it, or breaking a tie by anything
-        but the id. The two-token labels outrank the three-token one, and tie with
-        each other, so the id decides (database before network); the fallback
-        orders by id alone, which puts app-service first."""
+    def test_both_modes_rank_by_bm25_then_id(self):
+        """Catches: ignoring the rank, reversing it, breaking a tie by anything but
+        the id, or a fallback that orders differently from the index. The
+        two-word labels outrank the three-word one and tie with each other, so the
+        id decides: database before network."""
         app = node("infra-modules", "module:app-service", "app-service module", "modules/app-service/main.tf", 1, 1)  # fmt: skip
         database = node("infra-modules", "module:database", "database module", "modules/database/main.tf", 1, 1)  # fmt: skip
         network = node("infra-modules", "module:network", "network module", "modules/network/main.tf", 1, 1)  # fmt: skip
+        for session in self.both():
+            self.assertEqual(tools_graph.search(session, "module")["items"], [database, network, app])  # fmt: skip
+
+    def test_both_modes_match_word_prefixes_alike(self):
+        """Catches: the index and the fallback disagreeing on what matches or in what
+        order (ruling: word-prefix matching in both); a query read as a phrase, so
+        `Pay` misses `PaymentForm`; words joined by OR rather than AND, so `pay
+        card` gains every payment label; or punctuation not splitting words."""
+        expected = {
+            # Every label with a word beginning `pay`, derived from DESIGN.md 3.1.
+            "Pay": {
+                "accounts-web::PaymentForm",
+                "accounts-web::feature:pay",
+                "accounts-web::scenario:pay-saved-card",
+                "gateway-service::PaymentsProxy",
+                "payment-apis::spec:payments",
+                "payments-api::PaymentRepository",
+                "payments-api::PaymentService",
+                "payments-api::PaymentsController",
+                "payments-api::infra:main",
+            },
+            "pay card": {"accounts-web::scenario:pay-saved-card"},
+            "payments-api": {"payment-apis::spec:payments", "payments-api::infra:main"},
+            "Refund*": {"payment-apis::doc:refunds-runbook", "payments-api::RefundHandler"},
+            "app, service!": {"infra-modules::module:app-service"},
+        }
         indexed, fallback = self.both()
-        self.assertEqual(tools_graph.search(indexed, "module")["items"], [database, network, app])
-        self.assertEqual(tools_graph.search(fallback, "module")["items"], [app, database, network])
+        for text, ids in expected.items():
+            with self.subTest(text=text):
+                with_index = tools_graph.search(indexed, text)["items"]
+                without = tools_graph.search(fallback, text)["items"]
+                self.assertEqual({item["id"] for item in with_index}, ids)
+                self.assertEqual(with_index, without)
 
     def test_a_limit_cuts_the_ranking_and_says_how_many_matched(self):
         """Catches: a limit that silently hides matches (plan, No silent truncation):
@@ -498,36 +530,34 @@ class SearchTest(ToolTestCase):
                 self.assertTrue(folded["repository"]["matched_case_insensitively"])
                 self.assertEqual(len(folded["items"]), 3)
 
-    def test_fts_syntax_in_the_text_is_a_phrase_not_a_query(self):
+    def test_fts_syntax_in_the_text_is_only_ever_words(self):
         """Catches: caller text reaching FTS5 as query syntax, where an unbalanced
-        quote or `NEAR(` errors and `OR`, a prefix `*` or a column filter widens
-        the query. Each of these, unquoted, either raises or matches; as a phrase
-        each matches no label."""
-        session = self.session()
-        for text in (
-            '"',
-            'Refund"Handler',
-            "NEAR(",
-            "NEAR(RefundHandler PaymentService)",
-            "RefundHandler OR PaymentService",
-            "Refund*",
-            "*",
-            "-",
-            "label:RefundHandler",
-            "{label}: RefundHandler",
-        ):
-            with self.subTest(text=text):
-                response = tools_graph.search(session, text)
-                self.assertEqual(
-                    {k: response[k] for k in ("matches", "items", "total", "searched")},
-                    {"matches": 0, "items": [], "total": 0, "searched": SEARCHED_INDEX},
-                )
+        quote or `NEAR(` errors and `OR`, `NOT` or a column filter changes the
+        query. Unquoted, each of these raises or matches; as quoted prefix words,
+        each needs a label word that none has, so each matches nothing."""
+        for session, searched in ((self.session(), SEARCHED_INDEX), (self.session("none"), SEARCHED_GRAPH)):  # fmt: skip
+            for text in (
+                'Refund"Handler',
+                "NEAR(",
+                "NEAR(RefundHandler PaymentService)",
+                "RefundHandler OR PaymentService",
+                "RefundHandler NOT PaymentService",
+                "RefundHandler AND",
+                "label:RefundHandler",
+                "{label}: RefundHandler",
+            ):
+                with self.subTest(text=text, searched=searched):
+                    response = tools_graph.search(session, text)
+                    self.assertEqual(
+                        {k: response[k] for k in ("matches", "items", "total", "searched")},
+                        {"matches": 0, "items": [], "total": 0, "searched": searched},
+                    )
 
     def test_text_that_is_not_searchable_is_refused_with_the_reason(self):
-        """Catches: an empty query matching every label in the fallback while matching
-        none in the index, or a NUL or lone surrogate crashing the SQLite bind."""
+        """Catches: text with no word matching every label (an empty AND), or a NUL
+        or lone surrogate crashing the SQLite bind."""
         for session in self.both():
-            for text in ("", "   ", "Refund\x00Handler", "Refund\ud800"):
+            for text in ("", "   ", '"', "*", "-", "Refund\x00Handler", "Refund\ud800"):
                 with self.subTest(text=text), self.assertRaises(ArgumentRefused):
                     tools_graph.search(session, text)
             for limit in (0, -1):
@@ -536,18 +566,46 @@ class SearchTest(ToolTestCase):
 
     def test_a_large_result_pages_under_the_cap(self):
         """Catches: a search response over the cap, or pages that drop or repeat a
-        hit. The substring `e` matches most labels in the fallback."""
-        session = self.session("none")
-        whole = tools_graph.search(session, "e", limit=100)
-        self.assertIsNone(whole["next_page"])
-        pages = [tools_graph.search(session, "e", limit=100, cap_bytes=2048)]
-        while pages[-1]["next_page"] is not None:
-            cursor = pages[-1]["next_page"]
-            pages.append(tools_graph.search(session, "e", limit=100, cursor=cursor, cap_bytes=2048))  # fmt: skip
-        self.assertGreater(len(pages), 1)
-        for page in pages:
-            self.assertLessEqual(len(results.encode(page)), 2048)
-        self.assertEqual([i for p in pages for i in p["items"]], whole["items"])
+        hit. Nine labels have a word beginning `p`."""
+        for session in self.both():
+            whole = tools_graph.search(session, "p", limit=100)
+            self.assertIsNone(whole["next_page"])
+            pages = [tools_graph.search(session, "p", limit=100, cap_bytes=2048)]
+            while pages[-1]["next_page"] is not None:
+                cursor = pages[-1]["next_page"]
+                pages.append(tools_graph.search(session, "p", limit=100, cursor=cursor, cap_bytes=2048))  # fmt: skip
+            self.assertGreater(len(pages), 1)
+            for page in pages:
+                self.assertLessEqual(len(results.encode(page)), 2048)
+            self.assertEqual([i for p in pages for i in p["items"]], whole["items"])
+            self.assertEqual(len(whole["items"]), 9)
+
+
+class DamagedIndexTest(ToolTestCase):
+    def test_a_damaged_full_text_table_falls_back_to_the_graph_and_says_why(self):
+        """Catches: a search that fails outright, or answers wrongly without saying
+        so, when the index's FTS5 data is damaged (ruling 3). The index's other
+        tables still answer `node`."""
+        session = self.session("plain")
+        root = session.current()[0].root
+        session.current()[0].close()
+        with closing(sqlite3.connect(root / INDEX_PLAIN)) as db:
+            # FTS5's shadow tables are guarded against writes; lift the guard to damage one.
+            db.setconfig(sqlite3.SQLITE_DBCONFIG_DEFENSIVE, False)
+            db.execute("UPDATE labels_data SET block = zeroblob(length(block)) WHERE id > 10")
+            db.commit()
+        session = store.Session(lambda: store.open_store(root, self.cache), lambda: NOW)
+        self.addCleanup(lambda: session.current()[0].close())
+
+        response = tools_graph.search(session, "RefundHandler")
+        self.assertEqual(response["items"], [REFUND_HANDLER])
+        self.assertEqual(response["store"]["index"], "absent: graph read whole")
+        self.assertEqual(response["store"]["layers_used"], ["graph"])
+        self.assertTrue(response["fallback"].startswith("the index could not be searched ("))
+        self.assertIn("fts5: corruption found", response["fallback"])
+        self.assertTrue(response["fallback"].endswith("): graph read whole"))
+        node_response = tools_graph.node(session, "payments-api::RefundHandler")
+        self.assertEqual(node_response["store"]["index"], "present")
 
 
 class NodeTest(ToolTestCase):
