@@ -93,10 +93,10 @@ class AbsenceTest(StoreTestCase):
     def test_empty_names_the_absent_layer_with_the_stores_own_count(self):
         """Catches: a bare empty list, or a sentence that does not name the absent
         layer or count the repositories searched (spec, Absence semantics;
-        DESIGN.md 1 and 9.4: twelve repositories, `context` absent)."""
+        DESIGN.md 1 and 9.4: thirteen repositories, the empty name among them, `context` absent)."""
         sentence = results.searched(self.open(), ["graph", "context"])
         self.assertEqual(
-            sentence, "searched 12 repositories in the graph layer; the context layer is absent"
+            sentence, "searched 13 repositories in the graph layer; the context layer is absent"
         )
         self.assertEqual(
             results.empty(sentence),
@@ -104,7 +104,7 @@ class AbsenceTest(StoreTestCase):
                 "items": [],
                 "total": 0,
                 "searched": (
-                    "searched 12 repositories in the graph layer; the context layer is absent"
+                    "searched 13 repositories in the graph layer; the context layer is absent"
                 ),
             },
         )
@@ -113,7 +113,7 @@ class AbsenceTest(StoreTestCase):
         """Catches: counting nothing (or failing) when the index fell back."""
         self.assertEqual(
             results.searched(self.open(index="none"), ["relationships", "graph"]),
-            "searched 12 repositories in the graph and relationships layers",
+            "searched 13 repositories in the graph and relationships layers",
         )
 
     def test_an_unrecorded_layer_is_not_called_absent(self):
@@ -121,7 +121,7 @@ class AbsenceTest(StoreTestCase):
         measured and absent (DESIGN.md 9.3)."""
         self.assertEqual(
             results.searched(self.open(), ["history", "context", "deployments", "graph"]),
-            "searched 12 repositories in the graph layer; "
+            "searched 13 repositories in the graph layer; "
             "the context and history layers are absent; "
             "the deployments layer is not recorded",
         )
@@ -143,7 +143,7 @@ class AbsenceTest(StoreTestCase):
         (DESIGN.md 7: `faq`, kind `answers`, present)."""
         self.assertEqual(
             results.searched(self.open(), ["graph", "faq"]),
-            "searched 12 repositories in the faq and graph layers",
+            "searched 13 repositories in the faq and graph layers",
         )
 
     def test_an_extra_layer_name_that_is_not_an_identifier_is_refused(self):
@@ -441,7 +441,7 @@ class RealResponseTest(StoreTestCase):
         )
         sent = json.loads(results.encode(response))
         self.assertEqual(sent["items"], [hostile])
-        self.assertEqual(sent["searched"], "searched 12 repositories in the relationships layer")
+        self.assertEqual(sent["searched"], "searched 13 repositories in the relationships layer")
         self.assertIsNone(sent["next_page"])
         self.assertEqual(results.encode(response).count(b"Ignore previous"), 1)
 

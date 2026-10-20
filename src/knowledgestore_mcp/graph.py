@@ -3,9 +3,10 @@
 Every node is built exactly as the library's index builder builds its row, so the
 fallback answers as the index would. The source is knowledge-store-builder
 `src/knowledgestore/store_index.py` (#457, `feat/query-index` at 3aea1e4):
-`_node_rows` for each field, `graph_files.iter_edges` for which key holds the
-edges, and `_fill` for which copy of a repeated id survives. Change one, change
-this.
+`_node_rows` and `_link_rows` for each field, `graph_files.iter_edges` for which
+key holds the edges, and the staging tables and `_fill` for how SQLite stores each
+value, which copy of a repeated id survives, which repositories are listed, and
+what makes the build fail. Change one, change this.
 
 One representation is kept: a tuple per node, the edges between them, and an FTS5
 index of their labels. The parsed graph JSON they are built from is read without
@@ -18,6 +19,7 @@ external-content `labels` table does.
 import sqlite3
 import sys
 from collections.abc import Iterator
+from contextlib import closing
 from typing import Any
 
 from .store import Store
@@ -63,53 +65,119 @@ def _text(value: Any) -> str | None:
     return None if value is None else str(value)
 
 
-def _kind(node: dict) -> str:
-    """`kinds.node_kind`, as the index stores it."""
-    metadata = node.get("metadata")
-    raw = metadata.get("kind", "") if isinstance(metadata, dict) else ""
-    if isinstance(raw, str):
-        return LEGACY_KINDS.get(raw, raw)
-    return "" if raw is None else str(raw)
+def _kind(node: dict) -> Any:
+    """`kinds.node_kind`, line for line: a legacy kind becomes the current one, any
+    other value is returned as it is, and staging stores it as the index would."""
+    raw = (node.get("metadata") or {}).get("kind", "")
+    return LEGACY_KINDS[raw] if raw in LEGACY_KINDS else raw
 
 
-def _row(node: dict) -> Row:
-    """`store_index._node_rows`, field for field. A repository and a kind recur on
-    many nodes, so each is held once (`sys.intern`) rather than once per node."""
-    return (
-        node["id"],
-        _text(node.get("label")),
-        sys.intern(node.get("repo") or ""),
-        sys.intern(_kind(node)),
-        node.get("source_file") or "",
-        _text(node.get("url")),
-        node.get("community"),
-    )
+def _node_rows(nodes: list) -> Iterator[tuple]:
+    """`store_index._node_rows`, field for field, before SQLite converts them."""
+    for node in nodes:
+        yield (
+            node["id"],
+            _text(node.get("label")),
+            node.get("repo") or "",
+            _kind(node),
+            node.get("source_file") or "",
+            _text(node.get("url")),
+            node.get("community"),
+        )
 
 
-def _sql_order(value: Any) -> tuple:
-    """`value` as SQLite orders it: NULL first, then numbers, then text."""
-    if value is None:
-        return (0,)
-    if isinstance(value, (int, float)):
-        return (1, value)
-    return (2, str(value))
+def _link_rows(links: list) -> Iterator[tuple]:
+    """`store_index._link_rows`."""
+    for link in links:
+        yield (link["source"], link.get("relation") or "", link["target"])
 
 
-def _survivor_order(row: Row) -> tuple:
-    """`_fill` keeps, of a repeated id, the copy first in `ORDER BY repo, file, kind,
-    label, url, community`, whatever order the graph listed them in."""
-    _, label, repo, kind, file, url, community = row
-    return (repo, file, kind, _sql_order(label), _sql_order(url), _sql_order(community))
-
-
-def _links(graph: dict) -> Iterator[dict]:
+def _links(graph: dict) -> list:
     """`graph_files.iter_edges`: `links`, or `edges` when `links` has none."""
     links = graph.get("links")
     if not isinstance(links, list) or not links:
         links = graph.get("edges")
-    for link in links if isinstance(links, list) else []:
-        if isinstance(link, dict):
-            yield link
+    return links if isinstance(links, list) else []
+
+
+# The library's staging tables and the parts of `_fill` that decide which nodes and
+# edges the index holds, copied from `store_index.py` (STAGING and `_fill`, at
+# 3aea1e4). Staging through SQLite, not imitating it, is the point: column affinity
+# turns 7 into "7", " 0" and "1e3" into integers, and -0.0 into "0.0", and rejects
+# what cannot be bound, exactly as it does for the index.
+_STAGING = """
+CREATE TABLE stg_nodes(id TEXT, label TEXT, repo TEXT, kind TEXT, file TEXT,
+                       url TEXT, community INTEGER);
+CREATE TABLE stg_links(source TEXT, relation TEXT, target TEXT);
+CREATE INDEX stg_nodes_id ON stg_nodes(id);
+"""
+_SURVIVORS = (
+    "SELECT d.id, d.label, d.repo, d.kind, d.file, d.url, d.community FROM ("
+    " SELECT *, ROW_NUMBER() OVER ("
+    "  PARTITION BY id ORDER BY repo, file, kind, label, url, community) AS rn"
+    " FROM stg_nodes) d"
+    " WHERE d.rn = 1 ORDER BY d.id"
+)
+_LIVE = "source IN (SELECT id FROM stg_nodes) AND target IN (SELECT id FROM stg_nodes)"
+_EDGES = f"SELECT DISTINCT source, relation, target FROM stg_links WHERE {_LIVE}"
+_DANGLING = (
+    "SELECT count(*) FROM stg_links WHERE"
+    " source NOT IN (SELECT id FROM stg_nodes) OR target NOT IN (SELECT id FROM stg_nodes)"
+)
+
+# What the index builder raises on, building its rows or binding them: a graph it
+# cannot index is one this reader refuses, rather than answering differently.
+_BUILDER_FAILURES = (
+    KeyError,
+    TypeError,
+    AttributeError,
+    ValueError,
+    OverflowError,
+    sqlite3.Error,
+)
+
+
+class GraphRefused(ValueError):
+    """The graph holds something the library's index builder cannot store, so this
+    reader refuses it too. The message names the problem, never store text."""
+
+
+def _stage(graph: dict) -> tuple[list[tuple], list[tuple], list[str]]:
+    """The surviving node rows, the edges and the repositories, as the index builder
+    would store them. Raises `GraphRefused` where the builder would raise."""
+    raw_nodes = graph.get("nodes")
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.executescript(_STAGING)
+        try:
+            db.executemany(
+                "INSERT INTO stg_nodes VALUES (?,?,?,?,?,?,?)",
+                _node_rows(raw_nodes if isinstance(raw_nodes, list) else []),
+            )
+        except _BUILDER_FAILURES as error:
+            raise GraphRefused(
+                f"a graph node the index builder cannot store ({type(error).__name__})"
+            ) from None
+        try:
+            db.executemany("INSERT INTO stg_links VALUES (?,?,?)", _link_rows(_links(graph)))
+        except _BUILDER_FAILURES as error:
+            raise GraphRefused(
+                f"a graph link the index builder cannot store ({type(error).__name__})"
+            ) from None
+        survivors = db.execute(_SURVIVORS).fetchall()
+        # nodes.id and nodes.kind are NOT NULL: the builder's insert fails on either.
+        if any(row[0] is None or row[3] is None for row in survivors):
+            raise GraphRefused("a graph node with a null id or kind, which the index refuses")
+        edges = db.execute(_EDGES).fetchall()
+        # The builder's own reconciliation, edges + dangling + duplicates = links read,
+        # which is live + dangling = read: a link counted in neither (a null end
+        # beside a live one) fails its build.
+        links_read = db.execute("SELECT count(*) FROM stg_links").fetchone()[0]
+        live = db.execute(f"SELECT count(*) FROM stg_links WHERE {_LIVE}").fetchone()[0]
+        dangling = db.execute(_DANGLING).fetchone()[0]
+        if live + dangling != links_read:
+            raise GraphRefused("a graph link the index builder cannot account for")
+        repositories = [r for (r,) in db.execute("SELECT DISTINCT repo FROM stg_nodes ORDER BY repo")]  # fmt: skip
+    return survivors, edges, repositories
 
 
 class GraphReader:
@@ -118,34 +186,29 @@ class GraphReader:
     layer = "graph"
 
     def __init__(self, graph: Any):
-        graph = graph if isinstance(graph, dict) else {}
-        raw_nodes = graph.get("nodes")
+        survivors, links, repositories = _stage(graph if isinstance(graph, dict) else {})
         rows: dict[str, Row] = {}
-        for raw in raw_nodes if isinstance(raw_nodes, list) else []:
-            if not isinstance(raw, dict) or not isinstance(raw.get("id"), str):
-                continue
-            row = _row(raw)
-            held = rows.get(row[0])
-            if held is None or _survivor_order(row) < _survivor_order(held):
-                rows[row[0]] = row
+        for node_id, label, repo, kind, file, url, community in survivors:
+            # A repository and a kind recur on many nodes: each is held once.
+            rows[node_id] = (node_id, label, sys.intern(repo), sys.intern(kind), file, url, community)  # fmt: skip
         self._rows = rows
-        self._ids = sorted(rows)
-        # Each node's edges both ways, once each: the index's edge key is unique, and
-        # an edge to an id that is not a node is dropped, as the index drops it.
-        edges: dict[str, set[Edge]] = {}
-        for link in _links(graph):
-            source, target = link.get("source"), link.get("target")
-            if source in rows and target in rows:
-                # The node's own id strings, not the link's equal copies of them.
-                source, target = rows[source][0], rows[target][0]
-                relation = sys.intern(_text(link.get("relation") or "") or "")
-                edges.setdefault(source, set()).add(("out", relation, target))
-                edges.setdefault(target, set()).add(("in", relation, source))
+        self._ids = list(rows)  # in the index's order: ORDER BY id
+        self._repositories = repositories
+        # Each node's edges both ways, once each, as the index's unique edge key holds.
+        edges: dict[str, list[Edge]] = {}
+        for source, relation, target in links:
+            # The node's own id strings, not the staging copies of them.
+            source, target = rows[source][0], rows[target][0]
+            relation = sys.intern(relation)
+            edges.setdefault(source, []).append(("out", relation, target))
+            edges.setdefault(target, []).append(("in", relation, source))
         self._edges = {node_id: sorted(found) for node_id, found in edges.items()}
         self._labels: sqlite3.Connection | None = None
 
     def repositories(self) -> list[str]:
-        return sorted({row[2] for row in self._rows.values() if row[2]})
+        """Every repository the index's `repos` lists from the graph: the empty name
+        too, when a node has none, and a repeated id's losing copies included."""
+        return list(self._repositories)
 
     def node(self, node_id: str) -> dict[str, Any] | None:
         row = self._rows.get(node_id)
@@ -192,7 +255,21 @@ class GraphReader:
 
 
 def read(store: Store) -> GraphReader:
-    """The store's graph reader, built once per loaded store and closed with it."""
-    return store.memo(
-        "graph.reader", lambda: GraphReader(store.read("graph")), close=GraphReader.close
-    )
+    """The store's graph reader, built once per loaded store and closed with it. A
+    refused graph is remembered too, so it is not read again on every call."""
+    held = store.memo("graph.reader", lambda: _build(store), close=_close)
+    if isinstance(held, GraphRefused):
+        raise GraphRefused(str(held))
+    return held
+
+
+def _build(store: Store) -> "GraphReader | GraphRefused":
+    try:
+        return GraphReader(store.read("graph"))
+    except GraphRefused as refused:
+        return refused
+
+
+def _close(held: "GraphReader | GraphRefused") -> None:
+    if isinstance(held, GraphReader):
+        held.close()

@@ -7,6 +7,7 @@ real index (or, with `index="none"`, through the real graph fallback); the only
 stand-ins are the clock and the cache directory.
 """
 
+import gzip
 import json
 import os
 import sqlite3
@@ -18,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from fixture_store.build import INDEX_PLAIN, MANIFEST, build
+from fixture_store.build import GRAPH, INDEX_PLAIN, MANIFEST, build
 from knowledgestore_mcp import graph, results, store, tools_graph
 from knowledgestore_mcp.tools_graph import ArgumentRefused
 
@@ -93,6 +94,35 @@ FORM_FIELD = node(
     4,
     1,
 )
+# DESIGN.md 3.5: the values the index converts, as it stores them.
+NOTIFY = "https://github.com/example-org/notifications-service/blob/" + "7" * 40 + "/"
+RETRY = {
+    "id": "7",
+    "label": "Delivery retry policy",
+    "repo": "notifications-service",
+    "kind": "",
+    "file": "src/retry.py",
+    "url": NOTIFY + "src/retry.py#L3",
+    "community": 1,
+}
+SMS_TEMPLATE = {
+    "id": "notifications-service::SmsTemplate",
+    "label": "SmsTemplate",
+    "repo": "notifications-service",
+    "kind": "",
+    "file": "src/templates/sms.py",
+    "url": NOTIFY + "src/templates/sms.py#L2",
+    "community": 1,
+}
+GLOSSARY = {
+    "id": "glossary::payments",
+    "label": "Payments glossary",
+    "repo": "",
+    "kind": "",
+    "file": "knowledge/glossary/payments.md",
+    "url": None,
+    "community": None,
+}
 STRUCTURAL = {
     "id": "ledger-service::com.example.ledger",
     "label": None,
@@ -213,7 +243,9 @@ def searched_in(base: str, *more: str) -> str:
     """The `searched` sentence for the layer that answered, and any more it read."""
     layers = " and ".join((base, *more))
     noun = "layers" if more else "layer"
-    return f"searched 12 repositories in the {layers} {noun}"
+    # DESIGN.md 1: the index lists 13, the empty name among them, and so does the
+    # fallback.
+    return f"searched 13 repositories in the {layers} {noun}"
 
 
 class ToolTestCase(unittest.TestCase):
@@ -493,6 +525,7 @@ class SearchTest(ToolTestCase):
                 "accounts-web::scenario:pay-new-card",
                 "accounts-web::scenario:pay-saved-card",
                 "gateway-service::PaymentsProxy",
+                "glossary::payments",
                 "payment-apis::spec:payments",
                 "payments-api::PaymentRepository",
                 "payments-api::PaymentService",
@@ -622,7 +655,8 @@ class SearchTest(ToolTestCase):
 
     def test_a_large_result_pages_under_the_cap(self):
         """Catches: a search response over the cap, or pages that drop or repeat a
-        hit. Ten labels have a word beginning `p`."""
+        hit. Twelve labels have a word beginning `p` (with "Payments glossary" and
+        "Delivery retry policy", DESIGN.md 3.5)."""
         for session in self.both():
             whole = tools_graph.search(session, "p", limit=100)
             self.assertIsNone(whole["next_page"])
@@ -636,7 +670,7 @@ class SearchTest(ToolTestCase):
             for page in pages:
                 self.assertLessEqual(len(results.encode(page)), 2048)
             self.assertEqual([i for p in pages for i in p["items"]], whole["items"])
-            self.assertEqual(len(whole["items"]), 10)
+            self.assertEqual(len(whole["items"]), 12)
 
 
 class DamagedIndexTest(ToolTestCase):
@@ -808,7 +842,7 @@ class CommunityTest(ToolTestCase):
 
     def test_members_page_under_the_cap_and_reassemble(self):
         """Catches: a community response over the cap, or pages that drop or repeat
-        a member (DESIGN.md 3.3: community 1 has 22)."""
+        a member (DESIGN.md 3.3: community 1 has 24)."""
         session = self.session()
         pages = [tools_graph.community(session, 1, cap_bytes=4096)]
         while pages[-1]["next_page"] is not None:
@@ -818,7 +852,7 @@ class CommunityTest(ToolTestCase):
         for page in pages:
             self.assertLessEqual(len(results.encode(page)), 4096)
         members = [m["id"] for p in pages for m in p["items"]]
-        self.assertEqual(len(members), 22)
+        self.assertEqual(len(members), 24)
         self.assertEqual(members, sorted(set(members)))
 
 
@@ -836,6 +870,101 @@ class NormalisedNodeTest(ToolTestCase):
                 self.assertEqual(tools_graph.search(session, "FormField")["items"], [FORM_FIELD])
                 members = tools_graph.community(session, 1)["items"]
                 self.assertEqual([m for m in members if m["id"] == FORM_FIELD["id"]], [FORM_FIELD])
+
+    def test_both_modes_convert_values_as_the_index_does(self):
+        """Catches: a fallback that drops or mis-keys a node whose id is a number,
+        keeps a community written as text as text (so it is in no community), or
+        leaves a node with no repository out of the repositories the index lists
+        (DESIGN.md 3.5; the index builder's staging affinity)."""
+        for session, index, base in self.modes():
+            with self.subTest(index=index):
+                for expected in (RETRY, SMS_TEMPLATE, GLOSSARY):
+                    self.assertEqual(tools_graph.node(session, expected["id"])["node"], expected)
+                neighbours = tools_graph.neighbours(session, "notifications-service::EmailChannel")
+                self.assertIn(
+                    {
+                        "depth": 1,
+                        "node": RETRY,
+                        "via": [
+                            {
+                                "from": "notifications-service::EmailChannel",
+                                "relation": "references",
+                                "direction": "out",
+                            }
+                        ],
+                    },
+                    neighbours["items"],
+                )
+                members = tools_graph.community(session, 1)["items"]
+                self.assertIn(RETRY, members)
+                self.assertIn(SMS_TEMPLATE, members)
+                self.assertEqual(
+                    results.repository_names(session.current()[0]),
+                    ["", *sorted(SHA_DIGIT)],
+                )
+                self.assertEqual(tools_graph.search(session, "glossary")["items"], [GLOSSARY])
+
+    def test_a_graph_the_index_builder_refuses_is_refused(self):
+        """Catches: a fallback that answers from a graph the index builder cannot
+        store - here a community that is a JSON object, which SQLite cannot bind -
+        so that the store would answer differently once indexed; or a refusal that
+        quotes store text."""
+        live = {"id": "r::b", "repo": "r"}
+        for name, refused_graph in {
+            "community object": {"nodes": [{"id": "r::secret", "repo": "r", "community": {}}]},
+            "id missing": {"nodes": [{"repo": "r"}]},
+            "kind null": {"nodes": [{"id": "r::a", "metadata": {"kind": None}}]},
+            "null end beside a live one": {
+                "nodes": [live],
+                "links": [{"source": None, "relation": "x", "target": "r::b"}],
+            },
+        }.items():
+            with self.subTest(graph=name), self.assertRaises(graph.GraphRefused):
+                graph.GraphReader(refused_graph)
+        session = self.session("none")
+        root = session.current()[0].root
+        session.current()[0].close()
+        refused = {"nodes": [{"id": "r::secret", "label": "Secret", "repo": "r", "community": {}}]}
+        (root / GRAPH).write_bytes(gzip.compress(json.dumps(refused).encode("utf-8")))
+        session = store.Session(lambda: store.open_store(root, self.cache), lambda: NOW)
+        self.addCleanup(lambda: session.current()[0].close())
+        for _ in range(2):
+            with self.assertRaises(graph.GraphRefused) as raised:
+                tools_graph.node(session, "r::secret")
+            self.assertNotIn("secret", str(raised.exception).lower())
+
+    def test_repositories_are_listed_from_every_copy_of_a_node(self):
+        """Catches: repositories listed from surviving nodes only, where the index's
+        `repos` lists every staged copy's - so a repeated id's losing copy in
+        another repository is still a repository (library `_fill`)."""
+        reader = graph.GraphReader(
+            {
+                "nodes": [
+                    {"id": "r::a", "label": "A", "repo": "r"},
+                    {"id": "r::a", "label": "A", "repo": "s"},
+                ]
+            }
+        )
+        self.assertEqual(reader.repositories(), ["r", "s"])
+        self.assertEqual(
+            reader.node("r::a"),
+            {"id": "r::a", "label": "A", "repo": "r", "kind": "", "file": None, "url": None, "community": None},
+        )  # fmt: skip
+
+    def test_a_label_that_is_not_a_string_is_its_python_text(self):
+        """Catches: a label handed to SQLite as it is, where the builder first takes
+        its `str()` (`store_index._text`): SQLite would store `true` as "1" and
+        refuse an object, where the index holds "True" and "{'a': 1}"."""
+        reader = graph.GraphReader(
+            {
+                "nodes": [
+                    {"id": "r::flag", "repo": "r", "label": True},
+                    {"id": "r::object", "repo": "r", "label": {"a": 1}},
+                ]
+            }
+        )
+        labels = [(reader.node(i) or {}).get("label") for i in ("r::flag", "r::object")]
+        self.assertEqual(labels, ["True", "{'a': 1}"])
 
     def test_edges_are_read_from_either_key(self):
         """Catches: a fallback that reads only `links`, so a graph whose edges sit
@@ -919,6 +1048,12 @@ class BothModesTest(ToolTestCase):
             ("node legacy kind", lambda s: tools_graph.node(s, NEW_CARD["id"])),
             ("node numeric label", lambda s: tools_graph.node(s, REPLICAS["id"])),
             ("node repeated id", lambda s: tools_graph.node(s, FORM_FIELD["id"])),
+            ("node numeric id", lambda s: tools_graph.node(s, "7")),
+            ("node no repository", lambda s: tools_graph.node(s, GLOSSARY["id"])),
+            (
+                "neighbours numeric id",
+                lambda s: tools_graph.neighbours(s, "notifications-service::EmailChannel"),
+            ),
             ("search scenario", lambda s: tools_graph.search(s, "pay", kind="scenario")),
             ("community 0", lambda s: tools_graph.community(s, 0)),
             ("community 1", lambda s: tools_graph.community(s, 1)),

@@ -147,13 +147,49 @@ DUPLICATE_NODES = (
     ("ui-components", "FormFieldComponent", "FormFieldComponent (legacy)", "src/form-field/form-field.component.ts", 4, 1, ""),
 )  # fmt: skip
 
+# Three nodes written as raw graph JSON, each breaking a rule the index builder
+# normalises (DESIGN.md 3.5): an id that is a number, a community written as text,
+# and a node with no repository - a knowledge-corpus page, which no clone holds.
+_NOTIFY = "https://github.com/example-org/notifications-service/blob/" + "7" * 40 + "/"
+RAW_NODES: tuple[dict, ...] = (
+    {
+        "id": 7,
+        "label": "Delivery retry policy",
+        "repo": "notifications-service",
+        "source_file": "src/retry.py",
+        "source_location": "L3",
+        "community": 1,
+        "file_type": "code",
+        "metadata": {},
+        "url": _NOTIFY + "src/retry.py#L3",
+    },
+    {
+        "id": "notifications-service::SmsTemplate",
+        "label": "SmsTemplate",
+        "repo": "notifications-service",
+        "source_file": "src/templates/sms.py",
+        "source_location": "L2",
+        "community": "1",
+        "file_type": "code",
+        "metadata": {},
+        "url": _NOTIFY + "src/templates/sms.py#L2",
+    },
+    {
+        "id": "glossary::payments",
+        "label": "Payments glossary",
+        "source_file": "knowledge/glossary/payments.md",
+        "file_type": "document",
+        "metadata": {},
+    },
+)
+
 # The library's `kinds._ALIASES`, flattened: a legacy kind and the kind it is now.
 # Copied, not imported from the server, so the fixture stays independent of it.
 LEGACY_KINDS = {"gherkin_feature": "feature", "gherkin_scenario": "scenario", "jira_ticket": "ticket"}  # fmt: skip
 
 # (source, relation, target), as `<repo>::<local id>`. The first two are the
-# 2-cycle.
-LINKS: tuple[tuple[str, str, str], ...] = (
+# 2-cycle. The last points at a node whose id is the number 7 (DESIGN.md 3.5).
+LINKS: tuple[tuple[str, str, str | int], ...] = (
     ("payments-api::PaymentService", "calls", "payments-api::RefundHandler"),
     ("payments-api::RefundHandler", "calls", "payments-api::PaymentService"),
     ("payments-api::PaymentsController", "calls", "payments-api::PaymentService"),
@@ -190,6 +226,7 @@ LINKS: tuple[tuple[str, str, str], ...] = (
     ("infra-modules::module:app-service", "imports", "infra-modules::module:network"),
     ("infra-modules::module:app-service", "imports", "infra-modules::module:database"),
     ("payment-apis::doc:refunds-runbook", "references", "payments-api::RefundHandler"),
+    ("notifications-service::EmailChannel", "references", 7),
 )  # fmt: skip
 
 COMMUNITY_LABELS = {"0": "Payments and the ledger", "1": "Platform and delivery"}
@@ -287,7 +324,7 @@ TICKET_DESCRIPTIONS_DATA: dict[str, dict] = {
 # manifest's deployments flag is null - unknown, not false.
 TELEMETRY_DATA = {
     "intent.repositories_without_reach": 0,
-    "source_urls.linked": 42,
+    "source_urls.linked": 44,
 }
 
 # --- Relationships -----------------------------------------------------------
@@ -433,6 +470,7 @@ def graph_document() -> dict:
             "url": f"{base_url(repo)}{path}#L{line}",
         }
         nodes.append(node)
+    nodes.extend(dict(raw) for raw in RAW_NODES)
     nodes.append({"id": STRUCTURAL_NODE, "repo": "ledger-service", "metadata": {}})
     links = [{"source": s, "relation": r, "target": t} for s, r, t in LINKS]
     return {"directed": True, "multigraph": False, "graph": {}, "nodes": nodes, "links": links}
@@ -553,6 +591,19 @@ def _ticket_rows() -> list[tuple[str, str, str, int, int]]:
     return rows
 
 
+def _staged(node: dict) -> dict:
+    """A node as the index's staging table stores it, for the values this fixture
+    writes: a numeric id becomes its text, a missing repository "", and a community
+    written as digits an integer (SQLite column affinity)."""
+    community = node.get("community")
+    return {
+        **node,
+        "id": str(node["id"]),
+        "repo": node.get("repo") or "",
+        "community": int(community) if isinstance(community, str) else community,
+    }
+
+
 def _label(node: dict) -> str | None:
     """`store_index._text`: a label that is not a string is stored as its text."""
     return None if node.get("label") is None else str(node["label"])
@@ -582,14 +633,18 @@ def _index_rows(graph: dict) -> dict[str, list[tuple]]:
     """Every final table's rows, keyed and ordered as `store_index._fill` orders
     them: each table sorted on its content, so keys never follow input order."""
     tickets = _ticket_rows()
-    nodes = graph["nodes"]
+    nodes = [_staged(n) for n in graph["nodes"]]
+    links = [
+        {**link, "source": str(link["source"]), "target": str(link["target"])}
+        for link in graph["links"]
+    ]
     repos = sorted({n["repo"] for n in nodes} | {row[0] for row in tickets})
     repo_k = {name: k for k, name in enumerate(repos, 1)}
     file_pairs = {(n["repo"], n.get("source_file") or "") for n in nodes}
     file_pairs |= {(row[0], row[1]) for row in tickets}
     files = sorted(file_pairs, key=lambda pair: (repo_k[pair[0]], pair[1]))
     file_k = {pair: k for k, pair in enumerate(files, 1)}
-    relations = sorted({link["relation"] for link in graph["links"]})
+    relations = sorted({link["relation"] for link in links})
     relation_k = {name: k for k, name in enumerate(relations, 1)}
     survivors: dict[str, dict] = {}
     for n in nodes:
@@ -617,7 +672,7 @@ def _index_rows(graph: dict) -> dict[str, list[tuple]]:
         "edges": sorted(
             {
                 (node_k[link["source"]], relation_k[link["relation"]], node_k[link["target"]])
-                for link in graph["links"]
+                for link in links
             }
         ),
         "tickets": sorted(

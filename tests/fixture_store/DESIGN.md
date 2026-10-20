@@ -36,8 +36,11 @@ checks that every trap is still in the store, by its literal value.
 | `shared-lib-java` | `b` | `2026-09-12T09:00:00+01:00` |
 | `ui-components` | `c` | `2026-10-07T15:30:00+01:00` |
 
-Every repository has graph nodes, so the index's `repos` table holds all twelve
-(`k` 1 to 12 in the order above), and every repository has a `by-repo` file.
+Every repository has graph nodes, and every repository has a `by-repo` file. The
+index's `repos` table holds all twelve, and also the empty name, because one graph
+node has no repository (section 3.5): `""` sorts first, so it is `k` 1 and the
+twelve are `k` 2 to 13 in the order above. A reader that counts repositories from
+the index counts 13, and the fallback reader lists them as the index does.
 
 ## 2. Near misses
 
@@ -65,12 +68,14 @@ re-sorted by (similarity descending, name ascending).
 
 ### 3.1 Nodes
 
-45 node entries, 43 distinct ids: one id is listed three times (section 3.4). 42 ids
-carry a `label`, a `source_file`, a `source_location` and a pinned `url` of the
-form `https://github.com/example-org/<repo>/blob/<sha>/<path>#L<line>`.
-`source_urls.linked` in telemetry is therefore 42.
+48 node entries, 46 distinct ids: one id is listed three times (section 3.4). 45
+ids carry a `label` and a `source_file`. 44 of those also carry a
+`source_location` and a pinned `url` of the form
+`https://github.com/example-org/<repo>/blob/<sha>/<path>#L<line>`; the 45th, the
+glossary page, belongs to no repository and has no url (section 3.5).
+`source_urls.linked` in telemetry is therefore 44.
 
-The 43rd is the structural node `ledger-service::com.example.ledger`: no `label`,
+The 46th is the structural node `ledger-service::com.example.ledger`: no `label`,
 no `source_file`, no `url`, no `community` (library CLAUDE.md 6.4). A reader must
 not fail on it, and it is never a search hit: the index's FTS table holds only
 labelled nodes.
@@ -82,7 +87,7 @@ legacy form of `scenario`: section 3.4). Every other node's kind is `""`.
 
 ### 3.2 Edges and the 2-cycle
 
-36 links, relations `calls`, `contains`, `imports` and `references`. The 2-cycle:
+37 links, relations `calls`, `contains`, `imports` and `references`. The 2-cycle:
 `payments-api::PaymentService` calls `payments-api::RefundHandler`, and
 `payments-api::RefundHandler` calls `payments-api::PaymentService`.
 
@@ -101,7 +106,7 @@ summary (`knowledge/summaries/communities.json`):
 | Id | Label | Members |
 |---|---|---|
 | `0` | Payments and the ledger | 20: every node of accounts-web, gateway-service, ledger-service (bar the structural node), payment-apis and payments-api |
-| `1` | Platform and delivery | 22: every node of audit-service, chart-web, infra-modules, notifications-service, reporting-worker, shared-lib-java and ui-components |
+| `1` | Platform and delivery | 24: every node of audit-service, chart-web, infra-modules, notifications-service, reporting-worker, shared-lib-java and ui-components |
 
 The summaries file carries the library's `_metadata` block, which is not a
 community.
@@ -125,6 +130,23 @@ nodes test that:
   order, whatever order the graph listed them in: `FormField`, the middle one.
   A reader keeping the first listed copy or the last keeps the wrong one.
 
+### 3.5 Values the index converts
+
+Three more nodes are written as raw graph JSON, each with a value the index's
+staging tables convert (SQLite column affinity) or default. A reader without the
+index must store each as the index does:
+
+- **An id that is a number.** The node `7` ("Delivery retry policy",
+  notifications-service, community 1) is stored with the id `"7"`.
+  `notifications-service::EmailChannel` `references` it, written with the number
+  `7` as its target, and the index keeps that edge.
+- **A community written as text.** `notifications-service::SmsTemplate` has the
+  community `"1"`, stored as the integer `1`: it is a member of community 1.
+- **No repository.** `glossary::payments` ("Payments glossary",
+  `knowledge/glossary/payments.md`, a knowledge-corpus page) has no `repo`, no
+  `url` and no `community`. It is stored under the repository `""`, which the
+  index's `repos` table therefore lists (section 1).
+
 ## 4. Index
 
 Built from the same graph and ticket layer with the schema in
@@ -132,10 +154,12 @@ Built from the same graph and ticket layer with the schema in
 `1.0`, `meta.graph` is `graphify-out/graph.json.gz`, and `graph_sha256` and
 `file_tickets_sha256` are the 16-hex digests of those two files.
 
-- `repos` 12, `files` 41, `relations` 4, `nodes` 43, `edges` 36, `tickets` 5.
-- `nodes.community`: 20 rows `0`, 22 rows `1`, one `NULL`.
+- `repos` 13 (the twelve and `""`), `files` 44, `relations` 4, `nodes` 46,
+  `edges` 37, `tickets` 5.
+- `nodes.community`: 20 rows `0`, 24 rows `1`, two `NULL` (the structural node and
+  the glossary page).
 - `tickets.landed`: `EX-201` is the only row with `0`.
-- FTS5 `labels` holds the 42 labels. `"RefundHandler"` matches one node,
+- FTS5 `labels` holds the 45 labels. `"RefundHandler"` matches one node,
   `payments-api::RefundHandler`.
 
 The index was checked against the library's own `store_index.build` over the same
@@ -306,7 +330,7 @@ gets the wrong one.
 
 ### 9.3 Flags
 
-- `layers.graph.source_urls`: `true` (`source_urls.linked` is 42).
+- `layers.graph.source_urls`: `true` (`source_urls.linked` is 44).
 - `layers.intent.reach`: `true`.
 - `layers.deployments.present`: `null`. Nothing recorded `deployments.pairs`, so
   it is unknown - not `false`, which would mean measured and absent.

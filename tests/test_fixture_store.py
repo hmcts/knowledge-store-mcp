@@ -262,7 +262,7 @@ class IndexTest(FixtureStoreCase):
             db.execute(
                 "SELECT community, count(*) FROM nodes GROUP BY community ORDER BY community"
             ).fetchall(),
-            [(None, 1), (0, 20), (1, 22)],
+            [(None, 2), (0, 20), (1, 24)],
         )
         self.assertEqual(
             db.execute(
@@ -274,7 +274,7 @@ class IndexTest(FixtureStoreCase):
         )
         self.assertEqual(
             [name for (name,) in db.execute("SELECT name FROM repos ORDER BY k")],
-            TWELVE_REPOSITORIES,
+            ["", *TWELVE_REPOSITORIES],
         )
 
     def test_the_nodes_the_index_normalises(self):
@@ -346,7 +346,8 @@ class TrapTest(FixtureStoreCase):
         self.assertInDesign("`payment-api`", "`Ledger-Service`", '["payment-apis", "payments-api"]')
         held = set(_json(self.root, "knowledge/provenance.json")["repositories"])
         graph = _json(self.root, "graphify-out/graph.json.gz")
-        self.assertEqual(held, {node["repo"] for node in graph["nodes"]})
+        # The glossary page has no repository (DESIGN.md 3.5).
+        self.assertEqual(held, {node["repo"] for node in graph["nodes"] if "repo" in node})
         self.assertLessEqual({"payments-api", "payment-apis", "ledger-service"}, held)
         self.assertNotIn("payment-api", held)
         self.assertNotIn("Ledger-Service", held)
@@ -356,11 +357,13 @@ class TrapTest(FixtureStoreCase):
         its 2-cycle, a pinned URL, or a community summary. DESIGN.md section 3."""
         graph = _json(self.root, "graphify-out/graph.json.gz")
         nodes = {node["id"]: node for node in graph["nodes"]}
-        self.assertEqual(len(graph["nodes"]), 45)
-        self.assertEqual(len(nodes), 43)
+        self.assertEqual(len(graph["nodes"]), 48)
+        self.assertEqual(len(nodes), 46)
         labelled = [n for n in nodes.values() if "label" in n]
-        self.assertEqual(len(labelled), 42)
-        for node in labelled:
+        self.assertEqual(len(labelled), 45)
+        pinned = [n for n in labelled if "url" in n]
+        self.assertEqual(len(pinned), 44)
+        for node in pinned:
             self.assertRegex(
                 node["url"], r"^https://github\.com/example-org/[a-z-]+/blob/[0-9a-f]{40}/.+#L\d+$"
             )
