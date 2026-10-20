@@ -1,9 +1,7 @@
 # knowledge-store-mcp: design
 
 **Status:** draft 2. Reviewed by the first consuming store; awaiting owner sign-off.
-**Repositories:**
-- `knowledge-store-builder`, the library. Part A, the store contract.
-- `knowledge-store-mcp`, a new public repository. Part B, the server. Create it when implementation starts.
+**Scope:** the server in this repository. The store contract it reads is designed in `knowledge-store-builder` (see *What the server depends on*).
 
 **Names:** each runs from least specific to most.
 
@@ -43,86 +41,33 @@ The same evaluation showed that guidance alone moves accuracy a long way. A shor
 
 ---
 
-## Part A: the store contract (library)
+## What the server depends on
 
-The server must never guess what a store contains. The library states it, and versions it.
+The store is built by `knowledge-store-builder`, and everything the server serves comes from it. The server holds no credentials and makes no network calls. It needs only a path to a built store.
 
-### A1. A store manifest with a format version
+The contract between the two repositories is designed and built in the library:
 
-A new committed file, `knowledge/store-manifest.json`, is written by the stages that already write the store. It is written last, by `context`, and carries:
+| Library issue | What the server relies on |
+|---|---|
+| hmcts/knowledge-store-builder#454: store manifest | `knowledge/store-manifest.json`: `format.major`/`minor`, `store.id`, `store.github_org`, and each layer's measured `present` flag, plus `extra_layers` |
+| hmcts/knowledge-store-builder#455: relationships layer | `knowledge/relationships/by-repo/<repo>.json` and `repository-dependencies.json`. Edges carry `references`, `kinds`, `refs_pinned` and `examples`, and targets outside the estate are listed |
+| hmcts/knowledge-store-builder#456: fixture store | a synthetic store attached to each library release, which this repository's CI tests against |
+
+**The one rule the server enforces:** it reads the format major versions it was written for, and refuses any other. A newer minor version is read, and its unknown layers are reported as present but unread.
+
+## Configuration
+
+The only setting is the store's path. A client launches the server like this:
 
 ```json
-{
-  "format": {"major": 1, "minor": 0},
-  "store": {"id": "example-store", "github_org": "example-org"},
-  "library_version": "0.18.0",
-  "built": "2026-10-20T09:00:00Z",
-  "layers": {
-    "graph":        {"path": "graphify-out/graph.json.gz", "present": true},
-    "provenance":   {"path": "knowledge/provenance.json", "present": true},
-    "source_urls":  {"present": true},
-    "intent":       {"path": "knowledge/intent/file-tickets.json.gz", "present": true, "reach": true},
-    "descriptions": {"path": "knowledge/intent/ticket-descriptions.json.gz", "present": true},
-    "summaries":    {"path": "knowledge/summaries/communities.json", "present": true},
-    "relationships":{"path": "knowledge/relationships/by-repo/", "present": false}
-  }
-}
+{ "mcpServers": { "knowledge-store": {
+    "command": "knowledge-store-mcp",
+    "args": ["--store", "/path/to/a/built/store"] } } }
 ```
 
-- **What the format version means.** The **major** version changes when a reader written for the old version would misread the store: a field changes meaning or a file moves. The **minor** version changes when a layer or field is added. `reach: true` records that `tickets` holds landed work only (hmcts/knowledge-store-builder#428). A store exported before that change reports `false`.
-- **Store identity.** `store.id` names the store, so a client holding several stores can tell them apart. `store.github_org` is the org that pinned URLs are built from, so no reader has to infer it.
-- **What `present` means.** It is measured from the files when the manifest is written, never assumed.
-- **Store-specific layers.** A store's own layers, such as one store's service registry, are declared under `extra_layers`, each with a path and a one-line description. The server lists them; it doesn't interpret them.
-- **Enforcement.** The library holds the manifest to the code with a test. A layer the code writes but the manifest doesn't list fails the suite.
+A store's plugin can declare this, so an asker installs the plugin and never edits it. The only access an asker needs is read access to clone the store repository.
 
-### A2. A standard relationships layer, parsed from declarations
-
-Today the per-repository answer files are a store script, not library output. The evaluation shows they're the single biggest lever on cost.
-
-**Source: declarations, not graph edges.** The graph's links are symbol-level and stop at the repository boundary, so they can't answer which repositories depend on which. A new stage, `knowledgestore relationships`, parses each repository's own declarations deterministically. The first consuming store already runs such a parser, with tests and mutations, and it is upstreamed and generalised here. The library's existing `USES_MODULE` and `uses_chart` graph edges have to come from the same parser, so the graph and the layer can never give two answers.
-
-**Edge kinds** (repository to repository, aggregated):
-
-| Kind | Read from |
-|---|---|
-| `terraform_module` | `source = "git::…/<org>/<repo>.git?ref=<ref>"` |
-| `helm_chart` | `Chart.yaml` dependencies, and Flux `HelmRelease`s sourced from a `GitRepository` or a `HelmRepository` |
-
-**How a chart name resolves to the repository that defines it**, in order:
-1. the repository named `chart-<name>`;
-2. otherwise, the single non-umbrella repository that defines it;
-3. otherwise, the umbrella repository.
-
-The umbrella repository set and the GitHub org are configuration, never hard-coded. The `Chart.yaml` reader uses only the standard library, and is held to PyYAML's output by a test.
-
-**What each edge carries:**
-- `references`, a count;
-- `kinds`, counts per kind;
-- `refs_pinned`, mapping each ref to a count, so a question like "which consumers pin X to a tag other than 4.x, or to a branch" is answerable;
-- `examples`, each a pinned URL plus the matched line.
-
-**Output files:**
-- `knowledge/relationships/repository-dependencies.json`: every edge across the estate, plus `unresolved_targets_outside_estate`. A dependency on something the store doesn't hold is then reported as exactly that, never as "no dependency".
-- `knowledge/relationships/by-repo/<repo>.json`, one per repository, holding:
-  - the repository, its provenance commit and its base URL;
-  - `depends_on` and `depended_on_by`, complete and never capped;
-  - an `extra` object, which a store fills with its own joined data (for example services from a registry) and declares in the manifest. The server passes `extra` through without interpreting it.
-
-**Store-specific layers** stay with the store, declared as `extra_layers`: service registries, product taxonomies, workspace manifests.
-
-**Parity gate before a store switches over.** On the first consuming store, the library stage's output must equal the store script's output, edge for edge. Only then does the store retire its script.
-
-### A3. A synthetic fixture store, published per release
-
-The release workflow builds a small, fully synthetic store through the real pipeline, and attaches it to the GitHub release as `knowledge-store-fixture-<version>.tar.gz`:
-- a handful of invented repositories, with one case of each edge kind, a squash merge, and a branch-only ticket;
-- no estate data.
-
-The library's own test suite builds the same fixture, so a release can't publish one the pipeline doesn't produce.
-
----
-
-## Part B: the server
+## The server
 
 ### B1. Start-up
 
@@ -141,7 +86,7 @@ Every result carries `store`, which holds the format, library version, build dat
 |---|---|---|
 | `store_info()` | the format, versions, build date, per-repository provenance (sha, date), and each layer's present/absent state; plus `stale_days` | staleness or a missing layer read as an answer |
 | `find_repo(name)` | an exact match, or `{exact: null, near_misses: [...]}` with each candidate labelled as a near miss, never as the answer | a similar name substituted for one that doesn't exist |
-| `repo_answer(repo)` | the repository's relationships file (A2), whole, or "layer absent" | reading a large file whole and truncating it |
+| `repo_answer(repo)` | the repository's relationships file (knowledge-store-builder#455), whole, or "layer absent" | reading a large file whole and truncating it |
 | `dependents(target, kind?, ref_prefix_not?, page?)` / `dependencies(repo, kind?, page?)` | items, each with `references`, `kinds`, `refs_pinned` and example lines with pinned URLs, plus `total` and `next_page`; never cut without saying so. `ref_prefix_not` keeps only consumers that pin something other than a given ref prefix (for example a tag other than `4.`, or a branch) | an incomplete list read as complete; pin questions not answerable through the tools |
 | `search(text, repo?, kind?, limit)` | ranked nodes: id, label, repo, kind, `url` | corpus paths as citations |
 | `node(id)`, `neighbours(id, depth≤2, relation?)`, `community(id)` | graph access; each node carries its `url` and each community its summary | the same |
@@ -177,11 +122,11 @@ It never returns a bare empty list. A call such as `dependents("<a name the esta
 
 ### B4. Contract tests
 
-The server's CI downloads the latest library release's fixture store (A3) and runs every tool against it, asserting exact results that were hand-derived from the fixture's design. A scheduled job also runs against the library's `main` fixture, so a contract change is seen before it is released.
+The server's CI downloads the latest library release's fixture store (knowledge-store-builder#456) and runs every tool against it, asserting exact results that were hand-derived from the fixture's design. A scheduled job also runs against the library's `main` fixture, so a contract change is seen before it is released.
 
 ### B5. Acceptance
 
-The first consuming store re-runs its evaluation question set through the tools, against a store whose A2 layer comes from **the library stage**, not the store's script, so parity is tested end to end. The comparison arm is the best existing Claude Code arm (E).
+The first consuming store re-runs its evaluation question set through the tools, against a store whose relationships layer (#455) comes from **the library stage**, not the store's script, so parity is tested end to end. The comparison arm is the best existing Claude Code arm (E).
 
 **Measured with `knowledgestore answers --compare`.** The server passes when all of these hold:
 - **Non-inferior on accuracy.** The lower 95% confidence bound of (MCP − E) is above −0.03. "At least equal" would flip on noise near the ceiling.
@@ -207,10 +152,6 @@ The first consuming store re-runs its evaluation question set through the tools,
 
 ## Delivery order
 
-1. Library: A1, the manifest and format version.
-2. Library: A2, the relationships stage. Upstream and generalise the store's parser, then pass the parity gate.
-3. Library: A3, the fixture store in the release workflow.
-4. Server: B1–B4, in the new repository.
-5. First store: B5 acceptance.
-
-Items 1–3 ship in library minor releases, and each is useful without the server.
+1. Library: #454, #455 and #456, in `knowledge-store-builder`. Each ships in a library minor release and is useful without the server.
+2. Server: B1–B4, here.
+3. First store: B5 acceptance.
