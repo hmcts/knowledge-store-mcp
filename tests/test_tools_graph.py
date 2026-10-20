@@ -14,11 +14,11 @@ import os
 import sqlite3
 import tempfile
 import unittest
+import weakref
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-import weakref
 from unittest import mock
 
 from fixture_store.build import GRAPH, INDEX_PLAIN, MANIFEST, build

@@ -286,6 +286,25 @@ class RepositoryTest(StoreTestCase):
             (results.Outside("terraform_module", "Example-Org/vpc", 2, ("ledger-service",)),),
         )
 
+    def test_the_organisation_is_compared_as_the_writer_compares_it(self):
+        """Catches: comparing organisations with `casefold`, where the library's
+        resolver uses `lower`: `Straße` casefolds to `strasse` but lowers to
+        `straße`, so the writer treats `Straße/vpc` as another organisation's
+        repository and a reader must too."""
+
+        def edit(document):
+            document["store"]["github_org"] = "strasse"
+
+        loaded = self.open(edit=edit)
+        registry = loaded.root / RELATIONSHIPS / "repository-dependencies.json"
+        detail = {"references": 1, "referenced_by": ["ledger-service"]}
+        registry.write_text(
+            json.dumps(
+                {"unresolved_targets_outside_estate": {"terraform_module": {"Straße/vpc": detail}}}
+            )
+        )
+        self.assertEqual(results.outside_estate(loaded, "vpc"), ())
+
     def test_without_the_relationships_layer_a_target_is_not_in_the_estate(self):
         """Catches: reading the relationships files when the manifest says the layer
         is absent."""

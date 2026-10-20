@@ -147,6 +147,13 @@ def _listing(
     )
 
 
+def _skips(store: Store) -> dict[str, int]:
+    """`by_repo_links_skipped`, when a `by-repo/` entry resolved outside the store
+    and was skipped: a count, never the path."""
+    skipped = results.by_repo_listing(store).skipped
+    return {"by_repo_links_skipped": skipped} if skipped else {}
+
+
 def _edge_key(edge: Edge) -> tuple[str, str]:
     return (str(edge.get("repository")), str(edge.get("chart")))
 
@@ -172,7 +179,9 @@ def dependents(
     pinned ref not starting with it; a floating ref counts as other. `transitive`
     walks dependents of dependents breadth first, up to `max_depth` hops (1 to 4,
     default 4), each repository listed once with its path from the target; a
-    repository met again on its own path is reported in `cycles` and not followed.
+    repository already reached is not followed again, and `cycles` lists every loop
+    among the edges the walk read - each set of repositories that depend on one
+    another, and each that depends on itself.
     A target the estate references but does not hold is answered from the
     registry's targets outside the estate, one item per kind: by its exact key, or
     as `<org>/<target>` for the store's own `github_org` only (none recorded, exact
@@ -200,7 +209,7 @@ def dependents(
     _check_kind(store, kind)
     common = {"store": store, "notice": notice, "base": base, "layers_used": layers_used}
     paging = {"cursor": cursor, "cap_bytes": cap_bytes}
-    fields: dict[str, Any] = {"repository": answer.as_dict()}
+    fields: dict[str, Any] = {"repository": answer.as_dict(), **_skips(store)}
 
     if isinstance(answer, NotHeld):
         entries = [
@@ -248,10 +257,14 @@ def _walk(
 
     Each repository is listed once, at the first depth that reaches it, with the
     path through the predecessor that sorts first and every edge from that
-    predecessor. A dependent already on its own path is a cycle: reported, not
-    followed. The hop past `max_depth` is looked at but not listed, so a cycle met
-    there is still reported, and `beyond` names each repository at `max_depth`
-    with a dependent the walk did not reach.
+    predecessor; one already reached is never followed again. The hop past
+    `max_depth` is looked at but not listed, and `beyond` names each repository at
+    `max_depth` with a dependent the walk did not reach.
+
+    `cycles` is found over every edge the walk read, not along single paths: each
+    strongly connected component of more than one repository, and each repository
+    listed among its own dependents, as its members by name. So a loop closed
+    between two branches - each repository reached on its own - is still reported.
     """
     read: dict[str, list[Edge]] = {}
 
@@ -263,18 +276,17 @@ def _walk(
     visited = {target}
     frontier = [[target]]
     items: list[dict[str, Any]] = []
-    cycles: set[tuple[str, ...]] = set()
+    walked: set[tuple[str, str]] = set()
     beyond: set[str] = set()
     for depth in range(1, max_depth + 2):
         reached: dict[str, tuple[list[str], list[Edge]]] = {}
         for path in frontier:
             for edge in dependents_of(path[-1]):
                 other = str(edge.get("repository"))
-                if other in path:
-                    cycles.add((*path, other))
-                elif other in visited:
+                walked.add((path[-1], other))
+                if other in visited:
                     continue
-                elif depth > max_depth:
+                if depth > max_depth:
                     beyond.add(path[-1])
                 elif other not in reached:
                     reached[other] = ([*path, other], [edge])
@@ -286,7 +298,58 @@ def _walk(
             items.append({"repository": other, "depth": depth, "path": path, "edges": edges})
         visited.update(reached)
         frontier = sorted(path for path, _ in reached.values())
-    return items, [list(c) for c in sorted(cycles)], sorted(beyond)
+    return items, _cycles(walked), sorted(beyond)
+
+
+def _cycles(edges: set[tuple[str, str]]) -> list[list[str]]:
+    """Tarjan's strongly connected components over `edges`, iteratively: each
+    component of more than one repository, and each self-loop, sorted by name, in
+    sorted order."""
+    graph: dict[str, list[str]] = {}
+    for source, target in edges:
+        graph.setdefault(source, []).append(target)
+        graph.setdefault(target, [])
+    order: dict[str, int] = {}
+    low: dict[str, int] = {}
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    found: list[list[str]] = []
+
+    def visit(node: str) -> None:
+        order[node] = low[node] = len(order)
+        stack.append(node)
+        on_stack.add(node)
+
+    for root in sorted(graph):
+        if root in order:
+            continue
+        visit(root)
+        work = [(root, iter(sorted(graph[root])))]
+        while work:
+            node, children = work[-1]
+            for child in children:
+                if child not in order:
+                    visit(child)
+                    work.append((child, iter(sorted(graph[child]))))
+                    break
+                if child in on_stack:
+                    low[node] = min(low[node], order[child])
+            else:
+                work.pop()
+                if work:
+                    parent = work[-1][0]
+                    low[parent] = min(low[parent], low[node])
+                if low[node] == order[node]:
+                    component = []
+                    while True:
+                        member = stack.pop()
+                        on_stack.discard(member)
+                        component.append(member)
+                        if member == node:
+                            break
+                    if len(component) > 1 or (node, node) in edges:
+                        found.append(sorted(component))
+    return sorted(found)
 
 
 def dependencies(
@@ -298,11 +361,12 @@ def dependencies(
     cap_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
 ) -> dict[str, Any]:
     """The repositories `repo` depends on, each edge with its references, kinds,
-    pins and example lines with pinned URLs, paged; and in `outside_estate`, every
-    target outside the estate it references, per kind and by the registry's key,
-    with the registry's `references` (counted across every referrer, not this
-    repository alone) and `referenced_by`. The registry records no example lines
-    for these. `kind` keeps edges and targets of that kind.
+    pins and example lines with pinned URLs; then every target outside the estate
+    it references, per kind and by the registry's key, each marked
+    `outside_estate: true`, with the registry's `references` (counted across every
+    referrer, not this repository alone) and `referenced_by`. The registry records
+    no example lines for these. Both are paged as one list, held edges first, and
+    `totals` counts each. `kind` keeps edges and targets of that kind.
 
     A name is looked up as `find_repo` looks it up. A target outside the estate is
     keyed as the library wrote it, `<org>/<repo>` for a Terraform source; a lookup
@@ -318,21 +382,28 @@ def dependencies(
     if isinstance(answer, Known) and _present(store):
         edges = _of_kind(_edges(_by_repo(store, answer.name), "depends_on"), kind)
         outside = [
-            target.as_dict()
+            {**target.as_dict(), "outside_estate": True}
             for target in results.targets_outside_estate(store)
             if answer.name in target.referenced_by and (kind is None or target.kind == kind)
         ]
+
+    def key(item: dict[str, Any]) -> tuple[int, str, str]:
+        if item.get("outside_estate") is True:
+            return (1, str(item["kind"]), str(item["target"]))
+        return (0, *_edge_key(item))
+
     return _listing(
         store,
         notice,
         base,
         layers_used,
-        edges,
-        key=_edge_key,
+        [*edges, *outside],
+        key=key,
         cursor=cursor,
         cap_bytes=cap_bytes,
         repository=answer.as_dict(),
-        outside_estate=outside,
+        totals={"depends_on": len(edges), "outside_estate": len(outside)},
+        **_skips(store),
     )
 
 
@@ -352,7 +423,7 @@ def repo_answer(
     document = (
         _by_repo(store, answer.name) if isinstance(answer, Known) and _present(store) else None
     )
-    fields: dict[str, Any] = {"repository": answer.as_dict()}
+    fields: dict[str, Any] = {"repository": answer.as_dict(), **_skips(store)}
     if document is None:
         return _respond(
             store,

@@ -26,7 +26,7 @@ from typing import Any
 
 from . import graph
 from .index import IndexHandle
-from .locate import contained
+from .locate import OutsideStore, contained
 from .manifest import KNOWN_LAYERS
 from .store import Notice, Store
 
@@ -104,30 +104,59 @@ def repository_names(store: Store) -> list[str]:
     return sorted(name for name in names if name)
 
 
-def by_repo_files(store: Store) -> dict[str, Path]:
-    """Each `by-repo/` file by its stem, from the directory the manifest names for
-    the relationships layer, listed once per loaded store and never parsed here. A
-    name is matched against these keys; it never becomes part of a path. Empty when
-    the layer is absent."""
+@dataclass(frozen=True)
+class ByRepo:
+    """The `by-repo/` listing: each file by its stem, and how many entries were
+    skipped because they resolve outside the store."""
+
+    files: dict[str, Path]
+    skipped: int
+
+
+def by_repo_listing(store: Store) -> ByRepo:
+    """The `by-repo/` directory the manifest names for the relationships layer,
+    listed once per loaded store and never parsed here. An entry - or the directory
+    itself - that resolves outside the store is skipped and counted, never followed
+    and never quoted: one hostile link must not fail every lookup. Empty when the
+    layer is absent."""
     return store.memo("relationships.by_repo", lambda: _list_by_repo(store))
 
 
-def _list_by_repo(store: Store) -> dict[str, Path]:
+def by_repo_files(store: Store) -> dict[str, Path]:
+    """Each `by-repo/` file by its stem. A name is matched against these keys; it
+    never becomes part of a path."""
+    return by_repo_listing(store).files
+
+
+def _list_by_repo(store: Store) -> ByRepo:
     entry = store.manifest.layers.get("relationships")
     if not isinstance(entry, dict) or entry.get("present") is not True:
-        return {}
+        return ByRepo({}, 0)
     paths = entry.get("paths")
+    skipped = 0
     for rel in paths if isinstance(paths, list) else []:
         if not isinstance(rel, str) or not rel.endswith("/"):
             continue
-        directory = contained(store.root, rel)
-        if directory.is_dir():
-            return {
-                path.stem: contained(store.root, path.relative_to(store.root))
-                for path in sorted(directory.iterdir())
-                if path.suffix == ".json" and path.is_file()
-            }
-    return {}
+        try:
+            directory = contained(store.root, rel)
+        except OutsideStore:
+            skipped += 1
+            continue
+        if not directory.is_dir():
+            continue
+        files: dict[str, Path] = {}
+        for path in sorted(directory.iterdir()):
+            if path.suffix != ".json":
+                continue
+            try:
+                resolved = contained(store.root, path.relative_to(store.root))
+            except OutsideStore:
+                skipped += 1
+                continue
+            if resolved.is_file():
+                files[path.stem] = resolved
+        return ByRepo(files, skipped)
+    return ByRepo({}, skipped)
 
 
 def _join(names: list[str]) -> str:
@@ -293,7 +322,7 @@ class Outside:
 def outside_estate(store: Store, name: str) -> tuple[Outside, ...]:
     """Every registry entry `name` names, by (kind, target): its own key, and a
     Terraform-style `<org>/<name>` whose organisation is the store's own, compared
-    ignoring case as GitHub and the library's resolver compare it. Another
+    ignoring case with `lower`, as the library's resolver compares it. Another
     organisation's repository of the same name is a different target."""
     return _outside_estate(store).get(name, ())
 
@@ -321,7 +350,8 @@ def _read_outside_estate(store: Store) -> dict[str, tuple[Outside, ...]]:
     by_kind = (
         document.get("unresolved_targets_outside_estate") if isinstance(document, dict) else None
     )
-    own = store.manifest.github_org.casefold()
+    # `lower`, not `casefold`: the library's resolver compares organisations so.
+    own = store.manifest.github_org.lower()
     found: dict[str, list[Outside]] = {}
     for kind, targets in (by_kind if isinstance(by_kind, dict) else {}).items():
         for target, detail in (targets if isinstance(targets, dict) else {}).items():
@@ -335,7 +365,7 @@ def _read_outside_estate(store: Store) -> dict[str, tuple[Outside, ...]]:
             )
             names = {target}
             org, slash, rest = target.partition("/")
-            if own and slash and org.casefold() == own and rest and "/" not in rest:
+            if own and slash and org.lower() == own and rest and "/" not in rest:
                 names.add(rest)
             for name in names:
                 found.setdefault(name, []).append(outside)

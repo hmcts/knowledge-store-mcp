@@ -232,11 +232,17 @@ Direct dependents (`depended_on_by`):
   reporting-worker);
 - depth 3: `accounts-web` (path ledger-service, payments-api, gateway-service,
   accounts-web) - the three-hop chain;
-- the cycle: `audit-service`'s dependent is `reporting-worker`, already on the
-  path ledger-service, reporting-worker, audit-service. It is reported once in
-  `cycles` and not followed.
+- the cycle: `audit-service`'s dependent is `reporting-worker`, already reached.
+  It is not followed, and `cycles` reports the loop once, as its repositories by
+  name: `[["audit-service", "reporting-worker"]]`.
 
 Five repositories in all; `accounts-web` has no dependents, so the walk ends.
+
+**`dependents("infra-modules", transitive=True)`** reaches all seven dependents
+at depth 1, so `audit-service` and `reporting-worker` are each reached on their own
+branch and no single path repeats either. The loop between them is still reported,
+`[["audit-service", "reporting-worker"]]`: cycles are the strongly connected
+components of the edges the walk read, not repeats along one path.
 
 ### 5.3 The oversize repository
 

@@ -16,7 +16,7 @@ from typing import Any
 from unittest import mock
 
 from fixture_store.build import BY_REPO, MANIFEST, build
-from knowledgestore_mcp import results, store, tools_relationships
+from knowledgestore_mcp import results, store, tools_graph, tools_relationships
 from knowledgestore_mcp.tools_graph import ArgumentRefused
 
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
@@ -243,8 +243,8 @@ class DependentsTest(RelationshipsTestCase):
 
     def test_the_three_hop_chain_with_paths_and_the_cycle_once(self):
         """Catches: a walk that stops short of three hops, loses a path, follows the
-        cycle audit-service -> reporting-worker, or reports it twice (DESIGN.md
-        5.2)."""
+        cycle audit-service -> reporting-worker, or reports it twice; a cycle is
+        reported once, as its repositories by name (DESIGN.md 5.2)."""
         L, P, W, G, A = (
             "ledger-service",
             "payments-api",
@@ -258,7 +258,7 @@ class DependentsTest(RelationshipsTestCase):
                 **envelope(INDEXED, ["index", "relationships"]),
                 "repository": known(L),
                 "max_depth": 4,
-                "cycles": [[L, W, A, W]],
+                "cycles": [[A, W]],
                 "beyond_max_depth": [],
                 "items": [
                     {"repository": P, "depth": 1, "path": [L, P], "edges": [PAYMENTS_ON_LEDGER]},
@@ -309,10 +309,12 @@ class DependentsTest(RelationshipsTestCase):
 
     def test_a_repository_reached_twice_is_listed_once(self):
         """Catches: a walk that lists a repository again when a second branch reaches
-        it. infra-modules' seven dependents are all at depth 1, and each one's own
+        it; or a cycle missed because no single path repeats a repository.
+        infra-modules' seven dependents are all at depth 1, and each one's own
         dependents are among them (audit-service -> reporting-worker, payments-api
-        -> gateway-service, ...): nothing is new at depth 2, and no path repeats a
-        repository, so there is no cycle (DESIGN.md 5.1, 5.2)."""
+        -> gateway-service, ...): nothing is new at depth 2. reporting-worker and
+        audit-service depend on each other, each reached on its own branch, and
+        that cycle is still reported (DESIGN.md 5.1, 5.2)."""
         found = tools_relationships.dependents(self.session(), "infra-modules", transitive=True)
         self.assertEqual(
             [(i["repository"], i["depth"]) for i in found["items"]],
@@ -326,7 +328,29 @@ class DependentsTest(RelationshipsTestCase):
                 ("reporting-worker", 1),
             ],
         )
-        self.assertEqual((found["cycles"], found["beyond_max_depth"]), ([], []))
+        self.assertEqual(found["cycles"], [["audit-service", "reporting-worker"]])
+        self.assertEqual(found["beyond_max_depth"], [])
+
+    def test_a_repository_depending_on_itself_is_a_cycle(self):
+        """Catches: a self-loop - a repository listed among its own dependents -
+        followed, or dropped rather than reported. The fixture has none, so one is
+        added to payment-apis' file."""
+        session = self.session()
+        path = session.current()[0].root / BY_REPO / "payment-apis.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["depended_on_by"] = [{**PAYMENTS_ON_LEDGER, "repository": "payment-apis"}]
+        path.write_text(json.dumps(document), encoding="utf-8")
+        found = tools_relationships.dependents(session, "payment-apis", transitive=True)
+        self.assertEqual((found["items"], found["cycles"]), ([], [["payment-apis"]]))
+
+    def test_a_longer_loop_is_one_cycle(self):
+        """Catches: a cycle detector that only sees a loop whose last edge returns to
+        the first repository's direct dependent - the fixture's loops are pairs - so
+        a three-repository loop is reported in pieces or not at all. Derived by
+        hand: a -> b -> c -> a is one component, d (only reached) is none, and the
+        pair e <-> f is a second, listed after it."""
+        edges = {("a", "b"), ("b", "c"), ("c", "a"), ("c", "d"), ("e", "f"), ("f", "e")}
+        self.assertEqual(tools_relationships._cycles(edges), [["a", "b", "c"], ["e", "f"]])
 
     def test_a_shallower_walk_says_what_it_did_not_walk(self):
         """Catches: a depth limit that silently truncates. At max_depth 2 the walk
@@ -340,10 +364,7 @@ class DependentsTest(RelationshipsTestCase):
             [("payments-api", 1), ("reporting-worker", 1), ("audit-service", 2), ("gateway-service", 2)],
         )  # fmt: skip
         self.assertEqual(found["beyond_max_depth"], ["gateway-service"])
-        self.assertEqual(
-            found["cycles"],
-            [["ledger-service", "reporting-worker", "audit-service", "reporting-worker"]],
-        )
+        self.assertEqual(found["cycles"], [["audit-service", "reporting-worker"]])
 
     def test_depth_and_filter_arguments_are_refused_where_they_cannot_apply(self):
         """Catches: a max_depth above 4 walked anyway (spec: max_depth <= 4), or a
@@ -403,7 +424,10 @@ class UnknownNameTest(RelationshipsTestCase):
             empty = {"items": [], "total": 0, "page": 1, "next_page": None}
             for tool, more in (
                 (tools_relationships.dependents, {}),
-                (tools_relationships.dependencies, {"outside_estate": []}),
+                (
+                    tools_relationships.dependencies,
+                    {"totals": {"depends_on": 0, "outside_estate": 0}},
+                ),
             ):
                 with self.subTest(index=index, tool=tool.__name__):
                     self.assertEqual(
@@ -463,7 +487,7 @@ class UnknownNameTest(RelationshipsTestCase):
                     {
                         **envelope(label, [base, "relationships"]),
                         "repository": known("docs-site"),
-                        "outside_estate": [],
+                        "totals": {"depends_on": 0, "outside_estate": 0},
                         "searched": f"searched 13 repositories in the {base} and relationships layers",
                         "items": [],
                         "total": 0,
@@ -482,6 +506,28 @@ class UnknownNameTest(RelationshipsTestCase):
         session = self.session(by_repo_only=True, edit=edit)
         found = tools_relationships.dependencies(session, "docs-site")
         self.assertEqual(found["repository"]["answer"], "not in the estate")
+
+
+class EscapingLinkTest(RelationshipsTestCase):
+    def test_a_by_repo_link_outside_the_store_is_skipped_and_counted(self):
+        """Catches: one `by-repo/` symlink resolving outside the store failing every
+        name lookup (the listing raises), quoting a host path, or being read as a
+        repository; or a skip nobody can see (spec, Security: path containment)."""
+        session = self.session()
+        root = session.current()[0].root
+        outside = self.tmp / "outside.json"
+        outside.write_text(json.dumps({"repository": "escape"}), encoding="utf-8")
+        (root / BY_REPO / "escape.json").symlink_to(outside)
+        self.assertEqual(
+            tools_graph.find_repo(session, "ledger-service")["answer"], "in the estate"
+        )
+        self.assertEqual(tools_graph.find_repo(session, "escape")["answer"], "not in the estate")
+        self.assertEqual(results.by_repo_listing(session.current()[0]).skipped, 1)
+        found = tools_relationships.dependents(session, "ledger-service")
+        self.assertEqual(found["by_repo_links_skipped"], 1)
+        self.assertNotIn(str(self.tmp), json.dumps(found))
+        clean = tools_relationships.dependents(self.session(), "ledger-service")
+        self.assertNotIn("by_repo_links_skipped", clean)
 
 
 class AbsentLayerTest(RelationshipsTestCase):
@@ -513,11 +559,13 @@ class DependenciesTest(RelationshipsTestCase):
         ledger-service and shared-lib-java (maven_artifact) - DESIGN.md 5.1."""
         session = self.session()
         found = tools_relationships.dependencies(session, "payments-api")
+        held = [e for e in found["items"] if not e.get("outside_estate")]
         self.assertEqual(
-            [e["repository"] for e in found["items"]],
+            [e["repository"] for e in held],
             ["infra-modules", "ledger-service", "shared-lib-java"],
         )
-        self.assertEqual(found["total"], 3)
+        self.assertEqual(found["total"], 5)
+        self.assertEqual(found["totals"], {"depends_on": 3, "outside_estate": 2})
         self.assertEqual(
             found["items"][1],
             {
@@ -535,6 +583,7 @@ class DependenciesTest(RelationshipsTestCase):
             },
         )
         maven = tools_relationships.dependencies(session, "payments-api", kind="maven_artifact")
+        self.assertEqual(maven["totals"], {"depends_on": 2, "outside_estate": 0})
         self.assertEqual(
             [e["repository"] for e in maven["items"]], ["ledger-service", "shared-lib-java"]
         )
@@ -547,28 +596,60 @@ class DependenciesTest(RelationshipsTestCase):
         not payments-api's, and must not appear here although it shares the name
         (DESIGN.md 5.4)."""
         session = self.session()
+
+        def outside(response: dict) -> list[dict]:
+            """The items naming targets outside the estate, after every held edge."""
+            items = response["items"]
+            first = next((i for i, e in enumerate(items) if e.get("outside_estate")), len(items))
+            self.assertFalse(any(e.get("outside_estate") for e in items[:first]))
+            self.assertTrue(all(e.get("outside_estate") for e in items[first:]))
+            return items[first:]
+
+        def listed(entry: dict) -> dict:
+            return {**entry, "outside_estate": True}
+
         payments = tools_relationships.dependencies(session, "payments-api")
-        self.assertEqual(payments["outside_estate"], [CHART_OUTSIDE, MODULE_OUTSIDE])
+        self.assertEqual(outside(payments), [listed(CHART_OUTSIDE), listed(MODULE_OUTSIDE)])
         audit = tools_relationships.dependencies(session, "audit-service")
         self.assertEqual(
-            audit["outside_estate"],
+            outside(audit),
             [
                 {
                     "kind": "terraform_module",
                     "target": "other-org/legacy-network",
                     "references": 1,
                     "referenced_by": ["audit-service"],
+                    "outside_estate": True,
                 }
             ],
         )
         modules = tools_relationships.dependencies(session, "payments-api", kind="terraform_module")
-        self.assertEqual(modules["outside_estate"], [MODULE_OUTSIDE])
-        self.assertEqual(
-            tools_relationships.dependencies(session, "ledger-service", kind="helm_chart")[
-                "outside_estate"
-            ],
-            [],
-        )
+        self.assertEqual(outside(modules), [listed(MODULE_OUTSIDE)])
+        helm = tools_relationships.dependencies(session, "ledger-service", kind="helm_chart")
+        self.assertEqual(outside(helm), [])
+
+    def test_outside_estate_targets_page_with_the_edges(self):
+        """Catches: targets outside the estate held in the frame, where a long list
+        would make every page oversize, or cut from the paged total. At a cap
+        below the whole answer, payments-api's three edges and two targets come in
+        several pages, none over the cap, and reassemble to the unpaged list."""
+        session = self.session()
+        whole = tools_relationships.dependencies(session, "payments-api")
+        pages, cursor = [], None
+        while True:
+            found = tools_relationships.dependencies(
+                session, "payments-api", cursor=cursor, cap_bytes=1400
+            )
+            self.assertLessEqual(len(results.encode(found)), 1400)
+            pages.append(found)
+            cursor = found["next_page"]
+            if cursor is None:
+                break
+        self.assertGreater(len(results.encode(whole)), 1400)
+        self.assertGreater(len(pages), 1)
+        self.assertEqual({p["total"] for p in pages}, {5})
+        self.assertFalse(any(p.get("oversize") for p in pages))
+        self.assertEqual([i for p in pages for i in p["items"]], whole["items"])
 
 
 class RepoAnswerTest(RelationshipsTestCase):
@@ -617,14 +698,17 @@ class RepoAnswerTest(RelationshipsTestCase):
         self.assertEqual(serialised.encode("utf-8"), original)
 
     def test_a_cursor_from_another_listing_is_refused(self):
-        """Catches: a page cursor followed into a listing it was not issued for."""
+        """Catches: a page cursor followed into a listing it was not issued for. The
+        cap and the store are the same, so only the listing differs."""
         session = self.session()
         cursor = tools_relationships.repo_answer(session, "infra-modules", cap_bytes=TEST_CAP)[
             "next_page"
         ]
         self.assertIsNotNone(cursor)
         with self.assertRaises(results.CursorRefused):
-            tools_relationships.dependents(session, "infra-modules", cursor=cursor)
+            tools_relationships.dependents(
+                session, "infra-modules", cursor=cursor, cap_bytes=TEST_CAP
+            )
 
 
 if __name__ == "__main__":
