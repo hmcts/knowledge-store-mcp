@@ -1,0 +1,62 @@
+name: CI
+
+# Lint, format, type-check and test. No paths-ignore, so the check always
+# reports and can be made required without deadlocking docs-only pull requests.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Lint and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Until pyproject.toml lands there is nothing to check. The job still
+      # succeeds, so it reports, and it starts checking on the commit that adds
+      # the package, with no change here.
+      - name: Check for the package
+        id: project
+        run: |
+          if [ -f pyproject.toml ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No pyproject.toml yet: nothing to check."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install uv
+        if: steps.project.outputs.present == 'true'
+        # SHA-pinned (v9.0.0): a tag can be moved, a commit cannot.
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          enable-cache: true
+
+      # --frozen installs exactly what uv.lock resolves.
+      - name: Install
+        if: steps.project.outputs.present == 'true'
+        run: uv sync --frozen --extra dev
+
+      - name: Ruff lint
+        if: steps.project.outputs.present == 'true'
+        run: uv run --no-sync ruff check . --output-format=github
+
+      - name: Ruff format check
+        if: steps.project.outputs.present == 'true'
+        run: uv run --no-sync ruff format --check .
+
+      - name: Pyright
+        if: steps.project.outputs.present == 'true'
+        run: uv run --no-sync pyright
+
+      - name: Tests
+        if: steps.project.outputs.present == 'true'
+        run: uv run --no-sync python -m unittest discover -s tests -v

@@ -1,0 +1,59 @@
+name: CodeQL
+
+on:
+  # No paths-ignore, deliberately. A workflow skipped by paths-ignore never
+  # reports its check, so if this check is ever made required, a docs-only pull
+  # request would wait forever on a context that never arrives.
+  pull_request:
+    branches: [main]
+  # Analysing main gives pull requests a baseline to compare against.
+  push:
+    branches: [main]
+  schedule:
+    - cron: '36 5 * * 4'
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # actions: the workflows themselves. python: the server.
+        language: [actions, python]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # CodeQL fails a language with no source files. Until the package lands,
+      # the python leg reports success without analysing; it starts analysing
+      # on the first commit that adds a .py file, with no change here.
+      - name: Check for source
+        id: source
+        run: |
+          if [ "${{ matrix.language }}" != "python" ] || [ -n "$(git ls-files '*.py')" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No Python source yet: nothing to analyse."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Initialize CodeQL
+        if: steps.source.outputs.present == 'true'
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Perform CodeQL Analysis
+        if: steps.source.outputs.present == 'true'
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
