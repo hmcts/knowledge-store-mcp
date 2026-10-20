@@ -4,8 +4,10 @@ Each test builds the synthetic store, starts a session on it, then changes the
 store on disk the way a rebuild or a pull would.
 """
 
+import gzip
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -107,7 +109,88 @@ class ReloadTest(FreshnessTestCase):
         self.assertIsNone(notice)
 
 
+class NoDigestTest(FreshnessTestCase):
+    def strip_digest(self) -> Path:
+        path = self.root / MANIFEST
+        document = json.loads(path.read_text(encoding="utf-8"))
+        del document["digest"]
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return path
+
+    def test_without_a_digest_a_changed_manifest_still_reloads(self):
+        """Catches: two empty digests comparing equal, so a store whose manifest
+        carries none is never reloaded, whatever changes."""
+        build(self.root)
+        path = self.strip_digest()
+        session = self.session()
+        first, _ = session.current()
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["sources_as_of"] = "2026-10-19T00:00:00+00:00"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        second, notice = session.current()
+        self.assertEqual(notice, Notice("reloaded: store digest changed"))
+        self.assertEqual(second.manifest.sources_as_of, "2026-10-19T00:00:00+00:00")
+
+    def test_without_a_digest_an_untouched_manifest_does_not_reload(self):
+        """Catches: reloading on every call when there is no digest to compare."""
+        build(self.root)
+        path = self.strip_digest()
+        session = self.session()
+        first, _ = session.current()
+        path.write_bytes(path.read_bytes())  # rewritten, same bytes, new mtime
+        got, notice = session.current()
+        self.assertIs(got, first)
+        self.assertIsNone(notice)
+
+
+class ArchiveBeforeManifestTest(FreshnessTestCase):
+    def test_an_archive_replaced_under_an_unchanged_manifest_reloads(self):
+        """Catches: trusting the digest alone when a pull wrote the manifest before
+        the archive - the server would keep the old index for good. The new index
+        renames a repository, so serving the old one shows."""
+        build(self.root)
+        session = self.session()
+        first, _ = session.current()
+        archive = self.root / INDEX_ARCHIVE
+        database = self.tmp / "new.sqlite"
+        database.write_bytes(gzip.decompress(archive.read_bytes()))
+        with sqlite3.connect(database) as db:
+            db.execute("UPDATE repos SET name = 'renamed-since' WHERE name = 'chart-web'")
+        db.close()
+        archive.write_bytes(gzip.compress(database.read_bytes()))
+        second, notice = session.current()
+        self.assertEqual(notice, Notice("reloaded: index archive changed"))
+        assert isinstance(second.index, IndexHandle)
+        names = [r[0] for r in second.index.connection.execute("SELECT name FROM repos")]
+        self.assertIn("renamed-since", names)
+        third, notice = session.current()
+        self.assertIs(third, second)
+        self.assertIsNone(notice)
+
+    def test_an_archive_touched_but_unchanged_does_not_reload(self):
+        """Catches: reloading on the archive's mtime alone, so a checkout that only
+        touches the file throws the loaded index away."""
+        build(self.root)
+        session = self.session()
+        first, _ = session.current()
+        archive = self.root / INDEX_ARCHIVE
+        os.utime(archive, ns=(1_000_000_000, 1_000_000_000))
+        for _ in range(2):
+            got, notice = session.current()
+            self.assertIs(got, first)
+            self.assertIsNone(notice)
+
+
 class StaleDaysTest(FreshnessTestCase):
+    def test_a_clock_without_an_offset_gives_none(self):
+        """Catches: subtracting a naive clock reading from an aware instant, which
+        raises TypeError and fails the call."""
+        build(self.root)
+        naive = datetime(2026, 10, 20, 12, 0)
+        session = store.Session(lambda: store.open_store(self.root, self.cache), lambda: naive)
+        self.addCleanup(lambda: session.current()[0].close())
+        self.assertIsNone(session.stale_days())
+
     def test_stale_days_is_whole_days_since_sources_as_of(self):
         """Catches: comparing `sources_as_of` as text or dropping its offset (DESIGN.md
         9.2: 2026-10-16 01:30 UTC to 2026-10-20 12:00 UTC is 4 whole days), or

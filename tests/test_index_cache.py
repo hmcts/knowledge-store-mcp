@@ -205,6 +205,88 @@ class ArchiveTest(CacheTestCase):
             self.listing(self.entries), sorted(["README", "abc.sqlite.tmp-1-xyz", name])
         )
 
+    def test_an_emptied_entry_is_replaced_on_the_next_open(self):
+        """Catches: a cache entry left bad by a crash (renamed before its bytes were
+        on disk) being reused for ever - every later start falls back, or fails."""
+        root = build(self.tmp / "s")
+        first = self.open_handle(root)
+        first.close()
+        first.path.write_bytes(b"")
+        handle = self.open_handle(root)
+        self.assertEqual(handle.path, first.path)
+        self.assertEqual(repo_names(handle), REPOS)
+        expected = gzip.decompress((root / INDEX_ARCHIVE).read_bytes())
+        self.assertEqual(handle.path.read_bytes(), expected)
+
+    def test_an_entry_a_peer_deletes_before_it_opens_is_decompressed_again(self):
+        """Catches: falling back when a server for the same store id, holding another
+        archive, removes this entry between its rename and its open."""
+        root = build(self.tmp / "a")
+        peer = build(self.tmp / "b")
+        peer_archive = peer / INDEX_ARCHIVE
+        peer_archive.write_bytes(gzip.compress(gzip.decompress(peer_archive.read_bytes()), mtime=1))
+        real = index._cached
+        fired: list[bool] = []
+
+        def cached_then_peer_opens(archive: Path, directory: Path, max_bytes: int) -> Path:
+            entry = real(archive, directory, max_bytes)
+            if not fired:
+                fired.append(True)
+                # The peer's open removes this store id's other entries: ours.
+                result = index.open_index(peer, manifest.load(peer), self.cache)
+                assert isinstance(result, IndexHandle), result
+                result.close()
+                assert not entry.exists()
+            return entry
+
+        with mock.patch.object(index, "_cached", cached_then_peer_opens):
+            handle = self.open_handle(root)
+        self.assertEqual(fired, [True])
+        self.assertEqual(handle.path.name, sha256_of(root / INDEX_ARCHIVE) + ".sqlite")
+        self.assertEqual(repo_names(handle), REPOS)
+
+    def test_two_archives_under_one_store_id_both_keep_serving(self):
+        """Catches: an open handle failing once a peer with another archive removes
+        its entry - the handle must hold the file it opened."""
+        first_root = build(self.tmp / "a")
+        second_root = build(self.tmp / "b")
+        archive = second_root / INDEX_ARCHIVE
+        archive.write_bytes(gzip.compress(gzip.decompress(archive.read_bytes()), mtime=1))
+        first = self.open_handle(first_root)
+        second = self.open_handle(second_root)
+        self.assertNotEqual(first.path, second.path)
+        self.assertFalse(first.path.exists())
+        self.assertEqual(repo_names(first), REPOS)
+        self.assertEqual(repo_names(second), REPOS)
+
+    def test_decompression_stops_at_the_cap_and_falls_back(self):
+        """Catches: an archive that inflates without bound filling the disk, or a
+        cap that is off by one. At exactly its size the index is written; one byte
+        under, nothing is left and the reason says why."""
+        root = build(self.tmp / "s")
+        size = len(gzip.decompress((root / INDEX_ARCHIVE).read_bytes()))
+        result = index.open_index(root, manifest.load(root), self.cache, max_bytes=size - 1)
+        self.assertIsInstance(result, Fallback)
+        assert isinstance(result, Fallback)
+        self.assertIn(f"decompresses to more than {size - 1} bytes", result.reason)
+        self.assertEqual(self.listing(self.entries), [])
+        handle = index.open_index(root, manifest.load(root), self.cache, max_bytes=size)
+        assert isinstance(handle, IndexHandle), handle
+        self.addCleanup(handle.close)
+        self.assertEqual(repo_names(handle), REPOS)
+
+    def test_open_store_passes_its_cap_to_the_index(self):
+        """Catches: a configured cap that never reaches the decompress, so the server
+        option changes nothing."""
+        loaded = store.open_store(build(self.tmp / "s"), self.cache, max_index_bytes=1024)
+        self.addCleanup(loaded.close)
+        assert isinstance(loaded.index, Fallback), loaded.index
+        self.assertIn("decompresses to more than 1024 bytes", loaded.index.reason)
+
+    def test_the_default_cap_is_8_gib(self):
+        """Catches: a default cap small enough to refuse a real store's index."""
+        self.assertEqual(index.DEFAULT_MAX_INDEX_BYTES, 8 * 1024**3)
+
     def test_temp_files_older_than_a_day_are_removed_and_younger_ones_kept(self):
         """Catches: crashed writers' temp files accumulating for ever, or a sweep that
         deletes a temp file a live peer may still be writing (younger than 24 hours)."""

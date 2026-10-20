@@ -16,7 +16,6 @@ import hashlib
 import io
 import os
 import re
-import shutil
 import sqlite3
 import tempfile
 import time
@@ -42,6 +41,18 @@ SCHEMA_MAJOR = 1
 # A younger one may be a live peer's write, so it is never touched.
 STALE_TEMP_SECONDS = 24 * 60 * 60
 
+# Decompression stops past this many bytes: a hostile or broken archive must not
+# fill the disk. Configurable per call; the default is far above any real index.
+DEFAULT_MAX_INDEX_BYTES = 8 * 1024**3
+
+
+class IndexTooLarge(OSError):
+    """The archive decompresses to more than the cap allows."""
+
+    def __init__(self, cap: int):
+        super().__init__(f"the index archive decompresses to more than {cap} bytes")
+
+
 # `store.id` becomes one directory name, so it must be one plain path component.
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
@@ -52,6 +63,8 @@ class IndexHandle:
 
     connection: sqlite3.Connection
     path: Path
+    # The sha256 of the archive a cache entry was decompressed from; None in place.
+    archive_sha256: str | None = None
 
     def close(self) -> None:
         self.connection.close()
@@ -72,7 +85,30 @@ def cache_home(env: Mapping[str, str], home: Path) -> Path:
     return Path(value) if Path(value).is_absolute() else home / ".cache"
 
 
-def open_index(root: Path, manifest: Manifest, cache_home: Path) -> IndexHandle | Fallback:
+def archive_state(root: Path) -> tuple[int, int] | None:
+    """The archive's (size, mtime_ns), or None when there is none: a stat, so a
+    per-call freshness check can notice a new archive without hashing it."""
+    try:
+        info = contained(root, INDEX_ARCHIVE).stat()
+    except (OSError, OutsideStore):
+        return None
+    return (info.st_size, info.st_mtime_ns)
+
+
+def archive_sha256(root: Path) -> str | None:
+    try:
+        return _sha256(contained(root, INDEX_ARCHIVE))
+    except (OSError, OutsideStore):
+        return None
+
+
+def open_index(
+    root: Path,
+    manifest: Manifest,
+    cache_home: Path,
+    *,
+    max_bytes: int = DEFAULT_MAX_INDEX_BYTES,
+) -> IndexHandle | Fallback:
     try:
         plain = contained(root, INDEX_PLAIN)
         archive = contained(root, INDEX_ARCHIVE)
@@ -90,14 +126,28 @@ def open_index(root: Path, manifest: Manifest, cache_home: Path) -> IndexHandle 
     resolved = directory.resolve()
     if resolved == root or root in resolved.parents:
         return Fallback(f"the index cache {directory} would be inside the store")
-    try:
-        entry = _cached(archive, directory)
-    except (OSError, EOFError, zlib.error) as error:
-        return Fallback(f"the index cache could not be written: {error}")
-    # Immutable is safe here: an entry is named by its content, appears only by an
-    # atomic rename, and is never written again. Skipping SQLite's locking also
-    # means a peer server removing the entry cannot disturb an open handle.
-    return _connect(entry, immutable=True)
+    result: IndexHandle | Fallback = Fallback("unreachable")
+    # Twice at most. An entry that will not open was either left bad by a crash or
+    # removed by a peer serving another archive under this store id, after our
+    # rename and before our open. Either way it is discarded and written again.
+    for _ in range(2):
+        try:
+            entry = _cached(archive, directory, max_bytes)
+        except IndexTooLarge as error:
+            return Fallback(str(error))
+        except (OSError, EOFError, zlib.error) as error:
+            return Fallback(f"the index cache could not be written: {error}")
+        # Immutable is safe here: an entry is named by its content, appears only by
+        # an atomic rename, and is never written again. Skipping SQLite's locking
+        # also means a peer removing the entry cannot disturb an open handle.
+        result = _connect(entry, immutable=True, archive_sha256=entry.stem)
+        if isinstance(result, IndexHandle):
+            return result
+        try:
+            entry.unlink(missing_ok=True)
+        except OSError as error:
+            return Fallback(f"{result.reason}; the bad cache entry could not be removed: {error}")
+    return result
 
 
 class _HashingReader:
@@ -126,7 +176,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _cached(archive: Path, directory: Path) -> Path:
+def _cached(archive: Path, directory: Path, max_bytes: int) -> Path:
     """The cache entry for `archive`, decompressing it only when absent."""
     entry = directory / f"{_sha256(archive)}.sqlite"
     if not entry.is_file():
@@ -139,14 +189,42 @@ def _cached(archive: Path, directory: Path) -> Path:
             with os.fdopen(fd, "wb") as out, archive.open("rb") as raw:
                 reader = _HashingReader(raw)
                 with gzip.GzipFile(fileobj=reader, mode="rb") as stream:
-                    shutil.copyfileobj(stream, out, CHUNK)
+                    _copy_capped(stream, out, max_bytes)
+                # The bytes reach the disk before the name does, so a crash cannot
+                # leave a whole-looking entry over a short file.
+                out.flush()
+                os.fsync(out.fileno())
             entry = directory / f"{reader.sha256.hexdigest()}.sqlite"
             os.replace(temp, entry)
+            _fsync_directory(directory)
         except BaseException:
             temp.unlink(missing_ok=True)
             raise
     _remove_others(directory, entry)
     return entry
+
+
+def _copy_capped(source, out, max_bytes: int) -> None:
+    written = 0
+    while chunk := source.read(CHUNK):
+        written += len(chunk)
+        if written > max_bytes:
+            raise IndexTooLarge(max_bytes)
+        out.write(chunk)
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Make the rename durable where the platform can open a directory to sync it."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def _remove_others(directory: Path, keep: Path) -> None:
@@ -166,7 +244,9 @@ def _remove_others(directory: Path, keep: Path) -> None:
             pass
 
 
-def _connect(path: Path, *, immutable: bool) -> IndexHandle | Fallback:
+def _connect(
+    path: Path, *, immutable: bool, archive_sha256: str | None = None
+) -> IndexHandle | Fallback:
     uri = path.as_uri() + "?mode=ro" + ("&immutable=1" if immutable else "")
     try:
         connection = sqlite3.connect(uri, uri=True)
@@ -184,7 +264,7 @@ def _connect(path: Path, *, immutable: bool) -> IndexHandle | Fallback:
         return Fallback(
             f"index schema {schema!r} is not one this server reads (reads major {SCHEMA_MAJOR})"
         )
-    return IndexHandle(connection, path)
+    return IndexHandle(connection, path, archive_sha256)
 
 
 def _major(schema: object) -> int | None:
