@@ -12,10 +12,15 @@ on:
   schedule:
     - cron: '36 5 * * 4'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       actions: read
       contents: read
@@ -35,8 +40,10 @@ jobs:
       # on the first commit that adds a .py file, with no change here.
       - name: Check for source
         id: source
+        env:
+          LANGUAGE: ${{ matrix.language }}
         run: |
-          if [ "${{ matrix.language }}" != "python" ] || [ -n "$(git ls-files '*.py')" ]; then
+          if [ "$LANGUAGE" != "python" ] || [ -n "$(git ls-files '*.py')" ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "No Python source yet: nothing to analyse."

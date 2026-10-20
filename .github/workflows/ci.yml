@@ -11,10 +11,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tests:
     name: Lint and tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -37,10 +42,11 @@ jobs:
         with:
           enable-cache: true
 
-      # --frozen installs exactly what uv.lock resolves.
+      # --frozen installs exactly what uv.lock resolves. The dev tools live in
+      # [dependency-groups] dev, which uv sync installs by default.
       - name: Install
         if: steps.project.outputs.present == 'true'
-        run: uv sync --frozen --extra dev
+        run: uv sync --frozen
 
       - name: Ruff lint
         if: steps.project.outputs.present == 'true'
