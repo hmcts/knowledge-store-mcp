@@ -301,7 +301,7 @@
 **Behaviour:**
 - **`tickets`:** returns `landed` and `proposed` as two separate lists, never merged. Each proposed ticket carries its `branches`. The result includes the manifest's `reach` flag as recorded.
 - **`ticket`:** returns the descriptions, `ps`/`pb`, `proposed` and `branches`.
-- **`answers`:** searches the titles and bodies of the topic briefs, the deep dives, and the extra layers of `kind: "answers"`. It ranks by term overlap, then id, and returns each match's pinned URL.
+- **`answers`:** searches the titles and bodies of the topic briefs, the deep dives, and the extra layers of `kind: "answers"`. It ranks by term overlap, then id, and returns each match's store-relative `source` path with the manifest's `store.id`, not a pinned URL. The server reads files and never runs git, and the manifest does not carry the store's own repository URL, so it has nothing to pin one with; pinned URLs stay for code nodes, which carry them in the graph.
 - **Store text** goes in fields named `text`, `summary` or `description`, and nowhere else.
 
 **Steps:**
