@@ -22,9 +22,8 @@ Agents answering from a store make five recurring mistakes:
 
 1. **Separate repository** from `knowledge-store-builder`, because the server has its own dependencies (the MCP SDK), threat model and release cycle.
 2. **Stdio only in version 1.** It covers Claude Code and Claude Desktop, plugins on hosted agent platforms, and Claude Agent SDK applications. The HTTP transport and its authentication are deferred.
-3. **Read-only, one store per process,** fixed at start-up with `--store PATH`.
+3. **Read-only, one store per process,** resolved once at start-up (see *Configuration*).
 
-**Open:** confirm that the hosted agent platform in use can launch a plugin's stdio server.
 
 ## What the server depends on
 
@@ -40,22 +39,31 @@ Everything the server serves comes from a store built by `knowledge-store-builde
 
 ## Configuration
 
-The only setting is the store's path. A client launches the server like this:
+The server needs exactly one store, and it finds the store in this order. The first rule that resolves wins:
+
+| Order | Source | Use |
+|---|---|---|
+| 1 | `--store PATH` | an explicit path |
+| 2 | the `KNOWLEDGE_STORE_PATH` environment variable | containers and CI, where the store is built in |
+| 3 | `--store-id ID`, looked up in `~/.config/knowledge-store/locations` | a plugin. That file is the list of clone paths the library's `knowledge-store` skill records on first clone, and the server takes the entry whose manifest has `store.id = ID` |
+| 4 | `${CLAUDE_PLUGIN_ROOT}`, when it contains a store | a plugin that ships the store inside itself |
+
+If none resolves, the server refuses to start and names each place it checked. A store's plugin declares a fixed entry, and every asker's own clone is then found by ID:
 
 ```json
 { "mcpServers": { "knowledge-store": {
     "command": "knowledge-store-mcp",
-    "args": ["--store", "/path/to/a/built/store"] } } }
+    "args": ["--store-id", "example-store"] } } }
 ```
 
-A store's plugin can declare this, so an asker installs the plugin and never edits it. The only access an asker needs is read access to clone the store repository.
+The server takes no credentials. The only access an asker needs is read access to clone the store repository.
 
 ## The server
 
 ### Start-up
 
 `knowledge-store-mcp --store PATH` starts the server:
-1. **Resolve the store root.** Every later path is checked against it after `realpath`, so symlinks and `..` can't escape.
+1. **Resolve the store root** in the order under *Configuration*. Every later path is checked against it after `realpath`, so symlinks and `..` can't escape.
 2. **Read the manifest.**
    - A missing manifest, or an unknown **major** version, refuses to start, naming the version found and the versions supported.
    - A newer **minor** version starts, and reports the unknown layers as present but unread.
