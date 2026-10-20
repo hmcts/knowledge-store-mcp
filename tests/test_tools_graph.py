@@ -1027,10 +1027,17 @@ class NormalisedNodeTest(ToolTestCase):
 
 class RepositoryListTest(ToolTestCase):
     def test_the_empty_name_is_never_a_repository(self):
-        """Catches: the empty name, which the index lists for the glossary page that
+        """Catches: the empty name, which the graph holds for the glossary page that
         has no repository (DESIGN.md 1, 3.5), counted or listed as a repository in
-        either mode, or looked up as one."""
-        for session, index, _ in self.modes():
+        either mode, or looked up as one. The library's index stopped listing it at
+        d94d33f, so an index built before that, which does, is checked too."""
+        older = build(self.tmp / "older-index", index="plain")
+        with closing(sqlite3.connect(older / INDEX_PLAIN)) as db, db:
+            db.execute("INSERT INTO repos(name) VALUES ('')")
+        older_session = store.Session(lambda: store.open_store(older, self.cache), lambda: NOW)
+        self.addCleanup(lambda: older_session.current()[0].close())
+        sessions = [(s, i) for s, i, _ in self.modes()] + [(older_session, "older index")]
+        for session, index in sessions:
             with self.subTest(index=index):
                 self.assertEqual(results.repository_names(session.current()[0]), sorted(SHA_DIGIT))
                 for empty in ("", "   ", "\t"):

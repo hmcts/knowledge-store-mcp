@@ -37,11 +37,13 @@ checks that every trap is still in the store, by its literal value.
 | `ui-components` | `c` | `2026-10-07T15:30:00+01:00` |
 
 Every repository has graph nodes, and every repository has a `by-repo` file. The
-index's `repos` table holds all twelve, and also the empty name, because one graph
-node has no repository (section 3.5): `""` sorts first, so it is `k` 1 and the
-twelve are `k` 2 to 13 in the order above. The empty name is not a repository: the
-server leaves it out of every list and count in both modes, so it reports an
-estate of twelve, and refuses a repository name that is empty after stripping.
+index's `repos` table holds the twelve, `k` 1 to 12 in the order above. One graph
+node has no repository (section 3.5); the library's index does not list the empty
+name for it (`feat/query-index` at d94d33f), and its file's `repo` is NULL. The
+graph read whole still holds `""` for that node. The empty name is not a
+repository: the server leaves it out of every list and count in both modes, so it
+reports an estate of twelve, and refuses a repository name that is empty after
+stripping.
 
 ## 2. Near misses
 
@@ -145,8 +147,9 @@ index must store each as the index does:
   community `"1"`, stored as the integer `1`: it is a member of community 1.
 - **No repository.** `glossary::payments` ("Payments glossary",
   `knowledge/glossary/payments.md`, a knowledge-corpus page) has no `repo`, no
-  `url` and no `community`. It is stored under the repository `""`, which the
-  index's `repos` table therefore lists (section 1).
+  `url` and no `community`. The index stores its file with a NULL `repo`, and
+  NULL sorts first, so that file is `files.k` 1; `repos` does not list `""`
+  (section 1).
 
 ## 4. Index
 
@@ -155,7 +158,7 @@ Built from the same graph and ticket layer with the schema in
 `1.0`, `meta.graph` is `graphify-out/graph.json.gz`, and `graph_sha256` and
 `file_tickets_sha256` are the 16-hex digests of those two files.
 
-- `repos` 13 (the twelve and `""`), `files` 44, `relations` 4, `nodes` 46,
+- `repos` 12 (the twelve; not `""`), `files` 44, `relations` 4, `nodes` 46,
   `edges` 37, `tickets` 5.
 - `nodes.community`: 20 rows `0`, 24 rows `1`, two `NULL` (the structural node and
   the glossary page).
@@ -164,9 +167,9 @@ Built from the same graph and ticket layer with the schema in
   `payments-api::RefundHandler`.
 
 The index was checked against the library's own `store_index.build` over the same
-two inputs (`feat/query-index` at f9a0320, with the section 3.4 and 3.5 nodes, and
-with and without the section 6.4 option): every
-table's rows are identical, and so is the plain file.
+two inputs, run from a `git archive` of `feat/query-index` at d94d33f, with and
+without the section 6.4 option: the DDL copy matches, every table's rows are
+identical, and so is the plain file.
 
 ## 5. Relationships
 
@@ -284,6 +287,16 @@ As the writer writes it: every built-in kind, each with `origin`, `edges`,
 `notes` is `{}` for every kind: the writer notes only an unread Flux file, which
 depends on the machine that built the store.
 
+### 5.6 A repository only a `by-repo` file names (opt-in)
+
+`build(root, by_repo_only=True)` adds `by-repo/docs-site.json`: a clone the
+relationships writer saw, with both lists empty, `commit` and `base_url` null and
+`extra` empty. No graph node, ticket or provenance entry names `docs-site`, so the
+index does not list it. It is still a cloned repository: a reader lists the
+`by-repo/` names as repositories when the relationships layer is present - from
+the directory listing alone - so the estate is thirteen in both modes, and
+`docs-site` is "in the estate, zero results". The default store does not write it.
+
 ## 6. Tickets
 
 `knowledge/intent/file-tickets.json.gz` and
@@ -395,9 +408,9 @@ Present: `graph`, `labels`, `provenance`, `intent`, `ticket_descriptions`,
   `skipped` and `notes` per kind, Terraform targets keyed `<org>/<repo>`, and each
   file written sorted, indented by one, with a final newline. Task 10 re-checks this
   against the merged format.
-- **Index (#457):** the schema is `feat/query-index` at `e4c55a2`, where the DDL
-  is unchanged from the copied `a839a4e`. The plain file is byte-identical to the
-  library's.
+- **Index (#457):** the schema is `feat/query-index` at `d94d33f`, where
+  `files.repo` became nullable and `repos` stopped listing the empty name. The
+  plain file is byte-identical to the library's.
 - **Archive bytes:** the library writes every `.gz` through `io.gzip_text`, whose
   text wrapper flushes a zlib sync point on close; the fixture compresses in one
   pass. So the index archive and both intent files

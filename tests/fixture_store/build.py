@@ -597,7 +597,24 @@ def kinds_document(edges: list[dict]) -> dict:
     return kinds
 
 
-def _write_relationships(root: Path) -> None:
+# DESIGN.md 5.6 (opt-in): a clone the relationships layer has a `by-repo` file for,
+# with no graph node, no ticket and no provenance entry, so the writer has no commit
+# or link for it either.
+BY_REPO_ONLY_REPOSITORY = "docs-site"
+
+
+def _by_repo_only_document() -> dict:
+    return {
+        "repository": BY_REPO_ONLY_REPOSITORY,
+        "commit": None,
+        "base_url": None,
+        "depends_on": [],
+        "depended_on_by": [],
+        "extra": {},
+    }
+
+
+def _write_relationships(root: Path, by_repo_only: bool = False) -> None:
     edges = relationship_edges()
     _write(
         root,
@@ -614,6 +631,12 @@ def _write_relationships(root: Path) -> None:
     _write(root, f"{RELATIONSHIPS}/kinds.json", _sorted_json(kinds_document(edges)))
     for repo, document in by_repo_documents(edges).items():
         _write(root, f"{BY_REPO}/{repo}.json", _sorted_json(document))
+    if by_repo_only:
+        _write(
+            root,
+            f"{BY_REPO}/{BY_REPO_ONLY_REPOSITORY}.json",
+            _sorted_json(_by_repo_only_document()),
+        )
 
 
 # --- The query index (#457) -------------------------------------------------------
@@ -681,11 +704,19 @@ def _index_rows(graph: dict, file_tickets: dict) -> dict[str, list[tuple]]:
         {**link, "source": str(link["source"]), "target": str(link["target"])}
         for link in graph["links"]
     ]
-    repos = sorted({n["repo"] for n in nodes} | {row[0] for row in tickets})
-    repo_k = {name: k for k, name in enumerate(repos, 1)}
+    # The empty name is not listed (library `_fill` at d94d33f): a file of a node with
+    # no repository has a NULL `repo`, and NULL sorts first in `ORDER BY r.k`.
+    repos = sorted(({n["repo"] for n in nodes} | {row[0] for row in tickets}) - {""})
+    repo_k: dict[str, int | None] = {name: k for k, name in enumerate(repos, 1)}
+    repo_k[""] = None
     file_pairs = {(n["repo"], n.get("source_file") or "") for n in nodes}
     file_pairs |= {(row[0], row[1]) for row in tickets}
-    files = sorted(file_pairs, key=lambda pair: (repo_k[pair[0]], pair[1]))
+
+    def file_order(pair: tuple[str, str]) -> tuple:
+        k = repo_k[pair[0]]
+        return ((0, 0) if k is None else (1, k), pair[1])
+
+    files = sorted(file_pairs, key=file_order)
     file_k = {pair: k for k, pair in enumerate(files, 1)}
     relations = sorted({link["relation"] for link in links})
     relation_k = {name: k for k, name in enumerate(relations, 1)}
@@ -697,7 +728,7 @@ def _index_rows(graph: dict, file_tickets: dict) -> dict[str, list[tuple]]:
     ordered = sorted(survivors.values(), key=lambda n: n["id"])
     node_k = {n["id"]: k for k, n in enumerate(ordered, 1)}
     return {
-        "repos": [(repo_k[name], name) for name in repos],
+        "repos": [(k, name) for k, name in enumerate(repos, 1)],
         "files": [(file_k[pair], repo_k[pair[0]], pair[1]) for pair in files],
         "relations": [(relation_k[name], name) for name in relations],
         "nodes": [
@@ -916,6 +947,7 @@ def build(
     manifest_minor: int = 0,
     extra: dict | None = None,
     ticket_only: bool = False,
+    by_repo_only: bool = False,
 ) -> Path:
     """Write the complete synthetic store at `root` and return it.
 
@@ -925,7 +957,8 @@ def build(
     `extra` maps layer names a newer library would add to their manifest entries,
     merged into `layers` - together they make the newer-minor manifest a reader
     must still load. `ticket_only` adds a repository that only the ticket layer
-    names (DESIGN.md 6.4). The manifest is written last, so its digests describe
+    names (DESIGN.md 6.4), and `by_repo_only` one that only a `by-repo` file names
+    (DESIGN.md 5.6). The manifest is written last, so its digests describe
     the files as they finally are.
     """
     if index not in INDEX_MODES:
@@ -956,7 +989,7 @@ def build(
         _write(root, rel, _library_json({**entries, "_metadata": _prose_metadata(prose)}))
     _write(root, EXTRA_LAYERS_CONFIG, _library_json(EXTRA_LAYERS_DECLARED))
     _write(root, FAQ, _library_json(FAQ_DATA))
-    _write_relationships(root)
+    _write_relationships(root, by_repo_only)
     _write_index(root, graph, file_tickets, index)
 
     _write(root, MANIFEST, _sorted_json(manifest_document(root, manifest_minor, extra or {})))

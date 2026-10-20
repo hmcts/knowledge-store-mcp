@@ -25,10 +25,9 @@ from fixture_store.build import GRAPH, INDEX_ARCHIVE, INDEX_PLAIN, MANIFEST, bui
 from knowledgestore_mcp import index, manifest, store
 from knowledgestore_mcp.index import Fallback, IndexHandle
 
-# DESIGN.md 1: the index's repositories in `k` order: the empty name, held by the
-# one node with no repository, then the twelve.
+# DESIGN.md 1: the index's repositories in `k` order: the twelve. The one node with
+# no repository is not listed, as the library's index leaves the empty name out.
 REPOS = [
-    "",
     "accounts-web",
     "audit-service",
     "chart-web",

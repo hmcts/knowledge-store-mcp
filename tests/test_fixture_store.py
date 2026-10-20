@@ -247,7 +247,8 @@ class IndexTest(FixtureStoreCase):
     def test_index_opens_with_fts5_and_populated_columns(self):
         """Catches: an index built without the FTS5 table, or with `nodes.community`
         and `tickets.landed` left empty - each silently turns a later search or
-        landed/proposed test into a test of nothing. DESIGN.md section 4."""
+        landed/proposed test into a test of nothing; or `repos` listing the empty
+        name, which the library's index no longer does. DESIGN.md section 4."""
         db = self._connect(self.root)
         self.assertEqual(
             db.execute("SELECT value FROM meta WHERE key = 'index_schema'").fetchone(), ("1.0",)
@@ -274,7 +275,20 @@ class IndexTest(FixtureStoreCase):
         )
         self.assertEqual(
             [name for (name,) in db.execute("SELECT name FROM repos ORDER BY k")],
-            ["", *TWELVE_REPOSITORIES],
+            TWELVE_REPOSITORIES,
+        )
+        # DESIGN.md 3.5: the corpus page names no repository, so its file's `repo` is
+        # NULL, and NULL sorts first in `files` (library `_fill` at d94d33f).
+        self.assertEqual(
+            db.execute("SELECT k, repo, path FROM files WHERE repo IS NULL").fetchall(),
+            [(1, None, "knowledge/glossary/payments.md")],
+        )
+        self.assertEqual(
+            db.execute(
+                "SELECT f.repo FROM nodes n JOIN files f ON f.k = n.file WHERE n.id = ?",
+                ("glossary::payments",),
+            ).fetchone(),
+            (None,),
         )
 
     def test_the_nodes_the_index_normalises(self):
@@ -513,6 +527,30 @@ class TrapTest(FixtureStoreCase):
                 "notes": {},
             },
         )
+
+    def test_a_repository_with_only_a_by_repo_file_is_opt_in(self):
+        """Catches: the by-repo-only repository missing from its option, or leaking
+        into another layer (a graph node, a ticket, provenance), which would make the
+        test of it pass through that layer instead. DESIGN.md 5.6."""
+        self.assertInDesign("`docs-site`")
+        root = build(Path(tempfile.mkdtemp(dir=self.root.parent)) / "s", by_repo_only=True)
+        document = _json(root, "knowledge/relationships/by-repo/docs-site.json")
+        self.assertEqual(
+            document,
+            {
+                "repository": "docs-site",
+                "commit": None,
+                "base_url": None,
+                "depends_on": [],
+                "depended_on_by": [],
+                "extra": {},
+            },
+        )
+        graph = _json(root, "graphify-out/graph.json.gz")
+        self.assertNotIn("docs-site", {n.get("repo") for n in graph["nodes"]})
+        self.assertNotIn("docs-site", _json(root, "knowledge/intent/file-tickets.json.gz"))
+        self.assertNotIn("docs-site", _json(root, "knowledge/provenance.json")["repositories"])
+        self.assertFalse((self.root / "knowledge/relationships/by-repo/docs-site.json").exists())
 
     def test_three_hop_chain_and_cycle(self):
         """Catches: a broken link in the chain or the cycle, which would let a

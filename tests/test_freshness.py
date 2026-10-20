@@ -90,9 +90,9 @@ class ReloadTest(FreshnessTestCase):
             self.assertEqual(notice, Notice("reload deferred: manifest unreadable"))
         # The loaded store still answers.
         assert isinstance(first.index, IndexHandle)
-        # DESIGN.md 1: the twelve repositories and the empty name.
+        # DESIGN.md 1: the twelve repositories; the index does not list the empty name.
         self.assertEqual(
-            first.index.connection.execute("SELECT count(*) FROM repos").fetchone()[0], 13
+            first.index.connection.execute("SELECT count(*) FROM repos").fetchone()[0], 12
         )
 
     def test_an_identical_rebuild_does_not_reload(self):

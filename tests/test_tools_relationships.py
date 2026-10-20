@@ -172,8 +172,10 @@ class RelationshipsTestCase(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def session(self, index: str = "gz", edit=None) -> store.Session:
-        root = build(self.tmp / f"s-{index}-{len(list(self.tmp.iterdir()))}", index=index)
+    def session(self, index: str = "gz", edit=None, **options) -> store.Session:
+        root = build(
+            self.tmp / f"s-{index}-{len(list(self.tmp.iterdir()))}", index=index, **options
+        )
         if edit is not None:
             path = root / MANIFEST
             document = json.loads(path.read_text(encoding="utf-8"))
@@ -399,7 +401,10 @@ class UnknownNameTest(RelationshipsTestCase):
             session = self.session(index)
             searched = f"searched 12 repositories in the {base} and relationships layers"
             empty = {"items": [], "total": 0, "page": 1, "next_page": None}
-            for tool in (tools_relationships.dependents, tools_relationships.dependencies):
+            for tool, more in (
+                (tools_relationships.dependents, {}),
+                (tools_relationships.dependencies, {"outside_estate": []}),
+            ):
                 with self.subTest(index=index, tool=tool.__name__):
                     self.assertEqual(
                         tool(session, "payment-api"),
@@ -407,6 +412,7 @@ class UnknownNameTest(RelationshipsTestCase):
                             **envelope(label, [base, "relationships"]),
                             "repository": UNKNOWN,
                             "searched": searched,
+                            **more,
                             **empty,
                         },
                     )
@@ -444,6 +450,38 @@ class UnknownNameTest(RelationshipsTestCase):
         answer = tools_relationships.repo_answer(session, "legacy-network")
         self.assertEqual(answer["repository"], NOT_HELD)
         self.assertIsNone(answer["relationships"])
+
+    def test_a_repository_with_only_a_by_repo_file_is_in_the_estate(self):
+        """Catches: a cloned repository that has no graph node and no ticket - only
+        its `by-repo/` file - answered "not in the estate", in either mode
+        (DESIGN.md 5.6). The estate is then thirteen."""
+        for index, label, base in (("gz", INDEXED, "index"), ("none", FALLBACK, "graph")):
+            with self.subTest(index=index):
+                session = self.session(index, by_repo_only=True)
+                self.assertEqual(
+                    tools_relationships.dependencies(session, "docs-site"),
+                    {
+                        **envelope(label, [base, "relationships"]),
+                        "repository": known("docs-site"),
+                        "outside_estate": [],
+                        "searched": f"searched 13 repositories in the {base} and relationships layers",
+                        "items": [],
+                        "total": 0,
+                        "page": 1,
+                        "next_page": None,
+                    },
+                )
+
+    def test_a_by_repo_name_is_not_counted_when_the_layer_is_absent(self):
+        """Catches: by-repo names read although the manifest says the relationships
+        layer is absent, so an absent layer still grows the estate."""
+
+        def edit(document):
+            document["layers"]["relationships"]["present"] = False
+
+        session = self.session(by_repo_only=True, edit=edit)
+        found = tools_relationships.dependencies(session, "docs-site")
+        self.assertEqual(found["repository"]["answer"], "not in the estate")
 
 
 class AbsentLayerTest(RelationshipsTestCase):
@@ -499,6 +537,37 @@ class DependenciesTest(RelationshipsTestCase):
         maven = tools_relationships.dependencies(session, "payments-api", kind="maven_artifact")
         self.assertEqual(
             [e["repository"] for e in maven["items"]], ["ledger-service", "shared-lib-java"]
+        )
+
+    def test_dependencies_list_the_targets_outside_the_estate(self):
+        """Catches: a dependency the store does not hold left out, so a repository's
+        list reads as complete without it (spec: targets outside the estate are
+        listed). payments-api references the chart `legacy-network` and the estate's
+        own `example-org/legacy-network`; `other-org/legacy-network` is audit-service's,
+        not payments-api's, and must not appear here although it shares the name
+        (DESIGN.md 5.4)."""
+        session = self.session()
+        payments = tools_relationships.dependencies(session, "payments-api")
+        self.assertEqual(payments["outside_estate"], [CHART_OUTSIDE, MODULE_OUTSIDE])
+        audit = tools_relationships.dependencies(session, "audit-service")
+        self.assertEqual(
+            audit["outside_estate"],
+            [
+                {
+                    "kind": "terraform_module",
+                    "target": "other-org/legacy-network",
+                    "references": 1,
+                    "referenced_by": ["audit-service"],
+                }
+            ],
+        )
+        modules = tools_relationships.dependencies(session, "payments-api", kind="terraform_module")
+        self.assertEqual(modules["outside_estate"], [MODULE_OUTSIDE])
+        self.assertEqual(
+            tools_relationships.dependencies(session, "ledger-service", kind="helm_chart")[
+                "outside_estate"
+            ],
+            [],
         )
 
 

@@ -86,18 +86,48 @@ def envelope(store: Store, layers_used: list[str], notice: Notice | None) -> dic
 
 def repository_names(store: Store) -> list[str]:
     """The estate's repositories, sorted: the index's `repos`, or, without it, the
-    graph's and the ticket layer's, collected as the index builder collects them.
-    Never the empty name: a node with no repository is not one, whatever the index
-    holds."""
+    graph's and the ticket layer's, collected as the index builder collects them;
+    and in both modes every repository the relationships layer has a `by-repo` file
+    for, since that writer runs over every clone, including one with no graph node
+    and no ticket. Never the empty name: a node with no repository is not one,
+    whatever the index holds."""
     if isinstance(store.index, IndexHandle):
-        rows = store.index.connection.execute(
-            "SELECT name FROM repos WHERE name <> '' ORDER BY name"
+        # An index built before the library stopped listing "" still holds it; the
+        # filter below drops it in every mode.
+        rows = store.index.connection.execute("SELECT name FROM repos")
+        names = {name for (name,) in rows}
+    else:
+        names = set(graph.read(store).repositories()) | store.memo(
+            "intent.repositories", lambda: graph.ticket_repositories(store.read("intent"))
         )
-        return [name for (name,) in rows]
-    names = set(graph.read(store).repositories()) | store.memo(
-        "intent.repositories", lambda: graph.ticket_repositories(store.read("intent"))
-    )
+    names |= set(by_repo_files(store))
     return sorted(name for name in names if name)
+
+
+def by_repo_files(store: Store) -> dict[str, Path]:
+    """Each `by-repo/` file by its stem, from the directory the manifest names for
+    the relationships layer, listed once per loaded store and never parsed here. A
+    name is matched against these keys; it never becomes part of a path. Empty when
+    the layer is absent."""
+    return store.memo("relationships.by_repo", lambda: _list_by_repo(store))
+
+
+def _list_by_repo(store: Store) -> dict[str, Path]:
+    entry = store.manifest.layers.get("relationships")
+    if not isinstance(entry, dict) or entry.get("present") is not True:
+        return {}
+    paths = entry.get("paths")
+    for rel in paths if isinstance(paths, list) else []:
+        if not isinstance(rel, str) or not rel.endswith("/"):
+            continue
+        directory = contained(store.root, rel)
+        if directory.is_dir():
+            return {
+                path.stem: contained(store.root, path.relative_to(store.root))
+                for path in sorted(directory.iterdir())
+                if path.suffix == ".json" and path.is_file()
+            }
+    return {}
 
 
 def _join(names: list[str]) -> str:
@@ -266,6 +296,12 @@ def outside_estate(store: Store, name: str) -> tuple[Outside, ...]:
     ignoring case as GitHub and the library's resolver compare it. Another
     organisation's repository of the same name is a different target."""
     return _outside_estate(store).get(name, ())
+
+
+def targets_outside_estate(store: Store) -> tuple[Outside, ...]:
+    """Every registry entry once, by (kind, target)."""
+    unique = {(o.kind, o.target): o for found in _outside_estate(store).values() for o in found}
+    return tuple(unique[key] for key in sorted(unique))
 
 
 def _outside_estate(store: Store) -> dict[str, tuple[Outside, ...]]:

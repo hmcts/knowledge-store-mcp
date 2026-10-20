@@ -5,7 +5,8 @@
 Each is a plain function of `(Session, ...) -> dict`, as the graph tools are, and
 the server registers them. A repository name is looked up (`results.repository`),
 never joined into a path: a `by-repo/` file is found by listing the directory the
-manifest names and matching file stems against the name the lookup returned.
+manifest names (`results.by_repo_files`) and matching file stems against the name
+the lookup returned.
 
 Every list is complete and paged under the cap (`results.page`), with `total` and
 `next_page`. An empty answer says what was searched, and an absent layer is named
@@ -16,7 +17,6 @@ rather than read as "nothing depends on it". Store text - an example line, an
 import json
 import re
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from . import results
@@ -50,32 +50,9 @@ def _present(store: Store) -> bool:
     return isinstance(entry, dict) and entry.get("present") is True
 
 
-def _by_repo_files(store: Store) -> dict[str, Path]:
-    """Each `by-repo/` file by its stem, listed once per loaded store from the
-    directory the manifest names. A name is matched against these keys; it never
-    becomes part of a path."""
-    return store.memo("relationships.by_repo", lambda: _list_by_repo(store))
-
-
-def _list_by_repo(store: Store) -> dict[str, Path]:
-    entry = store.manifest.layers.get(LAYER)
-    paths = entry.get("paths") if isinstance(entry, dict) else None
-    for rel in paths if isinstance(paths, list) else []:
-        if not isinstance(rel, str) or not rel.endswith("/"):
-            continue
-        directory = contained(store.root, rel)
-        if directory.is_dir():
-            return {
-                path.stem: contained(store.root, path.relative_to(store.root))
-                for path in sorted(directory.iterdir())
-                if path.suffix == ".json" and path.is_file()
-            }
-    return {}
-
-
 def _by_repo(store: Store, name: str) -> dict[str, Any] | None:
     """The repository's by-repo file, parsed, or None when the layer holds none."""
-    path = _by_repo_files(store).get(name)
+    path = results.by_repo_files(store).get(name)
     if path is None:
         return None
     document = json.loads(path.read_bytes())
@@ -197,7 +174,9 @@ def dependents(
     default 4), each repository listed once with its path from the target; a
     repository met again on its own path is reported in `cycles` and not followed.
     A target the estate references but does not hold is answered from the
-    registry's targets outside the estate, one item per kind."""
+    registry's targets outside the estate, one item per kind: by its exact key, or
+    as `<org>/<target>` for the store's own `github_org` only (none recorded, exact
+    keys only)."""
     name = _repository(target, "target")
     if kind is not None:
         kind = _text(kind, "kind")
@@ -319,15 +298,30 @@ def dependencies(
     cap_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
 ) -> dict[str, Any]:
     """The repositories `repo` depends on, each edge with its references, kinds,
-    pins and example lines with pinned URLs. `kind` keeps edges of that kind."""
+    pins and example lines with pinned URLs, paged; and in `outside_estate`, every
+    target outside the estate it references, per kind and by the registry's key,
+    with the registry's `references` (counted across every referrer, not this
+    repository alone) and `referenced_by`. The registry records no example lines
+    for these. `kind` keeps edges and targets of that kind.
+
+    A name is looked up as `find_repo` looks it up. A target outside the estate is
+    keyed as the library wrote it, `<org>/<repo>` for a Terraform source; a lookup
+    by bare name matches that key only for the store's own `github_org`, so a store
+    whose manifest records none matches only exact target names."""
     name = _repository(repo, "repo")
     if kind is not None:
         kind = _text(kind, "kind")
     store, notice, base, answer, layers_used = _lookup(session, name)
     _check_kind(store, kind)
     edges: list[Edge] = []
+    outside: list[dict[str, Any]] = []
     if isinstance(answer, Known) and _present(store):
         edges = _of_kind(_edges(_by_repo(store, answer.name), "depends_on"), kind)
+        outside = [
+            target.as_dict()
+            for target in results.targets_outside_estate(store)
+            if answer.name in target.referenced_by and (kind is None or target.kind == kind)
+        ]
     return _listing(
         store,
         notice,
@@ -338,6 +332,7 @@ def dependencies(
         cursor=cursor,
         cap_bytes=cap_bytes,
         repository=answer.as_dict(),
+        outside_estate=outside,
     )
 
 
