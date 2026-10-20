@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       # CodeQL fails a language with no source files. Until the package lands,
       # the python leg reports success without analysing; it starts analysing
@@ -45,7 +45,7 @@ jobs:
 
       - name: Initialize CodeQL
         if: steps.source.outputs.present == 'true'
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@v4.39.0
         with:
           languages: ${{ matrix.language }}
           build-mode: none
@@ -54,6 +54,6 @@ jobs:
 
       - name: Perform CodeQL Analysis
         if: steps.source.outputs.present == 'true'
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@v4.39.0
         with:
           category: "/language:${{ matrix.language }}"
