@@ -7,6 +7,7 @@ real index (or, with `index="none"`, through the real graph fallback); the only
 stand-ins are the clock and the cache directory.
 """
 
+import gc
 import gzip
 import json
 import os
@@ -17,6 +18,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import weakref
 from unittest import mock
 
 from fixture_store.build import GRAPH, INDEX_PLAIN, MANIFEST, build
@@ -929,6 +931,28 @@ class NormalisedNodeTest(ToolTestCase):
                 tools_graph.node(session, "r::secret")
             self.assertNotIn("secret", str(raised.exception).lower())
 
+    def test_a_remembered_refusal_keeps_no_graph_alive(self):
+        """Catches: remembering the caught `GraphRefused` itself, whose traceback and
+        context hold the frames that parsed the graph, so a refused graph stays in
+        memory for the store's lifetime - the whole graph, in the one mode that
+        reads it whole. The refusal must still be remembered, not re-read."""
+
+        class Parsed(dict):
+            """The parsed graph, as a type a weak reference can watch."""
+
+        loaded = self.session("none").current()[0]
+        # A node with no id, which the index builder cannot store.
+        held = [Parsed({"nodes": [{"repo": "r"}]})]
+        watch = weakref.ref(held[0])
+        with mock.patch.object(loaded, "read", lambda name: held.pop()):
+            with self.assertRaises(graph.GraphRefused):
+                graph.read(loaded)
+        gc.collect()
+        self.assertIsNone(watch())
+        # Remembered: the store's own graph, which is valid, is not read now.
+        with self.assertRaises(graph.GraphRefused):
+            graph.read(loaded)
+
     def test_repositories_are_listed_from_every_copy_of_a_node(self):
         """Catches: repositories listed from surviving nodes only, where the index's
         `repos` lists every staged copy's - so a repeated id's losing copy in
@@ -942,8 +966,9 @@ class NormalisedNodeTest(ToolTestCase):
             }
         )
         self.assertEqual(reader.repositories(), ["r", "s"])
-        # The reader mirrors the index's `repos` exactly, empty name included; the
-        # server leaves "" out above it (results.repository_names), in both modes.
+        # The reader keeps the empty name on purpose, although the library's index no
+        # longer lists it in `repos` (e4eab86): results.repository_names leaves ""
+        # out above both readers, so the two modes list the same estate.
         corpus = graph.GraphReader(
             {"nodes": [{"id": "page", "label": "Page"}, {"id": "r::a", "repo": "r"}]}
         )

@@ -2,11 +2,13 @@
 
 Every node is built exactly as the library's index builder builds its row, so the
 fallback answers as the index would. The source is knowledge-store-builder
-`src/knowledgestore/store_index.py` (#457, `feat/query-index` at f9a0320):
+`src/knowledgestore/store_index.py` (#457, `feat/query-index` at e4eab86):
 `_node_rows` and `_link_rows` for each field, `graph_files.iter_edges` for which
 key holds the edges, and the staging tables and `_fill` for how SQLite stores each
 value, which copy of a repeated id survives, which repositories are listed, and
-what makes the build fail. Change one, change this.
+what makes the build fail. Change one, change this. One difference is deliberate:
+the index no longer lists the empty repository name, and `repositories()` here
+still does; `results.repository_names` leaves it out above both readers.
 
 One representation is kept: a tuple per node, the edges between them, and an FTS5
 index of their labels. The parsed graph JSON they are built from is read without
@@ -102,7 +104,7 @@ def _links(graph: dict) -> list:
 
 # The library's staging tables and the parts of `_fill` that decide which nodes and
 # edges the index holds, copied from `store_index.py` (STAGING and `_fill`, at
-# f9a0320). Staging through SQLite, not imitating it, is the point: column affinity
+# e4eab86). Staging through SQLite, not imitating it, is the point: column affinity
 # turns 7 into "7", " 0" and "1e3" into integers, and -0.0 into "0.0", and rejects
 # what cannot be bound, exactly as it does for the index.
 _STAGING = """
@@ -176,7 +178,9 @@ def _stage(graph: dict) -> tuple[list[tuple], list[tuple], list[str]]:
         dangling = db.execute(_DANGLING).fetchone()[0]
         if live + dangling != links_read:
             raise GraphRefused("a graph link the index builder cannot account for")
-        repositories = [r for (r,) in db.execute("SELECT DISTINCT repo FROM stg_nodes ORDER BY repo")]  # fmt: skip
+        repositories = [
+            r for (r,) in db.execute("SELECT DISTINCT repo FROM stg_nodes ORDER BY repo")
+        ]
     return survivors, edges, repositories
 
 
@@ -190,7 +194,15 @@ class GraphReader:
         rows: dict[str, Row] = {}
         for node_id, label, repo, kind, file, url, community in survivors:
             # A repository and a kind recur on many nodes: each is held once.
-            rows[node_id] = (node_id, label, sys.intern(repo), sys.intern(kind), file, url, community)  # fmt: skip
+            rows[node_id] = (
+                node_id,
+                label,
+                sys.intern(repo),
+                sys.intern(kind),
+                file,
+                url,
+                community,
+            )
         self._rows = rows
         self._ids = list(rows)  # in the index's order: ORDER BY id
         self._repositories = repositories
@@ -206,8 +218,10 @@ class GraphReader:
         self._labels: sqlite3.Connection | None = None
 
     def repositories(self) -> list[str]:
-        """Every repository the index's `repos` lists from the graph: the empty name
-        too, when a node has none, and a repeated id's losing copies included."""
+        """Every repository a staged node names, a repeated id's losing copies
+        included, as the index builder collects them. The empty name is kept, on
+        purpose, when a node has none: the index's `repos` leaves it out (e4eab86),
+        and `results.repository_names` does the same above both readers."""
         return list(self._repositories)
 
     def node(self, node_id: str) -> dict[str, Any] | None:
@@ -237,7 +251,9 @@ class GraphReader:
         """Built on the first search; a store that is never searched never pays for it."""
         if self._labels is None:
             db = sqlite3.connect(":memory:")
-            db.execute(f"CREATE VIRTUAL TABLE labels USING fts5(label, content='', tokenize='{TOKENIZER}')")  # fmt: skip
+            db.execute(
+                f"CREATE VIRTUAL TABLE labels USING fts5(label, content='', tokenize='{TOKENIZER}')"
+            )
             db.executemany(
                 "INSERT INTO labels(rowid, label) VALUES (?, ?)",
                 (
@@ -287,7 +303,9 @@ def _build(store: Store) -> "GraphReader | GraphRefused":
     try:
         return GraphReader(store.read("graph"))
     except GraphRefused as refused:
-        return refused
+        # A fresh copy, never raised: the caught one's traceback and context hold
+        # the frames that parsed the graph, which would keep it all alive.
+        return GraphRefused(str(refused))
 
 
 def _close(held: "GraphReader | GraphRefused") -> None:

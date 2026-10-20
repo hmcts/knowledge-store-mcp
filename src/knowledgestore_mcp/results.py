@@ -95,7 +95,7 @@ def repository_names(store: Store) -> list[str]:
         )
         return [name for (name,) in rows]
     names = set(graph.read(store).repositories()) | store.memo(
-        "intent.repositories", lambda: graph.ticket_repositories(store.layer("intent"))
+        "intent.repositories", lambda: graph.ticket_repositories(store.read("intent"))
     )
     return sorted(name for name in names if name)
 
