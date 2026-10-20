@@ -22,6 +22,9 @@ dev = ["ruff==0.16.10", "pyright==1.1.414"]
 
 [tool.hatch.version]
 source = "vcs"
+# A source archive has no .git to read a tag from; without a fallback it cannot
+# be installed at all. 0.0.0 says plainly that the version is unknown.
+fallback-version = "0.0.0"
 raw-options = { local_scheme = "node-and-date" }
 
 [tool.hatch.build.targets.wheel]
