@@ -49,11 +49,17 @@ INDEX_PRESENT = "present"
 INDEX_ABSENT = "absent: graph read whole"
 
 
+# A lone UTF-16 surrogate, which `json.loads` accepts from `"\\ud800"` but UTF-8
+# cannot carry.
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
 def encode(value: Any) -> bytes:
-    """The bytes a response is measured in: compact, key-sorted UTF-8 JSON."""
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    """The bytes a response is sent as, and so the bytes the cap measures: compact,
+    key-sorted UTF-8 JSON. A lone surrogate in store text becomes U+FFFD, the
+    replacement character, rather than failing the whole response."""
+    text = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return _SURROGATE.sub("\ufffd", text).encode("utf-8")
 
 
 # --- The envelope -----------------------------------------------------------------
@@ -205,8 +211,11 @@ def repository(store: Store, name: str) -> Known | Unknown | NotHeld:
     if name in names:
         return Known(name, matched_case_insensitively=False)
     folded = [n for n in names if n.casefold() == name.casefold()]
-    if folded:
+    if len(folded) == 1:
         return Known(folded[0], matched_case_insensitively=True)
+    if folded:
+        # Case-only twins: the name cannot say which is meant, so offer each.
+        return Unknown(tuple(folded))
     referrers = _outside_estate(store).get(name)
     if referrers is not None:
         return NotHeld(name, referrers)
@@ -252,7 +261,7 @@ def _read_outside_estate(store: Store) -> dict[str, tuple[str, ...]]:
 
 # A cursor is `<page>.<first item>.<tag>`. Its token is rebuilt from the parsed
 # integers and compared whole, so any other spelling of a number is refused.
-_CURSOR = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9a-f]{16})")
+_CURSOR = re.compile(r"([0-9]{1,9})\.([0-9]{1,9})\.([0-9a-f]{16})")
 
 # The fields `page` adds to the response; the frame may not carry them.
 PAGING_FIELDS = ("items", "total", "page", "next_page", "oversize")
@@ -262,8 +271,9 @@ class CursorRefused(ValueError):
     """A `next_page` that does not belong to this listing of this store."""
 
     def __init__(self, cursor: str):
+        shown = cursor if len(cursor) <= 64 else cursor[:64] + "…"
         super().__init__(
-            f"page cursor {cursor!r} is not from this listing of the current store "
+            f"page cursor {shown!r} is not from this listing of the current store "
             "(the store may have changed since): start again without a page cursor"
         )
 
@@ -331,7 +341,9 @@ def page(
             body += 1 + len(encoded[end][1])
             end += 1
     result = response(end)
-    if end - start == 1 and len(encode(result)) > cap_bytes:
+    # Over the cap only when nothing smaller could be sent: one item that does not
+    # fit alone, or a frame that is over the cap by itself.
+    if len(encode(result)) > cap_bytes:
         result["oversize"] = True
     return result
 
