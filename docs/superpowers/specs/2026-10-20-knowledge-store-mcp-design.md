@@ -33,7 +33,7 @@ Everything the server serves comes from a store built by `knowledge-store-builde
 |---|---|
 | hmcts/knowledge-store-builder#454: store manifest | `knowledge/store-manifest.json`: `format.major`/`minor`, `store.id`, `store.github_org`, and each layer's measured `present` flag, plus `extra_layers` |
 | hmcts/knowledge-store-builder#455: relationships layer | `knowledge/relationships/by-repo/<repo>.json` and `repository-dependencies.json`. Edges carry `references`, `kinds`, `refs_pinned` and `examples`, and targets outside the estate are listed. Kinds come from a parser registry, built-in plus store-registered, and the manifest lists which are present |
-| hmcts/knowledge-store-builder#457: query index | `knowledge/index/store.sqlite`, opened read-only and lazily, with the graph as a fallback when it's absent |
+| hmcts/knowledge-store-builder#457: query index | `knowledge/index/store.sqlite.gz`, committed gzipped because the plain file can pass GitHub's 100 MB limit. A plain `store.sqlite` is read when present. The graph is the fallback when neither exists |
 | hmcts/knowledge-store-builder#456: fixture store | a synthetic store attached to each library release, which this repository's CI tests against |
 
 **The one rule the server enforces:** it reads the format major versions it was written for, and refuses any other. A newer minor version is read, and its unknown layers are reported as present but unread.
@@ -69,6 +69,9 @@ The server takes no credentials. The only access an asker needs is read access t
    - A missing manifest, or an unknown **major** version, refuses to start, naming the version found and the versions supported.
    - A newer **minor** version starts, and reports the unknown layers as present but unread.
 3. **Open the query index read-only,** and read other layers lazily on first use. The server never parses the whole graph into memory when the index is present. Without the index, it falls back to the graph and says so in `store_info`.
+   - The store commits the index gzipped, and SQLite cannot open a compressed file. On first use the server decompresses it to `${XDG_CACHE_HOME:-~/.cache}/knowledge-store/<store.id>/<sha256 of the .gz>.sqlite`, then opens that file read-only.
+   - The key is the archive's hash, so a rebuilt store gets a new cache entry rather than a stale one. The server removes its other entries for that store id.
+   - This cache is the server's only write. It is outside the store, and a failure to write it falls back to the graph, never to a partial file.
 
 ### Tools
 
