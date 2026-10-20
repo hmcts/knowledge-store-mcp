@@ -1,0 +1,29 @@
+name: Dependabot auto-merge
+
+# Enables auto-merge on Dependabot minor and patch updates. GitHub then merges
+# each one only after the main ruleset's required checks pass. Major updates
+# stay with a person. A grouped update auto-merges only when its highest bump is
+# minor or patch (fetch-metadata reports the group's highest).
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v3.1.0
+
+      - name: Enable auto-merge for minor and patch updates
+        if: contains(fromJSON('["version-update:semver-minor","version-update:semver-patch"]'), steps.meta.outputs.update-type)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"
