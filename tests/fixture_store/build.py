@@ -483,15 +483,20 @@ def by_repo_documents(edges: list[dict]) -> dict[str, dict]:
 
 def kinds_document(edges: list[dict]) -> dict:
     kinds: dict[str, dict] = {}
+
+    def entry(kind: str) -> dict:
+        # A kind can have unresolved targets and no edge, so either loop may be
+        # the first to meet it.
+        return kinds.setdefault(
+            kind, {"origin": "builtin", "edges": 0, "references": 0, "unresolved": 0}
+        )
+
     for edge in edges:
         for kind, references in edge["kinds"].items():
-            entry = kinds.setdefault(
-                kind, {"origin": "builtin", "edges": 0, "references": 0, "unresolved": 0}
-            )
-            entry["edges"] += 1
-            entry["references"] += references
+            entry(kind)["edges"] += 1
+            entry(kind)["references"] += references
     for kind, targets in UNRESOLVED_OUTSIDE_ESTATE.items():
-        kinds[kind]["unresolved"] = len(targets)
+        entry(kind)["unresolved"] = len(targets)
     return kinds
 
 

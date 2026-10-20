@@ -299,17 +299,25 @@ Present: `graph`, `labels`, `provenance`, `intent`, `ticket_descriptions`,
 
 ## 10. Where the fixture follows a plan, not a merged writer
 
-- **Manifest (#454):** the `feat/store-manifest` working tree, after the review
+- **Manifest (#454):** `feat/store-manifest` at `b0a7841`, the review fix that
   replaced `built` with `digest` and `sources_as_of`. All field names are in one
   section of `build.py`.
-- **Relationships (#455):** the writer does not exist yet; the shapes follow the
-  #455 plan's interface. `kinds.json`'s `unresolved` is the number of unresolved
-  targets of that kind (the plan does not say whether targets or references).
-  Task 10 re-checks against the merged format.
-- **Index (#457):** the schema is the `feat/query-index` head. The plain file is
-  byte-identical to the library's; the gzip archive is not, because the library
-  writes it through a text wrapper that flushes. Both decompress to the same
-  bytes.
+- **Relationships (#455):** the shapes follow the #455 plan's interface. The
+  writer now exists, in progress on `feat/relationships-registry`, and adds keys
+  this fixture does not write: `skipped`, `notes`, every registered kind listed in
+  `kinds.json` (edges or not), and its own form of
+  `unresolved_targets_outside_estate`. Task 10 reconciles those against the merged
+  format. `kinds.json`'s `unresolved` is here the number of unresolved targets of
+  that kind.
+- **Index (#457):** the schema is `feat/query-index` at `e4c55a2`, where the DDL
+  is unchanged from the copied `a839a4e`. The plain file is byte-identical to the
+  library's.
+- **Archive bytes:** the library writes every `.gz` through `io.gzip_text`, whose
+  text wrapper flushes a zlib sync point on close; the fixture compresses in one
+  pass. So the index archive and both intent files
+  (`file-tickets.json.gz`, `ticket-descriptions.json.gz`) differ in bytes from the
+  library's, while decompressing to the same bytes. Never compare a fixture
+  archive's sha256 with a library archive's.
 - **Summaries:** the `_metadata` block carries `prose_digests` only. The library's
   also carries `content_digest` and `coverage`, which no reader of this store
   uses.

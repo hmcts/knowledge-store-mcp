@@ -19,7 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from fixture_store.build import build
+from fixture_store.build import build, kinds_document
 
 DESIGN = (Path(__file__).parent / "fixture_store" / "DESIGN.md").read_text(encoding="utf-8")
 
@@ -156,6 +156,15 @@ class ManifestTest(FixtureStoreCase):
             self.manifest["layers"]["relationships"]["digest"],
             _sha16("\n".join(lines).encode("utf-8")),
         )
+
+    def test_store_digest_is_taken_over_every_layer_and_extra_layer(self):
+        """Catches: a store digest that leaves out the extra layers, or an absent
+        layer, so editing the answers layer would not trigger Task 4's reload.
+        The formula is #454's: sorted `name NUL digest` lines, `-` for none."""
+        entries = {**self.manifest["layers"], **self.manifest["extra_layers"]}
+        self.assertIn("faq", entries)
+        lines = sorted(f"{name}\0{entry.get('digest') or '-'}" for name, entry in entries.items())
+        self.assertEqual(self.manifest["digest"], _sha16("\n".join(lines).encode("utf-8")))
 
     def test_format_identity_and_version(self):
         """Catches: the fixture drifting from the manifest shape #454 writes - a
@@ -334,6 +343,9 @@ class TrapTest(FixtureStoreCase):
         )
         summaries = _json(self.root, "knowledge/summaries/communities.json")
         self.assertEqual(sorted(k for k in summaries if k != "_metadata"), ["0", "1"])
+        for community in ("0", "1"):
+            self.assertIsInstance(summaries[community], str)
+            self.assertGreater(len(summaries[community].strip()), 0, community)
         labels = _json(self.root, "graphify-out/.graphify_labels.json")
         self.assertInDesign(labels["0"], labels["1"])
         self.assertEqual(labels, {"0": "Payments and the ledger", "1": "Platform and delivery"})
@@ -356,6 +368,13 @@ class TrapTest(FixtureStoreCase):
         self.assertEqual(pins["payments-api"], {"v4.2.0": 3})
         self.assertEqual(pins["ledger-service"], {"main": 2})
         self.assertEqual(pins["accounts-web"], {"": 2})
+        gateway = next(
+            edge
+            for edge in self._by_repo("infra-modules")["depended_on_by"]
+            if edge["repository"] == "gateway-service"
+        )
+        self.assertEqual(gateway["references"], 4)
+        self.assertEqual(len(gateway["examples"]), 3)
         dependencies = _json(self.root, "knowledge/relationships/repository-dependencies.json")
         self.assertInDesign("legacy-network")
         self.assertEqual(
@@ -366,6 +385,32 @@ class TrapTest(FixtureStoreCase):
                         "references": 3,
                         "referenced_by": ["ledger-service", "payments-api"],
                     }
+                }
+            },
+        )
+
+    def test_by_repo_file_pins_its_commit(self):
+        """Catches: a by-repo file whose `commit` or `base_url` is not the
+        repository's provenance sha, so an example URL a reader builds from it
+        points at a different commit. DESIGN.md section 1."""
+        document = self._by_repo("payments-api")
+        self.assertEqual(document["commit"], "9" * 40)
+        self.assertEqual(
+            document["base_url"],
+            "https://github.com/example-org/payments-api/blob/" + "9" * 40 + "/",
+        )
+
+    def test_an_unresolved_kind_with_no_edges_is_still_listed(self):
+        """Catches: `kinds_document` assuming every kind with an unresolved target
+        also has an edge, and raising when a variant fixture has none."""
+        self.assertEqual(
+            kinds_document([]),
+            {
+                "terraform_module": {
+                    "origin": "builtin",
+                    "edges": 0,
+                    "references": 0,
+                    "unresolved": 1,
                 }
             },
         )

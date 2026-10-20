@@ -1,6 +1,8 @@
 -- The query index schema 1.0, copied verbatim from the `DDL` constant in
 -- hmcts/knowledge-store-builder src/knowledgestore/store_index.py at commit
 -- a839a4e18791d77d46f46999c8b0c33d1b13311b (#457, branch feat/query-index).
+-- Re-checked at the #457 head e4c55a2f6b7fa16547ed72778e29d8108b3d75b8: the DDL
+-- is unchanged there.
 -- Do not edit the statements below: they are the library's, and the synthetic
 -- store is only useful while it is built with the schema the library writes.
 -- Task 10 replaces this copy with the library's released fixture.
