@@ -57,6 +57,7 @@ class Store:
         # The archive's (size, mtime_ns) when the index was opened.
         self.archive_state = archive_state
         self._layers: dict[str, Any] = {}
+        self._memo: dict[str, Any] = {}
 
     def layer(self, name: str) -> Any:
         """The parsed JSON of a file layer, or None when the manifest says it is
@@ -64,6 +65,13 @@ class Store:
         if name not in self._layers:
             self._layers[name] = self._read(name)
         return self._layers[name]
+
+    def memo(self, key: str, compute: Callable[[], Any]) -> Any:
+        """`compute()` once per loaded store: a reload builds a new `Store`, so
+        anything kept here is read again from the store that replaced it."""
+        if key not in self._memo:
+            self._memo[key] = compute()
+        return self._memo[key]
 
     def _read(self, name: str) -> Any:
         entry = self.manifest.layers.get(name)

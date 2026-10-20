@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from fixture_store.build import MANIFEST, build
+from fixture_store.build import BY_REPO, MANIFEST, RELATIONSHIPS, build
 from knowledgestore_mcp import results, store
 from knowledgestore_mcp.results import CursorRefused, Known, NotHeld, Unknown
 from knowledgestore_mcp.store import Notice
@@ -133,10 +133,42 @@ class AbsenceTest(StoreTestCase):
         )
 
     def test_a_layer_name_the_server_does_not_know_is_refused(self):
-        """Catches: a manifest-declared name reaching server prose, where store text
-        could pass for an instruction."""
+        """Catches: a name neither known nor declared reaching server prose."""
         with self.assertRaises(ValueError):
-            results.searched(self.open(), ["graph", "faq"])
+            results.searched(self.open(), ["graph", "nonesuch"])
+
+    def test_a_declared_answers_layer_can_be_named(self):
+        """Catches: an answers tool unable to say its extra layer was searched
+        (DESIGN.md 7: `faq`, kind `answers`, present)."""
+        self.assertEqual(
+            results.searched(self.open(), ["graph", "faq"]),
+            "searched 12 repositories in the faq and graph layers",
+        )
+
+    def test_an_extra_layer_name_that_is_not_an_identifier_is_refused(self):
+        """Catches: a declared name carrying a space or a newline into the sentence,
+        where it could start a line of its own; or a layer of another kind."""
+
+        def edit(document):
+            for name, kind in (
+                ("bad name", "answers"),
+                ("bad\nname", "answers"),
+                ("notes", "docs"),
+            ):
+                document["extra_layers"][name] = {
+                    "path": "knowledge/answers/faq.json",
+                    "description": "",
+                    "present": True,
+                    "digest": None,
+                    "kind": kind,
+                }
+
+        loaded = self.open(edit=edit)
+        for name in ("bad name", "bad\nname", "notes"):
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError) as caught:
+                    results.searched(loaded, ["graph", name])
+                self.assertNotIn(name, str(caught.exception))
 
 
 class RepositoryTest(StoreTestCase):
@@ -149,6 +181,35 @@ class RepositoryTest(StoreTestCase):
                     results.repository(self.open(index=index), "payment-api"),
                     Unknown(near_misses=("payment-apis", "payments-api")),
                 )
+
+    def test_near_misses_are_the_top_five_whatever_the_size_of_the_tie(self):
+        """Catches: taking difflib's five first, which keeps a tie at the fifth
+        place by name descending; or ordering by name alone. Against `service`,
+        `services` scores 2 x 7 / 15 = 0.933, each `service-<x>` 2 x 7 / 16 = 0.875
+        and `x` 0: `services` leads although it sorts after `service-a`."""
+        names = ["service-g", "x", "service-c", "service-a", "service-f", "service-e"]
+        names += ["service-b", "services", "service-d"]
+        self.assertEqual(
+            results.near_misses("service", names),
+            ("services", "service-a", "service-b", "service-c", "service-d"),
+        )
+        # At the cutoff is in: `servic` matches, 2 x 6 / 16 = 0.75.
+        self.assertEqual(results.near_misses("service", ["servic-xy"]), ("servic-xy",))
+
+    def test_the_registry_is_read_once_per_loaded_store(self):
+        """Catches: re-reading the relationships registry on every unknown name;
+        or keeping it across a reload, so a new store answers from the old file."""
+        loaded = self.open()
+        self.assertIsInstance(results.repository(loaded, "legacy-network"), NotHeld)
+        registry = loaded.root / RELATIONSHIPS / "repository-dependencies.json"
+        registry.write_text(json.dumps({"unresolved_targets_outside_estate": {}}))
+        self.assertEqual(
+            results.repository(loaded, "legacy-network"),
+            NotHeld("legacy-network", referenced_by=("ledger-service", "payments-api")),
+        )
+        reloaded = store.open_store(loaded.root, self.cache)
+        self.addCleanup(reloaded.close)
+        self.assertEqual(results.repository(reloaded, "legacy-network"), Unknown(()))
 
     def test_a_case_only_difference_is_an_exact_match_and_flagged(self):
         """Catches: offering `ledger-service` as a near miss of `Ledger-Service`,
@@ -221,16 +282,24 @@ class RepositoryTest(StoreTestCase):
         )
 
 
+# A frame stands for the envelope. With it, the response holding `["aaa","bbb"]` is
+# {"items":["aaa","bbb"],"next_page":null,"page":1,"store":{"id":"x"},"total":2}
+# 1 + 8 + 13 + 1 + 12 + 4 + 1 + 7 + 1 + 1 + 8 + 10 + 1 + 8 + 1 + 1 = 78 bytes.
+FRAME = {"store": {"id": "x"}}
+
+
 def strings(*lengths: int) -> list[str]:
     """Distinct strings of the given lengths, each encoding to its length + 2 bytes."""
     return [chr(ord("a") + i) * n for i, n in enumerate(lengths)]
 
 
-def whole(items, cap, digest="d1", key: Callable[[Any], Any] = str):
+def whole(items, cap, digest="d1", key: Callable[[Any], Any] = str, frame=None):
     """Every page of `items`, following `next_page` from the first."""
-    pages = [results.page(items, cap, None, digest=digest, key=key)]
+    frame = FRAME if frame is None else frame
+    pages = [results.page(items, cap, None, digest=digest, key=key, frame=frame)]
     while pages[-1]["next_page"] is not None:
-        pages.append(results.page(items, cap, pages[-1]["next_page"], digest=digest, key=key))
+        cursor = pages[-1]["next_page"]
+        pages.append(results.page(items, cap, cursor, digest=digest, key=key, frame=frame))
     return pages
 
 
@@ -239,46 +308,62 @@ class PageTest(unittest.TestCase):
         """Catches: a default cap that drifts from the plan's ruling."""
         self.assertEqual(results.DEFAULT_MAX_RESPONSE_BYTES, 524288)
 
-    def test_a_page_holds_items_up_to_exactly_the_cap(self):
-        """Catches: an off-by-one at the cap. `["aaa","bbb"]` is 2 + 5 + 1 + 5 = 13
-        bytes: it is one page at a cap of 13 and two at 12."""
+    def test_the_whole_response_fits_up_to_exactly_the_cap(self):
+        """Catches: measuring only the items, so the envelope and paging fields push
+        a response over the cap; or an off-by-one at it. The one-page response
+        is 78 bytes (FRAME): one page at a cap of 78, not at 77."""
         items = strings(3, 3)
-        at = whole(items, 13)
-        self.assertEqual(at, [{"items": ["aaa", "bbb"], "total": 2, "page": 1, "next_page": None}])
-        under = whole(items, 12)
+        at = whole(items, 78)
+        self.assertEqual(
+            at,
+            [
+                {
+                    "store": {"id": "x"},
+                    "items": ["aaa", "bbb"],
+                    "total": 2,
+                    "page": 1,
+                    "next_page": None,
+                }
+            ],
+        )
+        self.assertEqual(len(results.encode(at[0])), 78)
+        under = whole(items, 77)
         self.assertEqual([p["items"] for p in under], [["aaa"], ["bbb"]])
-        self.assertEqual([p["page"] for p in under], [1, 2])
+        # One item and a cursor make 90 bytes: over 77 though the item is not.
+        self.assertEqual([p.get("oversize", False) for p in under], [True, False])
 
     def test_the_pages_of_a_long_list_reassemble_to_the_whole(self):
-        """Catches: an item dropped or repeated at a page boundary, or a page that
-        does not report `total` (spec, Output caps)."""
+        """Catches: an item dropped or repeated at a page boundary, a page over the
+        cap, or a page that does not report `total` (spec, Output caps)."""
         items = strings(*([1, 4, 9, 2, 7] * 5))
-        pages = whole(items, 30)
-        self.assertGreater(len(pages), 3)
+        pages = whole(items, 150)
+        self.assertGreater(len(pages), 2)
         reassembled = [item for p in pages for item in p["items"]]
         self.assertEqual(reassembled, sorted(items))
         self.assertEqual({p["total"] for p in pages}, {25})
         self.assertEqual([p["page"] for p in pages], list(range(1, len(pages) + 1)))
         for p in pages:
-            self.assertLessEqual(len(results.encode(p["items"])), 30)
+            self.assertLessEqual(len(results.encode(p)), 150)
             self.assertNotIn("oversize", p)
 
     def test_an_item_over_the_cap_is_returned_alone_and_flagged(self):
         """Catches: cutting an item that alone exceeds the cap, dropping it, or
-        returning it without saying it is over. `"aaaa..."` (20) is 24 bytes."""
-        items = ["b", "a" * 20, "c"]
-        pages = whole(items, 10)
-        self.assertEqual([p["items"] for p in pages], [["a" * 20], ["b", "c"]])
+        returning it without saying it is over."""
+        pages = whole(["b", "a" * 200, "c"], 100)
+        self.assertEqual([p["items"] for p in pages], [["a" * 200], ["b", "c"]])
         self.assertIs(pages[0]["oversize"], True)
         self.assertNotIn("oversize", pages[1])
         # An oversize item in the middle ends the page before it.
-        middle = whole(["a", "b" * 20, "c"], 10)
-        self.assertEqual([p["items"] for p in middle], [["a"], ["b" * 20], ["c"]])
+        middle = whole(["a", "b" * 200, "c"], 100)
+        self.assertEqual([p["items"] for p in middle], [["a"], ["b" * 200], ["c"]])
         self.assertEqual([p.get("oversize", False) for p in middle], [False, True, False])
 
     def test_an_empty_list_is_one_page_with_nothing_next(self):
         """Catches: an empty list that offers a next page, or fails."""
-        self.assertEqual(whole([], 10), [{"items": [], "total": 0, "page": 1, "next_page": None}])
+        self.assertEqual(
+            whole([], 100),
+            [{"store": {"id": "x"}, "items": [], "total": 0, "page": 1, "next_page": None}],
+        )
 
     def test_the_order_is_the_key_then_the_items_bytes(self):
         """Catches: pages that follow the caller's order, so two calls on one store
@@ -287,50 +372,106 @@ class PageTest(unittest.TestCase):
         expected = [{"k": 1, "v": "y"}, {"k": 1, "v": "z"}, {"k": 2, "v": "x"}]
         for ordering in (items, items[::-1], [items[1], items[0], items[2]]):
             with self.subTest(ordering=ordering):
-                first = results.page(ordering, 1000, None, digest="d1", key=lambda i: i["k"])
+                first = whole(ordering, 1000, key=lambda i: i["k"])[0]
                 self.assertEqual(first["items"], expected)
+
+    def test_a_frame_that_carries_a_paging_field_is_refused(self):
+        """Catches: a tool's own `items` or `total` silently overwritten by the
+        pager's, or overwriting it."""
+        for field in ("items", "total", "page", "next_page", "oversize"):
+            with self.subTest(field=field):
+                with self.assertRaises(ValueError):
+                    results.page([], 100, None, digest="d1", key=str, frame={field: 1})
+
+
+class RealResponseTest(StoreTestCase):
+    def test_the_cap_bounds_the_encoded_response_with_a_real_envelope(self):
+        """Catches: a page that fits only when the envelope is left out. A cap of
+        exactly page 1's encoded size gives the same page; one byte less gives a
+        shorter one (DESIGN.md 5.3: infra-modules' seven dependents)."""
+        loaded = self.open()
+        document = json.loads((loaded.root / BY_REPO / "infra-modules.json").read_text())
+        items = document["depended_on_by"]
+        frame = results.envelope(loaded, ["relationships"], Notice("reload deferred"))
+
+        def first(cap: int) -> dict:
+            return results.page(
+                items,
+                cap,
+                None,
+                digest=loaded.manifest.digest,
+                key=lambda e: (e["repository"], e["chart"]),
+                frame=frame,
+            )
+
+        page = first(2400)
+        self.assertGreater(len(page["items"]), 1)
+        self.assertIsNotNone(page["next_page"])
+        size = len(results.encode(page))
+        self.assertLessEqual(size, 2400)
+        self.assertEqual(first(size)["items"], page["items"])
+        self.assertEqual(first(size - 1)["items"], page["items"][:-1])
 
 
 class CursorTest(unittest.TestCase):
     def setUp(self):
-        self.items = strings(3, 3, 3)  # one item per page at a cap of 7
+        # Page 1 is 90 bytes with one item and 96 with two, so at 92 it holds one.
+        # The last page carries `null`, not a cursor: `bbb` and `ccc` fit in 78.
+        self.items = strings(3, 3, 3)
 
     def test_a_cursor_is_stable_across_calls_on_one_digest(self):
         """Catches: a cursor that carries something other than the listing and the
         store, such as a time or a counter, so a repeated call differs."""
-        first = whole(self.items, 7)
-        again = whole(list(reversed(self.items)), 7)
+        first = whole(self.items, 92)
+        again = whole(list(reversed(self.items)), 92)
         self.assertEqual(first, again)
-        self.assertEqual(len(first), 3)
+        self.assertEqual([p["items"] for p in first], [["aaa"], ["bbb", "ccc"]])
         self.assertIsInstance(first[0]["next_page"], str)
 
     def test_a_cursor_from_an_older_digest_is_refused(self):
         """Catches: following a cursor into a store that changed under it, which
         silently skips or repeats items."""
-        cursor = results.page(self.items, 7, None, digest="d1", key=str)["next_page"]
+        cursor = whole(self.items, 92, digest="d1")[0]["next_page"]
         with self.assertRaises(CursorRefused) as caught:
-            results.page(self.items, 7, cursor, digest="d2", key=str)
+            results.page(self.items, 92, cursor, digest="d2", key=str, frame=FRAME)
         self.assertIn("start again", str(caught.exception))
 
     def test_a_cursor_from_another_listing_or_cap_is_refused(self):
-        """Catches: a cursor from one query or cap used on another, where its page
-        number points at different items."""
-        cursor = results.page(self.items, 7, None, digest="d1", key=str)["next_page"]
+        """Catches: a cursor from one query or cap used on another, where it points
+        at different items."""
+        cursor = whole(self.items, 92)[0]["next_page"]
         with self.assertRaises(CursorRefused):
-            results.page(strings(3, 3, 4), 7, cursor, digest="d1", key=str)
+            results.page(strings(3, 3, 4), 92, cursor, digest="d1", key=str, frame=FRAME)
         with self.assertRaises(CursorRefused):
-            results.page(self.items, 13, cursor, digest="d1", key=str)
+            results.page(self.items, 93, cursor, digest="d1", key=str, frame=FRAME)
 
-    def test_a_malformed_or_out_of_range_cursor_is_refused(self):
-        """Catches: a crash, or an empty page offered as the end of the list."""
-        cursor = results.page(self.items, 7, None, digest="d1", key=str)["next_page"]
+    def test_a_malformed_or_altered_cursor_is_refused(self):
+        """Catches: a crash, or a cursor whose page or position was altered being
+        followed to items it never pointed at."""
+        cursor = whole(self.items, 92)[0]["next_page"]
         assert cursor is not None
-        # Forging needs the token's layout; a caller never does.
-        _, tag = cursor.split(".", 1)
-        for bad in ("", "x", "2", f"9.{tag}", f"0.{tag}", f"-1.{tag}", f"two.{tag}", f"².{tag}"):
+        altered = ["", "x", "2", cursor[:-1], cursor + "0", "9" + cursor[1:], "²" + cursor[1:]]
+        altered.append(cursor.replace(".1.", ".2.", 1))
+        for bad in altered:
             with self.subTest(cursor=bad):
                 with self.assertRaises(CursorRefused):
-                    results.page(self.items, 7, bad, digest="d1", key=str)
+                    results.page(self.items, 92, bad, digest="d1", key=str, frame=FRAME)
+
+    def test_a_frame_that_grows_between_pages_skips_and_repeats_nothing(self):
+        """Catches: a cursor that names a page number only, so a notice appearing
+        mid-listing moves the page boundaries under it. Page 1 holds two items at
+        a cap of 96; with a longer frame, the rest still starts at the third."""
+        items = strings(3, 3, 3, 3)
+        first = results.page(items, 96, None, digest="d1", key=str, frame=FRAME)
+        self.assertEqual(first["items"], ["aaa", "bbb"])
+        grown = {"store": {"id": "x", "notice": "reload deferred: manifest unreadable"}}
+        second = results.page(items, 96, first["next_page"], digest="d1", key=str, frame=grown)
+        self.assertEqual(second["items"][0], "ccc")
+        seen = first["items"] + second["items"]
+        while second["next_page"] is not None:
+            second = results.page(items, 96, second["next_page"], digest="d1", key=str, frame=grown)
+            seen += second["items"]
+        self.assertEqual(seen, ["aaa", "bbb", "ccc", "ddd"])
 
 
 if __name__ == "__main__":

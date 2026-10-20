@@ -5,11 +5,14 @@
   the store's own counts, and which layers were absent.
 - `repository` is the three-way answer for a repository name: in the estate, not
   in the estate (with near misses), or referenced by the estate but not held.
-- `page` cuts a list at the response cap without cutting an item, and says so.
+- `page` cuts a list so the whole response fits the cap, without cutting an
+  item, and says so.
 
 Store text is data. The only prose composed here is `searched`'s sentence, built
-from counts and the layer names this server knows, so nothing a person wrote
-into the store can reach it; every store value goes in a named field.
+from counts and layer names: the ones this server knows, and answers layers the
+manifest declares, which are store structure and must be plain identifiers. So
+nothing a person wrote into the store can reach it; every store value goes in a
+named field.
 """
 
 import difflib
@@ -34,6 +37,9 @@ DEFAULT_MAX_RESPONSE_BYTES = 512 * 1024
 # The relationships registry, at the library's fixed layout. The manifest names the
 # layer by its `by-repo/` directory, so the registry beside it is read from here.
 REGISTRY = Path("knowledge") / "relationships" / "repository-dependencies.json"
+
+# A layer name a sentence may carry: one plain identifier.
+_LAYER_NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 # Plan rulings, Near misses are deterministic.
 NEAR_MISS_COUNT = 5
@@ -91,16 +97,34 @@ def _layers(names: list[str], verb: str) -> str:
     return f"the {_join(names)} {noun} {verb}"
 
 
+def _nameable(store: Store) -> dict[str, Any]:
+    """The layers a sentence may name, with their manifest entries: the ones this
+    server knows, and each `extra_layers` entry of kind `answers` whose name is a
+    plain identifier."""
+    names: dict[str, Any] = {name: store.manifest.layers.get(name) for name in KNOWN_LAYERS}
+    for name, entry in store.manifest.extra_layers.items():
+        if (
+            name not in names
+            and isinstance(entry, dict)
+            and entry.get("kind") == "answers"
+            and _LAYER_NAME.fullmatch(name)
+        ):
+            names[name] = entry
+    return names
+
+
 def searched(store: Store, layers: Sequence[str]) -> str:
     """What an empty answer searched: `searched 12 repositories in the graph layer;
     the relationships layer is absent`. A layer whose presence the store did not
     record (`present: null`) is said to be not recorded, never absent."""
-    unknown = sorted(set(layers) - set(KNOWN_LAYERS))
-    if unknown:
-        raise ValueError(f"not a layer this server reads: {unknown}")
+    nameable = _nameable(store)
+    refused = set(layers) - set(nameable)
+    if refused:
+        # Counted, not quoted: a refused name may be anything the store holds.
+        raise ValueError(f"{len(refused)} layer name(s) this server cannot name")
     present, absent, unrecorded = [], [], []
     for name in sorted(set(layers)):
-        entry = store.manifest.layers.get(name)
+        entry = nameable[name]
         state = entry.get("present") if isinstance(entry, dict) else False
         if state is True:
             present.append(name)
@@ -190,15 +214,22 @@ def repository(store: Store, name: str) -> Known | Unknown | NotHeld:
 
 
 def near_misses(name: str, names: list[str]) -> tuple[str, ...]:
-    """difflib's candidates, re-sorted by (similarity descending, name ascending):
-    difflib orders a tie by name descending."""
-    close = difflib.get_close_matches(name, names, n=NEAR_MISS_COUNT, cutoff=NEAR_MISS_CUTOFF)
+    """The top five by similarity, a tie broken by name ascending, at or above the
+    cutoff. Every candidate is scored first: `difflib.get_close_matches` keeps a
+    tie at its fifth place by name descending, so it would drop the wrong names."""
     # Scored as difflib scores them: the candidate is the first sequence.
-    return tuple(sorted(close, key=lambda c: (-difflib.SequenceMatcher(None, c, name).ratio(), c)))
+    scored = sorted((-difflib.SequenceMatcher(None, c, name).ratio(), c) for c in names)
+    close = [c for negative, c in scored if -negative >= NEAR_MISS_CUTOFF]
+    return tuple(close[:NEAR_MISS_COUNT])
 
 
 def _outside_estate(store: Store) -> dict[str, tuple[str, ...]]:
-    """Each target outside the estate, with every repository that references it."""
+    """Each target outside the estate, with every repository that references it.
+    Read once per loaded store."""
+    return store.memo("relationships.outside_estate", lambda: _read_outside_estate(store))
+
+
+def _read_outside_estate(store: Store) -> dict[str, tuple[str, ...]]:
     entry = store.manifest.layers.get("relationships")
     if not isinstance(entry, dict) or entry.get("present") is not True:
         return {}
@@ -219,8 +250,12 @@ def _outside_estate(store: Store) -> dict[str, tuple[str, ...]]:
 # --- Paging -----------------------------------------------------------------------
 
 
-# ASCII only: `str.isdigit` accepts characters such as `²` that `int` refuses.
-_DIGITS = re.compile(r"[0-9]+")
+# A cursor is `<page>.<first item>.<tag>`. Its token is rebuilt from the parsed
+# integers and compared whole, so any other spelling of a number is refused.
+_CURSOR = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9a-f]{16})")
+
+# The fields `page` adds to the response; the frame may not carry them.
+PAGING_FIELDS = ("items", "total", "page", "next_page", "oversize")
 
 
 class CursorRefused(ValueError):
@@ -236,59 +271,76 @@ class CursorRefused(ValueError):
 def page(
     items: list,
     cap_bytes: int,
-    page: str | None,
+    cursor: str | None,
     *,
     digest: str,
     key: Callable[[Any], Any],
+    frame: dict,
 ) -> dict:
-    """One page of `items`, sorted by `key` with the item's own bytes as the
-    tiebreak, so equal keys still order the same on every call.
+    """The whole response for one page of `items`: `frame` (the envelope, and
+    anything else the tool returns beside the list) plus `items`, `total`, `page`
+    and `next_page`.
 
-    A page holds whole items whose JSON array encodes to at most `cap_bytes`. An
-    item that alone exceeds the cap is a page of its own, flagged `oversize`.
-    `page` is None for the first page, or a `next_page` from the same listing on a
-    store with the same `digest`; anything else raises `CursorRefused`.
+    Items sort by `key`, with the item's own bytes as the tiebreak, so equal keys
+    still order the same on every call. A page holds the whole items that keep the
+    response, as `encode` writes it, within `cap_bytes`. An item that does not fit
+    alone is a page of its own, flagged `oversize`.
+
+    `cursor` is None for the first page, or a `next_page` from the same listing,
+    cap and store `digest`; anything else raises `CursorRefused`. It names the
+    first item of its page, so a frame that grows between calls (a notice) cannot
+    skip or repeat an item.
     """
+    clash = sorted(set(frame) & set(PAGING_FIELDS))
+    if clash:
+        raise ValueError(f"the frame carries paging fields: {clash}")
     encoded = sorted(((key(item), encode(item), item) for item in items), key=lambda t: t[:2])
-    pages = _split([len(e) for _, e, _ in encoded], cap_bytes)
+    total = len(encoded)
     listing = hashlib.sha256()
     for _, item_bytes, _ in encoded:
         listing.update(len(item_bytes).to_bytes(8, "big") + item_bytes)
-    tag = hashlib.sha256(
-        f"{digest}\0{cap_bytes}\0{listing.hexdigest()}".encode("utf-8")
-    ).hexdigest()[:16]
-    number = 1 if page is None else _number(page, tag, len(pages))
-    start, end = pages[number - 1]
-    result: dict[str, Any] = {
-        "items": [item for _, _, item in encoded[start:end]],
-        "total": len(encoded),
-        "page": number,
-        "next_page": f"{number + 1}.{tag}" if number < len(pages) else None,
-    }
-    if end - start == 1 and 2 + len(encoded[start][1]) > cap_bytes:
+    bound = f"{digest}\0{cap_bytes}\0{listing.hexdigest()}"
+
+    def token(number: int, start: int) -> str:
+        tag = hashlib.sha256(f"{bound}\0{number}\0{start}".encode("utf-8")).hexdigest()
+        return f"{number}.{start}.{tag[:16]}"
+
+    number, start = (1, 0) if cursor is None else _parse(cursor, token)
+
+    def following(end: int) -> str | None:
+        return token(number + 1, end) if end < total else None
+
+    def response(end: int) -> dict:
+        return {
+            **frame,
+            "items": [item for _, _, item in encoded[start:end]],
+            "total": total,
+            "page": number,
+            "next_page": following(end),
+        }
+
+    def fits(end: int, body: int) -> bool:
+        # The items of [start, end) add `body`, their bytes and commas, to `[]`.
+        shell = {**response(start), "next_page": following(end)}
+        return len(encode(shell)) + body <= cap_bytes
+
+    end, body = start, 0
+    if start < total:
+        end, body = start + 1, len(encoded[start][1])
+        while end < total and fits(end + 1, body + 1 + len(encoded[end][1])):
+            body += 1 + len(encoded[end][1])
+            end += 1
+    result = response(end)
+    if end - start == 1 and len(encode(result)) > cap_bytes:
         result["oversize"] = True
     return result
 
 
-def _split(sizes: list[int], cap: int) -> list[tuple[int, int]]:
-    """[start, end) of each page. An array of n items costs 2 + sizes + (n - 1)."""
-    pages: list[tuple[int, int]] = []
-    start, used = 0, 2
-    for i, size in enumerate(sizes):
-        cost = size + (0 if i == start else 1)
-        if i > start and used + cost > cap:
-            pages.append((start, i))
-            start, used, cost = i, 2, size
-        # An item over the cap alone leaves `used` over it, so the next item
-        # starts a new page: an oversize item is always a page of its own.
-        used += cost
-    if start < len(sizes) or not pages:
-        pages.append((start, len(sizes)))
-    return pages
-
-
-def _number(cursor: str, tag: str, count: int) -> int:
-    number, _, given = cursor.partition(".")
-    if given != tag or not _DIGITS.fullmatch(number) or not 2 <= int(number) <= count:
+def _parse(cursor: str, token: Callable[[int, int], str]) -> tuple[int, int]:
+    match = _CURSOR.fullmatch(cursor)
+    if match is None:
         raise CursorRefused(cursor)
-    return int(number)
+    number, start = int(match[1]), int(match[2])
+    if token(number, start) != cursor:
+        raise CursorRefused(cursor)
+    return number, start
