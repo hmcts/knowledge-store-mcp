@@ -100,7 +100,7 @@ It never returns a bare empty list. A call such as `dependents("<a name the esta
 
 **Output caps and complete lists.** The cap is per response and is set above the largest per-repository file seen in practice. `repo_answer` is paged explicitly when a file exceeds it, and every page reports `total` and `next_page`. A cap never silently truncates.
 
-**Freshness.** On each call the server compares the manifest's `built` time on disk with the one it loaded. When the store has been rebuilt or pulled, it reloads before answering, and the result says so. A server never serves an older store than the one on disk.
+**Freshness.** On each call the server compares the manifest's `digest` on disk with the one it loaded. The digest is computed from the layers' content, not from file times, so it changes when a rebuild or a pull changes the store, and not when a clone or an identical rebuild touches the files. When it differs, the server reloads before answering, and the result says so. A server never serves an older store than the one on disk. `store_info` reports the manifest's `sources_as_of`, the newest source commit the store reflects.
 
 **Absence semantics.** An empty result never stands alone. It always says something like "searched N repositories in the graph layer; the relationships layer is absent". The counts are the store's own.
 
