@@ -32,7 +32,8 @@ Everything the server serves comes from a store built by `knowledge-store-builde
 | Library issue | What the server relies on |
 |---|---|
 | hmcts/knowledge-store-builder#454: store manifest | `knowledge/store-manifest.json`: `format.major`/`minor`, `store.id`, `store.github_org`, and each layer's measured `present` flag, plus `extra_layers` |
-| hmcts/knowledge-store-builder#455: relationships layer | `knowledge/relationships/by-repo/<repo>.json` and `repository-dependencies.json`. Edges carry `references`, `kinds`, `refs_pinned` and `examples`, and targets outside the estate are listed |
+| hmcts/knowledge-store-builder#455: relationships layer | `knowledge/relationships/by-repo/<repo>.json` and `repository-dependencies.json`. Edges carry `references`, `kinds`, `refs_pinned` and `examples`, and targets outside the estate are listed. Kinds come from a parser registry, built-in plus store-registered, and the manifest lists which are present |
+| hmcts/knowledge-store-builder#457: query index | `knowledge/index/store.sqlite`, opened read-only and lazily, with the graph as a fallback when it's absent |
 | hmcts/knowledge-store-builder#456: fixture store | a synthetic store attached to each library release, which this repository's CI tests against |
 
 **The one rule the server enforces:** it reads the format major versions it was written for, and refuses any other. A newer minor version is read, and its unknown layers are reported as present but unread.
@@ -67,7 +68,7 @@ The server takes no credentials. The only access an asker needs is read access t
 2. **Read the manifest.**
    - A missing manifest, or an unknown **major** version, refuses to start, naming the version found and the versions supported.
    - A newer **minor** version starts, and reports the unknown layers as present but unread.
-3. **Load the graph once,** and build in-memory indexes: by repository name, by node id, a text index over labels, and edges by kind. Layers load lazily on first use.
+3. **Open the query index read-only,** and read other layers lazily on first use. The server never parses the whole graph into memory when the index is present. Without the index, it falls back to the graph and says so in `store_info`.
 
 ### Tools
 
@@ -82,6 +83,7 @@ Every result carries `store`, which holds the format, library version, build dat
 | `search(text, repo?, kind?, limit)` | ranked nodes: id, label, repo, kind, `url` | corpus paths as citations |
 | `node(id)`, `neighbours(id, depth≤2, relation?)`, `community(id)` | graph access; each node carries its `url` and each community its summary | the same |
 | `tickets(repo, path?)` | `tickets` (landed) and `proposed` (with branches) as separate lists, plus the store's `reach` flag | unmerged work treated as landed |
+| `answers(query, limit)` | written answers: the library's topic briefs and deep dives, plus any `extra_layers` declared with `"kind": "answers"`. Each match is returned with its pinned URL | an agent rebuilding from raw evidence an answer the store has already written |
 | `ticket(key)` | descriptions, branch-only text (`ps`/`pb`), and `proposed`/`branches` | the same |
 
 **Unknown names, in every tool that takes a repository.** Every such tool returns one of three answers:
@@ -94,6 +96,8 @@ It never returns a bare empty list. A call such as `dependents("<a name the esta
 **Multi-hop.** `dependents(target, kind?, transitive: true, max_depth ≤ 4)` returns each dependent with its path from the target, so impact questions don't need repeated calls. A cycle is reported, not followed.
 
 **Output caps and complete lists.** The cap is per response and is set above the largest per-repository file seen in practice. `repo_answer` is paged explicitly when a file exceeds it, and every page reports `total` and `next_page`. A cap never silently truncates.
+
+**Freshness.** On each call the server compares the manifest's `built` time on disk with the one it loaded. When the store has been rebuilt or pulled, it reloads before answering, and the result says so. A server never serves an older store than the one on disk.
 
 **Absence semantics.** An empty result never stands alone. It always says something like "searched N repositories in the graph layer; the relationships layer is absent". The counts are the store's own.
 
@@ -143,6 +147,6 @@ The first consuming store re-runs its evaluation question set through the tools,
 
 ## Delivery order
 
-1. Library: #454, #455 and #456, in `knowledge-store-builder`. Each ships in a library minor release and is useful without the server.
+1. Library: #454, #455, #456 and #457, in `knowledge-store-builder`. Each ships in a library minor release and is useful without the server.
 2. Server: start-up, tools, security and contract tests, here.
-3. First store: acceptance.
+3. First store: acceptance. A second store's question set then runs as a second acceptance check.
