@@ -77,6 +77,11 @@ class Fallback:
     reason: str
 
 
+class _UnreadSchema(Fallback):
+    """The entry opened and holds an index schema this server does not read. The
+    schema came from the archive, so decompressing it again cannot change it."""
+
+
 def cache_home(env: Mapping[str, str], home: Path) -> Path:
     """`${XDG_CACHE_HOME:-~/.cache}`. A relative value is ignored, as the XDG base
     directory specification says: it would put the cache under the working
@@ -130,6 +135,7 @@ def open_index(
     # Twice at most. An entry that will not open was either left bad by a crash or
     # removed by a peer serving another archive under this store id, after our
     # rename and before our open. Either way it is discarded and written again.
+    # An entry that opens but holds an unread schema is not retried.
     for _ in range(2):
         try:
             entry = _cached(archive, directory, max_bytes)
@@ -142,6 +148,9 @@ def open_index(
         # also means a peer removing the entry cannot disturb an open handle.
         result = _connect(entry, immutable=True, archive_sha256=entry.stem)
         if isinstance(result, IndexHandle):
+            return result
+        if isinstance(result, _UnreadSchema):
+            # The entry is a whole copy of the archive: keep it, and fall back now.
             return result
         try:
             entry.unlink(missing_ok=True)
@@ -261,7 +270,7 @@ def _connect(
     schema = row[0] if row else None
     if _major(schema) != SCHEMA_MAJOR:
         connection.close()
-        return Fallback(
+        return _UnreadSchema(
             f"index schema {schema!r} is not one this server reads (reads major {SCHEMA_MAJOR})"
         )
     return IndexHandle(connection, path, archive_sha256)

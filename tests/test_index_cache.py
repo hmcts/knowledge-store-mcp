@@ -478,6 +478,32 @@ class SchemaTest(CacheTestCase):
                 self.assertIn(f"index schema {shown}", result.reason)
                 self.assertIn("reads major 1", result.reason)
 
+    def test_an_unknown_schema_archive_is_decompressed_once_and_its_entry_kept(self):
+        """Catches: discarding the entry and decompressing again when only the schema
+        check failed. The schema is in the archive, so a second decompress reads the
+        same schema: the retry costs a full decompress and never succeeds."""
+        plain = build(self.tmp / "p", index="plain")
+        self.set_schema(plain, "2.0")
+        root = build(self.tmp / "s")
+        (root / INDEX_ARCHIVE).write_bytes(gzip.compress((plain / INDEX_PLAIN).read_bytes()))
+        real = index._copy_capped
+        decompressed: list[int] = []
+
+        def copy_and_count(source, out, max_bytes: int) -> None:
+            real(source, out, max_bytes)
+            decompressed.append(out.tell())
+
+        with mock.patch.object(index, "_copy_capped", copy_and_count):
+            first = self.open(root)
+            again = self.open(root)
+        for result in (first, again):
+            self.assertIsInstance(result, Fallback)
+            assert isinstance(result, Fallback)
+            self.assertIn("index schema '2.0'", result.reason)
+        # One decompress over two opens: the entry is kept and reused, unchanged.
+        self.assertEqual(len(decompressed), 1)
+        self.assertEqual(self.listing(self.entries), [sha256_of(root / INDEX_ARCHIVE) + ".sqlite"])
+
     def test_a_newer_schema_minor_is_read(self):
         """Catches: refusing an index only because a newer library added to it."""
         root = build(self.tmp / "s", index="plain")
