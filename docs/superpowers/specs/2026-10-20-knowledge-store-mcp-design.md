@@ -1,49 +1,34 @@
 # knowledge-store-mcp: design
 
-**Status:** draft 3. Reviewed by the first consuming store; the library contract moved to knowledge-store-builder; awaiting owner sign-off.
-**Scope:** the server in this repository. The store contract it reads is designed in `knowledge-store-builder` (see *What the server depends on*).
-
-**Names:** each runs from least specific to most.
-
 | Kind | Name |
 |---|---|
 | Distribution | `hmcts-knowledge-store-mcp` |
 | Command | `knowledge-store-mcp` |
-| Python module | `knowledgestore_mcp` |
+| Python module | `knowledgestore_mcp` (top-level; not part of the library's package) |
 
-The module is its own top-level package, so builders never inherit its dependencies.
+## Problem
 
-## Why
+Agents answering from a store make five recurring mistakes:
 
-An A/B evaluation of one large internal estate's store found two things:
-- **The store makes coding agents markedly more accurate.**
-- **The remaining errors follow a few patterns:**
-  - an agent substitutes a similar repository name for one that doesn't exist;
-  - an agent reads a large relationships file whole and loses entries when the read is truncated;
-  - an agent cites corpus paths that no reader can open;
-  - an agent treats unmerged work as landed;
-  - an agent reads "nothing found" as "doesn't exist".
+| Mistake | Requirement |
+|---|---|
+| answer about a similarly named repository that doesn't exist | a near miss is labelled as one, never returned as the answer |
+| read a large relationships file whole and lose entries to truncation | lists are complete, counted and explicitly paged |
+| cite a corpus path no reader can open | every citation is a URL pinned to the build commit |
+| report unmerged work as landed | landed and proposed tickets are kept separate |
+| read "nothing found" as "doesn't exist" | an empty result states what was searched |
 
-The same evaluation showed that guidance alone moves accuracy a long way. A short routing paragraph scored almost as well as the full plugin. So the server's value isn't reach. It's that each of those failures becomes impossible by construction:
-- a near miss is labelled;
-- a list is complete and counted;
-- a citation is a pinned URL;
-- a proposed ticket is named as proposed;
-- an empty result says what the store covers.
+## Decisions
 
-## Decisions taken
+1. **Separate repository** from `knowledge-store-builder`, because the server has its own dependencies (the MCP SDK), threat model and release cycle.
+2. **Stdio only in version 1.** It covers Claude Code and Claude Desktop, plugins on hosted agent platforms, and Claude Agent SDK applications. The HTTP transport and its authentication are deferred.
+3. **Read-only, one store per process,** fixed at start-up with `--store PATH`.
 
-1. **Separate repository.** The server has its own dependencies (the MCP SDK), its own threat model, and its own release pace, and adopters find it more easily on its own.
-2. **Version 1 is stdio only.** The Claude Agent SDK also launches stdio servers as subprocesses, so a containerised Agent SDK chat with the store built in works over stdio too. Its consumers are Claude Code and Claude Desktop, plus hosted agent platforms that run Claude Code with marketplace plugins: a store plugin can declare the server, so it launches over stdio inside the hosted session.
-   - The streamable-HTTP transport, its authentication and its network threat model wait until something needs a network-facing server.
-   - Still to confirm, for completeness: whether a plugin-hosting agent platform in use can mount a plugin's stdio server.
-3. **Read-only, and one store per process.** The store root is fixed at start-up with `--store PATH`. There is no runtime path argument.
+**Open:** confirm that the hosted agent platform in use can launch a plugin's stdio server.
 
 ## What the server depends on
 
-The store is built by `knowledge-store-builder`, and everything the server serves comes from it. The server holds no credentials and makes no network calls. It needs only a path to a built store.
-
-The contract between the two repositories is designed and built in the library:
+Everything the server serves comes from a store built by `knowledge-store-builder`. The contract is specified there:
 
 | Library issue | What the server relies on |
 |---|---|
@@ -127,7 +112,7 @@ The server's CI downloads the latest library release's fixture store (knowledge-
 The first consuming store re-runs its evaluation question set through the tools, against a store whose relationships layer (hmcts/knowledge-store-builder#455) comes from **the library stage**, not the store's script, so parity is tested end to end. The comparison arm is the best existing Claude Code arm (E).
 
 **Measured with `knowledgestore answers --compare`.** The server passes when all of these hold:
-- **Non-inferior on accuracy.** The lower 95% confidence bound of (MCP − E) is above −0.03. "At least equal" would flip on noise near the ceiling.
+- **Non-inferior on accuracy.** The lower 95% confidence bound of (MCP − E) is above −0.03.
 - **Cheaper.** Mean cost per answer is below E's.
 - **Every citation resolves,** and every one is a pinned URL.
 - **A nonexistent name** is answered "not in the estate" in every repetition.
