@@ -1,11 +1,14 @@
 """Open the query index read-only (spec, Start-up step 3).
 
-A plain `store.sqlite` in the store is opened in place. The committed
-`store.sqlite.gz` cannot be opened by SQLite, so it is decompressed once into
+The committed `store.sqlite.gz` cannot be opened by SQLite, so it is decompressed once into
 `<cache_home>/knowledge-store/<store.id>/<sha256 of the archive>.sqlite`. That
 cache is the server's only write: it is never inside the store, an entry is
 written to a temp file in the same directory and renamed into place, so no
 partial entry is ever opened, and a failure to write it falls back to the graph.
+
+The archive wins whenever it exists: the manifest's index digest describes it.
+A plain `store.sqlite` is a local, gitignored build that goes stale after a pull,
+so it is opened in place only when there is no archive.
 """
 
 import gzip
@@ -16,6 +19,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import time
 import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -28,6 +32,15 @@ INDEX_PLAIN = Path("knowledge") / "index" / "store.sqlite"
 INDEX_ARCHIVE = Path("knowledge") / "index" / "store.sqlite.gz"
 
 CHUNK = 1 << 20
+
+# The index schema major this server reads. A newer minor only adds to it.
+# Source: SCHEMA in knowledge-store-builder src/knowledgestore/store_index.py
+# (#457, feat/query-index at e4c55a2), written to meta.index_schema as "1.0".
+SCHEMA_MAJOR = 1
+
+# A temp file this old belongs to a writer that crashed: no decompress takes a day.
+# A younger one may be a live peer's write, so it is never touched.
+STALE_TEMP_SECONDS = 24 * 60 * 60
 
 # `store.id` becomes one directory name, so it must be one plain path component.
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -65,10 +78,10 @@ def open_index(root: Path, manifest: Manifest, cache_home: Path) -> IndexHandle 
         archive = contained(root, INDEX_ARCHIVE)
     except OutsideStore as error:
         return Fallback(f"the index is outside the store: {error}")
-    if plain.is_file():
-        # Not immutable: a rebuild may rewrite this file while the server runs.
-        return _connect(plain, immutable=False)
     if not archive.is_file():
+        if plain.is_file():
+            # Not immutable: a rebuild may rewrite this file while the server runs.
+            return _connect(plain, immutable=False)
         return Fallback(f"no index in the store ({INDEX_ARCHIVE.as_posix()} or {INDEX_PLAIN.name})")
 
     if not _SAFE_ID.fullmatch(manifest.store_id):
@@ -137,14 +150,20 @@ def _cached(archive: Path, directory: Path) -> Path:
 
 
 def _remove_others(directory: Path, keep: Path) -> None:
-    """Remove this store id's other entries. A peer's temp file is not an entry, and
-    one already removed by a peer is not an error."""
-    for other in directory.glob("*.sqlite"):
-        if other.name != keep.name:
-            try:
+    """Remove this store id's other entries, and temp files a crashed writer left.
+    A young temp file may be a live peer's write and is kept; a file a peer has
+    already removed is not an error."""
+    stale_before = time.time() - STALE_TEMP_SECONDS
+    for other in directory.iterdir():
+        try:
+            if other.name.endswith(".sqlite"):
+                remove = other.name != keep.name
+            else:
+                remove = ".sqlite.tmp-" in other.name and other.stat().st_mtime < stale_before
+            if remove:
                 other.unlink()
-            except OSError:
-                pass
+        except OSError:
+            pass
 
 
 def _connect(path: Path, *, immutable: bool) -> IndexHandle | Fallback:
@@ -155,8 +174,21 @@ def _connect(path: Path, *, immutable: bool) -> IndexHandle | Fallback:
         return Fallback(f"the index {path} could not be opened: {error}")
     try:
         connection.execute("PRAGMA query_only=1")
-        connection.execute("SELECT count(*) FROM sqlite_schema").fetchone()
+        row = connection.execute("SELECT value FROM meta WHERE key = 'index_schema'").fetchone()
     except sqlite3.Error as error:
         connection.close()
         return Fallback(f"the index {path} could not be read: {error}")
+    schema = row[0] if row else None
+    if _major(schema) != SCHEMA_MAJOR:
+        connection.close()
+        return Fallback(
+            f"index schema {schema!r} is not one this server reads (reads major {SCHEMA_MAJOR})"
+        )
     return IndexHandle(connection, path)
+
+
+def _major(schema: object) -> int | None:
+    if not isinstance(schema, str):
+        return None
+    major = schema.split(".", 1)[0]
+    return int(major) if major.isdigit() else None

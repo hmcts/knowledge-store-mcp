@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 from datetime import datetime, timezone
 from multiprocessing import get_context
@@ -193,6 +194,9 @@ class ArchiveTest(CacheTestCase):
         (self.entries / "stale.sqlite").write_bytes(b"stale")
         (self.entries / "abc.sqlite.tmp-1-xyz").write_bytes(b"peer")
         (self.entries / "README").write_bytes(b"note")
+        # Old enough for the temp sweep, but not a temp file: it must stay.
+        then = time.time() - 48 * 3600
+        os.utime(self.entries / "README", (then, then))
         root = build(self.tmp / "s")
         name = self.open_handle(root).path.name
         self.assertEqual(self.listing(other), ["0123.sqlite"])
@@ -200,6 +204,25 @@ class ArchiveTest(CacheTestCase):
         self.assertEqual(
             self.listing(self.entries), sorted(["README", "abc.sqlite.tmp-1-xyz", name])
         )
+
+    def test_temp_files_older_than_a_day_are_removed_and_younger_ones_kept(self):
+        """Catches: crashed writers' temp files accumulating for ever, or a sweep that
+        deletes a temp file a live peer may still be writing (younger than 24 hours)."""
+        self.entries.mkdir(parents=True)
+        old = self.entries / "aaa.sqlite.tmp-1-old"
+        young = self.entries / "bbb.sqlite.tmp-2-young"
+        for path, hours in ((old, 25), (young, 23)):
+            path.write_bytes(b"partial")
+            then = time.time() - hours * 3600
+            os.utime(path, (then, then))
+        root = build(self.tmp / "s")
+        name = self.open_handle(root).path.name
+        self.assertEqual(self.listing(self.entries), sorted([name, young.name]))
+        # The sweep runs when an existing entry is reused, too.
+        then = time.time() - 25 * 3600
+        os.utime(young, (then, then))
+        self.open_handle(root)
+        self.assertEqual(self.listing(self.entries), [name])
 
     @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root ignores file modes")
     def test_a_read_only_cache_directory_falls_back_and_leaves_nothing(self):
@@ -285,17 +308,28 @@ class ArchiveTest(CacheTestCase):
 
 
 class PlacementTest(CacheTestCase):
-    def test_a_plain_index_is_opened_in_place_and_nothing_is_cached(self):
-        """Catches: copying or decompressing when a plain `store.sqlite` is present,
-        or preferring the archive over it (spec: a plain file is read when present)."""
+    def test_a_plain_index_without_an_archive_is_opened_in_place(self):
+        """Catches: copying or decompressing a plain `store.sqlite` that is the only
+        index, instead of opening it where it is."""
         root = build(self.tmp / "s", index="plain")
-        plain = root / INDEX_PLAIN
-        # The archive beside it too, as a store with a local build holds both.
-        (root / INDEX_ARCHIVE).write_bytes(gzip.compress(plain.read_bytes()))
         handle = self.open_handle(root)
-        self.assertEqual(handle.path, plain)
+        self.assertEqual(handle.path, root / INDEX_PLAIN)
         self.assertEqual(repo_names(handle), REPOS)
         self.assertFalse(self.cache.exists())
+
+    def test_a_stale_plain_index_beside_the_archive_is_ignored(self):
+        """Catches: preferring the local, gitignored `store.sqlite` over the committed
+        archive, so a pull that brings a newer archive keeps serving the old build.
+        The plain file here renames a repository, so reading it shows."""
+        root = build(self.tmp / "s")
+        plain = root / INDEX_PLAIN
+        plain.write_bytes(gzip.decompress((root / INDEX_ARCHIVE).read_bytes()))
+        with sqlite3.connect(plain) as stale:
+            stale.execute("UPDATE repos SET name = 'renamed-since' WHERE name = 'chart-web'")
+        stale.close()
+        handle = self.open_handle(root)
+        self.assertEqual(handle.path.parent, self.entries)
+        self.assertEqual(repo_names(handle), REPOS)
 
     def test_no_index_falls_back_and_says_so(self):
         """Catches: treating a missing index as an error, or falling back silently."""
@@ -339,6 +373,34 @@ class PlacementTest(CacheTestCase):
         self.assertIsInstance(result, Fallback)
         assert isinstance(result, Fallback)
         self.assertIn("outside the store", result.reason)
+
+
+class SchemaTest(CacheTestCase):
+    def set_schema(self, root: Path, value: str | None) -> None:
+        with sqlite3.connect(root / INDEX_PLAIN) as db:
+            db.execute("DELETE FROM meta WHERE key = 'index_schema'")
+            if value is not None:
+                db.execute("INSERT INTO meta(key, value) VALUES ('index_schema', ?)", (value,))
+        db.close()
+
+    def test_an_unknown_schema_major_falls_back_and_names_it(self):
+        """Catches: querying an index whose layout this server does not know, or
+        falling back without saying which schema was found and which is read."""
+        for value, shown in (("2.0", "'2.0'"), ("one", "'one'"), (None, "None")):
+            with self.subTest(index_schema=value):
+                root = build(self.tmp / f"s-{value}", index="plain")
+                self.set_schema(root, value)
+                result = self.open(root)
+                self.assertIsInstance(result, Fallback)
+                assert isinstance(result, Fallback)
+                self.assertIn(f"index schema {shown}", result.reason)
+                self.assertIn("reads major 1", result.reason)
+
+    def test_a_newer_schema_minor_is_read(self):
+        """Catches: refusing an index only because a newer library added to it."""
+        root = build(self.tmp / "s", index="plain")
+        self.set_schema(root, "1.7")
+        self.assertEqual(repo_names(self.open_handle(root)), REPOS)
 
 
 class ReadOnlyTest(CacheTestCase):
@@ -393,6 +455,14 @@ class StoreTest(CacheTestCase):
         self.addCleanup(loaded.close)
         self.assertIsNone(loaded.layer("context"))
         self.assertIsNone(loaded.layer("no-such-layer"))
+
+    def test_a_directory_layer_is_refused_by_layer(self):
+        """Catches: `layer` treating a directory as a file - reading nothing and
+        returning None for a layer the manifest says is present."""
+        loaded = store.open_store(build(self.tmp / "s"), self.cache)
+        self.addCleanup(loaded.close)
+        with self.assertRaisesRegex(ValueError, "relationships is a directory"):
+            loaded.layer("relationships")
 
     def test_the_store_tree_is_byte_identical_after_start_up_and_queries(self):
         """Catches: any write into the store - a decompressed index, a journal or

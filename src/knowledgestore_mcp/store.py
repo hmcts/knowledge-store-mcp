@@ -31,7 +31,11 @@ DEFERRED = Notice("reload deferred: manifest unreadable")
 
 
 class Store:
-    """One loaded store. Layers other than the index are read on first use."""
+    """One loaded store. Layers other than the index are read on first use.
+
+    A `Store` is valid until `Session.current()` reloads: the reload closes its
+    index connection. Take the store from `current()` per call; do not keep it.
+    """
 
     def __init__(self, root: Path, manifest: Manifest, index: IndexHandle | Fallback):
         self.root = root
