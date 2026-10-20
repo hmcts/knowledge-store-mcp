@@ -33,7 +33,7 @@ Everything the server serves comes from a store built by `knowledge-store-builde
 |---|---|
 | hmcts/knowledge-store-builder#454: store manifest | `knowledge/store-manifest.json`: `format.major`/`minor`, `store.id`, `store.github_org`, and each layer's measured `present` flag, plus `extra_layers` |
 | hmcts/knowledge-store-builder#455: relationships layer | `knowledge/relationships/by-repo/<repo>.json` and `repository-dependencies.json`. Edges carry `references`, `kinds`, `refs_pinned` and `examples`, and targets outside the estate are listed. Kinds come from a parser registry, built-in plus store-registered, and the manifest lists which are present |
-| hmcts/knowledge-store-builder#457: query index | `knowledge/index/store.sqlite.gz`, committed gzipped because the plain file can pass GitHub's 100 MB limit. A plain `store.sqlite` is read when present. The graph is the fallback when neither exists |
+| hmcts/knowledge-store-builder#457: query index | `knowledge/index/store.sqlite.gz`, committed gzipped because the plain file can pass GitHub's 100 MB limit. A plain `store.sqlite` is read only when there is no archive. The graph is the fallback when neither exists |
 | hmcts/knowledge-store-builder#456: fixture store | a synthetic store attached to each library release, which this repository's CI tests against |
 
 **The one rule the server enforces:** it reads the format major versions it was written for, and refuses any other. A newer minor version is read, and its unknown layers are reported as present but unread.
