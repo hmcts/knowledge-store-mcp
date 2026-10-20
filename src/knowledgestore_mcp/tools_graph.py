@@ -104,10 +104,12 @@ def _query(words: list[str]) -> str:
 # One node as every tool returns it.
 Node = dict[str, Any]
 
-# The columns of `graph.Row`, in its order.
+# The columns of `graph.Row`, in its order. `repos` is a LEFT JOIN: an index may hold
+# a file whose repository is NULL (a node with none), and that node must still be
+# found, with the repository "" as the fallback gives it.
 _NODE_SELECT = (
-    "SELECT n.id, n.label, r.name, n.kind, f.path, n.url, n.community"
-    " FROM nodes n JOIN files f ON f.k = n.file JOIN repos r ON r.k = f.repo"
+    "SELECT n.id, n.label, coalesce(r.name, ''), n.kind, f.path, n.url, n.community"
+    " FROM nodes n JOIN files f ON f.k = n.file LEFT JOIN repos r ON r.k = f.repo"
 )
 
 
@@ -146,9 +148,9 @@ class _Indexed:
         # The id tiebreak is load-bearing although the fixture cannot show it: there,
         # rowids follow id order, so SQLite's own order for a tie looks the same.
         rows = self._db.execute(
-            "SELECT n.id, n.label, r.name, n.kind, f.path, n.url, n.community"
+            "SELECT n.id, n.label, coalesce(r.name, ''), n.kind, f.path, n.url, n.community"
             " FROM labels JOIN nodes n ON n.k = labels.rowid"
-            " JOIN files f ON f.k = n.file JOIN repos r ON r.k = f.repo"
+            " JOIN files f ON f.k = n.file LEFT JOIN repos r ON r.k = f.repo"
             " WHERE labels MATCH ?1 AND (?2 IS NULL OR r.name = ?2)"
             " AND (?3 IS NULL OR n.kind = ?3)"
             " ORDER BY bm25(labels), n.id",

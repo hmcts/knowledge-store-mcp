@@ -21,6 +21,7 @@ from unittest import mock
 
 from fixture_store.build import GRAPH, INDEX_PLAIN, MANIFEST, build
 from knowledgestore_mcp import graph, results, store, tools_graph
+from knowledgestore_mcp.index import IndexHandle
 from knowledgestore_mcp.tools_graph import ArgumentRefused
 
 # DESIGN.md 9.2: at this instant the store is 4 whole days old.
@@ -1053,6 +1054,40 @@ class RepositoryListTest(ToolTestCase):
             "entry-not-an-object": {"a.py": ["EX-4"]},
         }
         self.assertEqual(graph.ticket_repositories(layer), {"landed", "proposed"})
+
+
+class NullRepositoryTest(ToolTestCase):
+    def test_a_node_whose_file_has_no_repository_is_still_found(self):
+        """Catches: index queries that inner-join `repos`, so a node whose
+        `files.repo` is NULL - as an index may hold for a node with no repository -
+        vanishes from `node`, `search`, `community` and the neighbour walk with the
+        index, while the fallback still returns it."""
+        session = self.session("plain")
+        root = session.current()[0].root
+        session.current()[0].close()
+        with closing(sqlite3.connect(root / INDEX_PLAIN)) as db:
+            # Schema 1.0 declares files.repo NOT NULL, so the copy rebuilds `files`
+            # without it, then clears RefundHandler's file's repository.
+            db.executescript(
+                "CREATE TABLE files_copy(k INTEGER PRIMARY KEY, repo INTEGER, path TEXT NOT NULL);"
+                "INSERT INTO files_copy SELECT k, repo, path FROM files;"
+                "DROP TABLE files;"
+                "ALTER TABLE files_copy RENAME TO files;"
+            )
+            db.execute("UPDATE files SET repo = NULL WHERE path = ?", (REFUND_HANDLER["file"],))
+            db.commit()
+        indexed = store.Session(lambda: store.open_store(root, self.cache), lambda: NOW)
+        self.addCleanup(lambda: indexed.current()[0].close())
+        self.assertIsInstance(indexed.current()[0].index, IndexHandle)
+        nameless = {**REFUND_HANDLER, "repo": ""}
+
+        for session, expected in ((indexed, nameless), (self.session("none"), REFUND_HANDLER)):
+            with self.subTest(expected_repo=expected["repo"]):
+                self.assertEqual(tools_graph.node(session, REFUND_HANDLER["id"])["node"], expected)
+                self.assertEqual(tools_graph.search(session, "RefundHandler")["items"], [expected])
+                self.assertIn(expected, tools_graph.community(session, 0)["items"])
+                walked = tools_graph.neighbours(session, "payments-api::PaymentService")["items"]
+                self.assertIn(expected, [item["node"] for item in walked])
 
 
 class BoundsTest(ToolTestCase):
