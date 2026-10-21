@@ -49,15 +49,38 @@ The server needs exactly one store, and it finds the store in this order. The fi
 | 3 | `--store-id ID`, looked up in `~/.config/knowledge-store/locations` | a plugin. That file is the list of clone paths the library's `knowledge-store` skill records on first clone, and the server takes the entry whose manifest has `store.id = ID` |
 | 4 | `${CLAUDE_PLUGIN_ROOT}`, when it contains a store | a plugin that ships the store inside itself |
 
-If none resolves, the server refuses to start and names each place it checked. A store's plugin declares a fixed entry, and every asker's own clone is then found by ID:
+If none resolves, the server refuses to start and names each place it checked. A store's plugin declares a fixed entry, and every asker's own clone is then found by ID. The entry launches the server itself, as *Installation* describes:
 
 ```json
 { "mcpServers": { "knowledge-store": {
-    "command": "knowledge-store-mcp",
-    "args": ["--store-id", "example-store"] } } }
+    "command": "uvx",
+    "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@vX.Y.Z",
+             "knowledge-store-mcp", "--store-id", "example-store"] } } }
 ```
 
 The server takes no credentials. The only access an asker needs is read access to clone the store repository.
+
+## Installation
+
+**Status: proposed, awaiting the owner's confirmation.** The open alternative is publishing the package to a package index and launching it from there.
+
+Installing a plugin puts no command on the asker's machine, so the client configuration launches the server itself, pinned to a release tag of this repository:
+
+```json
+"knowledge-store": {
+  "command": "uvx",
+  "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@vX.Y.Z",
+           "knowledge-store-mcp", "--store-id", "<id>"]
+}
+```
+
+**What the machine needs: `uv`, and nothing else.** `uvx` builds the server into an isolated environment from the tagged source. If no installed Python satisfies the package's `requires-python` (3.11 or newer), uv downloads a managed Python first: automatic downloads are uv's default (`python-downloads = "automatic"`). A machine that forbids them (`--no-python-downloads`, or `UV_PYTHON_DOWNLOADS=never`) needs Python 3.11 or newer installed instead.
+
+**First run and offline use.** The first launch needs network access: uv fetches the tag from GitHub, the dependencies from PyPI and, if needed, a Python, all into uv's cache. Later launches run from that cache. With no network, uv tries to refresh the tag, fails, and falls back to the cached checkout, so the server still starts. Do not add `--offline` to the arguments: with a tag, uv then refuses to resolve the tag at all, even when it is cached (checked with uv 0.12). `uv cache clean` removes the cached environment, and the next launch needs the network again.
+
+**Upgrading: change the tag in the configuration.** Nothing else changes, and nothing needs uninstalling: a new tag is a new cache entry, and the old one is unused.
+
+**Why a tag and not a branch: reproducibility.** A tag names one commit, so every asker on the same configuration runs the same server, and a fault can be reproduced from the configuration alone. A branch moves under them: uv re-fetches the ref on each launch it has network for, so the server changes without the configuration changing, and an asker who was offline keeps an older one. Two askers with identical configuration can then run different code, with nothing to say which.
 
 ## The server
 
