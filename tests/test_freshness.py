@@ -34,13 +34,15 @@ class FreshnessTestCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.root = self.tmp / "s"
 
-    def session(self) -> store.Session:
-        session = store.Session(lambda: store.open_store(self.root, self.cache), lambda: NOW)
-        self.addCleanup(lambda: session.current()[0].close())
-        return session
 
-    def digest_on_disk(self) -> str:
-        return json.loads((self.root / MANIFEST).read_text(encoding="utf-8"))["digest"]
+def new_session(case: FreshnessTestCase) -> store.Session:
+    session = store.Session(lambda: store.open_store(case.root, case.cache), lambda: NOW)
+    case.addCleanup(lambda: session.current()[0].close())
+    return session
+
+
+def digest_on_disk(case: FreshnessTestCase) -> str:
+    return json.loads((case.root / MANIFEST).read_text(encoding="utf-8"))["digest"]
 
 
 class ReloadTest(FreshnessTestCase):
@@ -48,7 +50,7 @@ class ReloadTest(FreshnessTestCase):
         """Catches: serving the store loaded at start-up after a rebuild changed it,
         or reloading without saying so in the result."""
         build(self.root)
-        session = self.session()
+        session = new_session(self)
         first, notice = session.current()
         self.assertIsNone(notice)
         old_digest = first.manifest.digest
@@ -57,17 +59,17 @@ class ReloadTest(FreshnessTestCase):
         # A rebuild that changes the index layer: the archive goes, a plain file comes.
         (self.root / INDEX_ARCHIVE).unlink()
         build(self.root, index="plain")
-        self.assertNotEqual(self.digest_on_disk(), old_digest)
+        self.assertNotEqual(digest_on_disk(self), old_digest)
 
         second, notice = session.current()
         self.assertEqual(notice, Notice("reloaded: store digest changed"))
         self.assertIsNot(second, first)
-        self.assertEqual(second.manifest.digest, self.digest_on_disk())
+        self.assertEqual(second.manifest.digest, digest_on_disk(self))
         assert isinstance(second.index, IndexHandle)
         self.assertEqual(second.index.path, self.root / INDEX_PLAIN)
         # The replaced store's connection is closed, not leaked.
         assert old_connection is not None
-        with self.assertRaises(Exception):
+        with self.assertRaises(sqlite3.ProgrammingError):
             old_connection.execute("SELECT 1")
 
         third, notice = session.current()
@@ -78,7 +80,7 @@ class ReloadTest(FreshnessTestCase):
         """Catches: failing the call (or dropping the store) when a pull is half
         written, instead of answering from the store already loaded."""
         build(self.root)
-        session = self.session()
+        session = new_session(self)
         first, _ = session.current()
         path = self.root / MANIFEST
         whole = path.read_bytes()
@@ -99,7 +101,7 @@ class ReloadTest(FreshnessTestCase):
         """Catches: reloading on file times rather than the digest, so a clone or an
         identical rebuild reloads every store on every call."""
         build(self.root)
-        session = self.session()
+        session = new_session(self)
         first, _ = session.current()
         manifest_path = self.root / MANIFEST
         os.utime(manifest_path, ns=(1_000_000_000, 1_000_000_000))
@@ -123,7 +125,7 @@ class NoDigestTest(FreshnessTestCase):
         carries none is never reloaded, whatever changes."""
         build(self.root)
         path = self.strip_digest()
-        session = self.session()
+        session = new_session(self)
         first, _ = session.current()
         document = json.loads(path.read_text(encoding="utf-8"))
         document["sources_as_of"] = "2026-10-19T00:00:00+00:00"
@@ -136,7 +138,7 @@ class NoDigestTest(FreshnessTestCase):
         """Catches: reloading on every call when there is no digest to compare."""
         build(self.root)
         path = self.strip_digest()
-        session = self.session()
+        session = new_session(self)
         first, _ = session.current()
         path.write_bytes(path.read_bytes())  # rewritten, same bytes, new mtime
         got, notice = session.current()
@@ -150,7 +152,7 @@ class ArchiveBeforeManifestTest(FreshnessTestCase):
         the archive - the server would keep the old index for good. The new index
         renames a repository, so serving the old one shows."""
         build(self.root)
-        session = self.session()
+        session = new_session(self)
         first, _ = session.current()
         archive = self.root / INDEX_ARCHIVE
         database = self.tmp / "new.sqlite"
@@ -172,7 +174,7 @@ class ArchiveBeforeManifestTest(FreshnessTestCase):
         """Catches: reloading on the archive's mtime alone, so a checkout that only
         touches the file throws the loaded index away."""
         build(self.root)
-        session = self.session()
+        session = new_session(self)
         first, _ = session.current()
         archive = self.root / INDEX_ARCHIVE
         os.utime(archive, ns=(1_000_000_000, 1_000_000_000))
@@ -197,7 +199,7 @@ class StaleDaysTest(FreshnessTestCase):
         9.2: 2026-10-16 01:30 UTC to 2026-10-20 12:00 UTC is 4 whole days), or
         rounding up a part day."""
         build(self.root)
-        self.assertEqual(self.session().stale_days(), 4)
+        self.assertEqual(new_session(self).stale_days(), 4)
         # 2026-10-20 00:30 UTC is 3 days 23 hours after the instant; read without
         # its -02:00 offset, the store would look 4 days 1 hour old.
         at = datetime(2026, 10, 20, 0, 30, tzinfo=timezone.utc)
@@ -215,7 +217,7 @@ class StaleDaysTest(FreshnessTestCase):
                 document = json.loads(path.read_text(encoding="utf-8"))
                 document["sources_as_of"] = value
                 path.write_text(json.dumps(document), encoding="utf-8")
-                self.assertIsNone(self.session().stale_days())
+                self.assertIsNone(new_session(self).stale_days())
 
 
 if __name__ == "__main__":

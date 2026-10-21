@@ -43,23 +43,26 @@ jobs:
           enable-cache: true
 
       # --frozen installs exactly what uv.lock resolves. The dev tools live in
-      # [dependency-groups] dev, which uv sync installs by default.
+      # [dependency-groups] dev, which uv sync installs by default. --no-build
+      # refuses to run any dependency's build scripts: every dependency is a
+      # wheel, and uv still builds this project itself. Each `uv run` repeats it
+      # because Sonar reads the command line, not what --no-sync already implies.
       - name: Install
         if: steps.project.outputs.present == 'true'
-        run: uv sync --frozen
+        run: uv sync --frozen --no-build
 
       - name: Ruff lint
         if: steps.project.outputs.present == 'true'
-        run: uv run --no-sync ruff check . --output-format=github
+        run: uv run --no-sync --no-build ruff check . --output-format=github
 
       - name: Ruff format check
         if: steps.project.outputs.present == 'true'
-        run: uv run --no-sync ruff format --check .
+        run: uv run --no-sync --no-build ruff format --check .
 
       - name: Pyright
         if: steps.project.outputs.present == 'true'
-        run: uv run --no-sync pyright
+        run: uv run --no-sync --no-build pyright
 
       - name: Tests
         if: steps.project.outputs.present == 'true'
-        run: uv run --no-sync python -m unittest discover -s tests -v
+        run: uv run --no-sync --no-build python -m unittest discover -s tests -v

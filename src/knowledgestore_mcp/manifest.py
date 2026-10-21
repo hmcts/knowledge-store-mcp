@@ -62,6 +62,25 @@ class Manifest:
     unread: list[str] = field(default_factory=list)
 
 
+def _format(document: dict) -> tuple[int, int]:
+    """The manifest's `format.major` and `format.minor`, refused unless both are
+    integers and the major is one this server reads."""
+    format_ = document.get("format")
+    major = format_.get("major") if isinstance(format_, dict) else None
+    minor = format_.get("minor") if isinstance(format_, dict) else None
+    if isinstance(major, bool) or not isinstance(major, int):
+        raise Refused(
+            f"a manifest with no integer format.major (format={format_!r})", SUPPORTED_MAJORS
+        )
+    if major not in SUPPORTED_MAJORS:
+        raise Refused(f"format major version {major}", SUPPORTED_MAJORS)
+    if isinstance(minor, bool) or not isinstance(minor, int):
+        raise Refused(
+            f"a manifest with no integer format.minor (format={format_!r})", SUPPORTED_MAJORS
+        )
+    return major, minor
+
+
 def load(root: Path) -> Manifest:
     try:
         path = contained(root, MANIFEST)
@@ -82,19 +101,7 @@ def load(root: Path) -> Manifest:
     if not isinstance(document, dict):
         raise Refused("a manifest that is not a JSON object", SUPPORTED_MAJORS)
 
-    format_ = document.get("format")
-    major = format_.get("major") if isinstance(format_, dict) else None
-    minor = format_.get("minor") if isinstance(format_, dict) else None
-    if isinstance(major, bool) or not isinstance(major, int):
-        raise Refused(
-            f"a manifest with no integer format.major (format={format_!r})", SUPPORTED_MAJORS
-        )
-    if major not in SUPPORTED_MAJORS:
-        raise Refused(f"format major version {major}", SUPPORTED_MAJORS)
-    if isinstance(minor, bool) or not isinstance(minor, int):
-        raise Refused(
-            f"a manifest with no integer format.minor (format={format_!r})", SUPPORTED_MAJORS
-        )
+    major, minor = _format(document)
 
     store = document.get("store")
     store = store if isinstance(store, dict) else {}

@@ -133,6 +133,11 @@ def open_index(
     resolved = directory.resolve()
     if resolved == root or root in resolved.parents:
         return Fallback("the index cache directory would be inside the store")
+    return _open_cached(archive, directory, max_bytes)
+
+
+def _open_cached(archive: Path, directory: Path, max_bytes: int) -> IndexHandle | Fallback:
+    """The archive's cache entry in `directory`, written if need be, opened."""
     result: IndexHandle | Fallback = Fallback("unreachable")
     # Twice at most. An entry that will not open was either left bad by a crash or
     # removed by a peer serving another archive under this store id, after our

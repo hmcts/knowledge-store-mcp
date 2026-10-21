@@ -555,7 +555,8 @@ class StoreTest(CacheTestCase):
         self.assertIsInstance(loaded.index, Fallback)
         expected = json.loads(gzip.decompress((root / GRAPH).read_bytes()))
         self.assertEqual(loaded.layer("graph"), expected)
-        self.assertIs(loaded.layer("graph"), loaded.layer("graph"))
+        first = loaded.layer("graph")
+        self.assertIs(loaded.layer("graph"), first)
 
     def test_an_absent_layer_reads_as_none(self):
         """Catches: an absent layer raising, or reading a path the manifest says is

@@ -244,18 +244,22 @@ def searched(store: Store, layers: Sequence[str]) -> str:
             unrecorded.append(name)
         else:
             absent.append(name)
-    if present:
-        count = len(repository_names(store))
-        noun = "repository" if count == 1 else "repositories"
-        layer = "layer" if len(present) == 1 else "layers"
-        parts = [f"searched {count} {noun} in the {join_names(present)} {layer}"]
-    else:
-        parts = ["searched no layer"]
+    parts = [_searched_present(store, present)]
     if absent:
         parts.append(layers_clause(absent, "absent"))
     if unrecorded:
         parts.append(layers_clause(unrecorded, "not recorded"))
     return "; ".join(parts)
+
+
+def _searched_present(store: Store, present: list[str]) -> str:
+    """`searched`'s opening clause: the estate's count, in the layers present."""
+    if not present:
+        return "searched no layer"
+    count = len(repository_names(store))
+    noun = "repository" if count == 1 else "repositories"
+    layer = "layer" if len(present) == 1 else "layers"
+    return f"searched {count} {noun} in the {join_names(present)} {layer}"
 
 
 def empty(searched: str) -> dict:
@@ -431,7 +435,8 @@ def _read_outside_estate(store: Store) -> dict[str, tuple[Outside, ...]]:
 
 # A cursor is `<page>.<first item>.<tag>`. Its token is rebuilt from the parsed
 # integers and compared whole, so any other spelling of a number is refused.
-_CURSOR = re.compile(r"([0-9]{1,9})\.([0-9]{1,9})\.([0-9a-f]{16})")
+# ASCII digits only, as that rebuilt token is spelt: `int` reads any Unicode digit.
+_CURSOR = re.compile(r"(\d{1,9})\.(\d{1,9})\.([0-9a-f]{16})", re.ASCII)
 
 # The fields `page` adds to the response; the frame may not carry them.
 PAGING_FIELDS = ("items", "total", "page", "next_page", "oversize")

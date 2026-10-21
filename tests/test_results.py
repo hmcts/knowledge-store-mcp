@@ -135,8 +135,9 @@ class AbsenceTest(StoreTestCase):
 
     def test_a_layer_name_the_server_does_not_know_is_refused(self):
         """Catches: a name neither known nor declared reaching server prose."""
+        loaded = self.open()
         with self.assertRaises(ValueError):
-            results.searched(self.open(), ["graph", "nonesuch"])
+            results.searched(loaded, ["graph", "nonesuch"])
 
     def test_a_declared_answers_layer_can_be_named(self):
         """Catches: an answers tool unable to say its extra layer was searched
@@ -564,8 +565,9 @@ class CursorTest(unittest.TestCase):
         """Catches: a cursor from one query or cap used on another, where it points
         at different items."""
         cursor = whole(self.items, 92)[0]["next_page"]
+        others = strings(3, 3, 4)
         with self.assertRaises(CursorRefused):
-            results.page(strings(3, 3, 4), 92, cursor, digest="d1", key=str, frame=FRAME)
+            results.page(others, 92, cursor, digest="d1", key=str, frame=FRAME)
         with self.assertRaises(CursorRefused):
             results.page(self.items, 93, cursor, digest="d1", key=str, frame=FRAME)
 
