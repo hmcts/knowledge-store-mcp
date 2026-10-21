@@ -127,6 +127,8 @@ def _lookup(
     base = _reader(store).layer
     answer = results.repository(store, name)
     layers_used = [base, LAYER] if _present(store) else [base]
+    if isinstance(answer, Known):
+        layers_used += results.answer_layers(answer)
     return store, notice, base, answer, layers_used
 
 

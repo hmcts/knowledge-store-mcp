@@ -29,8 +29,8 @@ CALLS: tuple[tuple[str, dict[str, Any]], ...] = (
 )
 
 NEAR_MISSES = [
-    {"repository": "payment-apis", "near_miss": True},
     {"repository": "payments-api", "near_miss": True},
+    {"repository": "payment-apis", "near_miss": True},
 ]
 
 
@@ -46,7 +46,7 @@ EXPECT: dict[str, list[tuple[str, Any, Any]]] = {
     ],
     "find_repo": [
         ("not in the estate (DESIGN.md 2)", lambda r: r["answer"], "not in the estate"),
-        ("near misses, tie by name (DESIGN.md 2)", lambda r: r["near_misses"], NEAR_MISSES),
+        ("near misses, equal remainder first (DESIGN.md 2)", lambda r: r["near_misses"], NEAR_MISSES),
     ],
     "search": [
         ("one label matches (DESIGN.md 4)", lambda r: _ids(r["items"]), ["payments-api::RefundHandler"]),

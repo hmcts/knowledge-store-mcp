@@ -8,10 +8,13 @@
   unrecognised, never read, and refused by every tool that needs it.
 - `repository` is the three-way answer for a repository name: in the estate, not
   in the estate (with near misses), or referenced by the estate but not held.
+  The estate is every repository the index lists, provenance records, or the
+  relationships layer has a `by-repo` file for.
 - `page` cuts a list so the whole response fits the cap, without cutting an
   item, and says so.
 
-Store text is data. The only prose composed here is `searched`'s sentence, built
+Store text is data. The only prose composed here is `NO_GRAPH_NODES`, which is
+fixed, and `searched`'s sentence, built
 from counts and layer names: the ones this server knows, and answers layers the
 manifest declares, which are store structure and must be plain identifiers; and
 an unrecognised layer's reason, which quotes a stamp only as integers and a plain
@@ -50,6 +53,10 @@ _LAYER_NAME = re.compile(r"[A-Za-z0-9_-]+")
 # Plan rulings, Near misses are deterministic.
 NEAR_MISS_COUNT = 5
 NEAR_MISS_CUTOFF = 0.75
+
+# What a repository the estate holds and the graph does not is answered with. Fixed
+# text: the repository's name and sha go in their own fields.
+NO_GRAPH_NODES = "in the estate, but the graph holds no nodes for it"
 
 INDEX_PRESENT = "present"
 INDEX_ABSENT = "absent: graph read whole"
@@ -215,23 +222,50 @@ def unrecognised_layers(store: Store) -> dict[str, str]:
 
 
 def repository_names(store: Store) -> list[str]:
-    """The estate's repositories, sorted: the index's `repos`, or, without it, the
-    graph's and the ticket layer's, collected as the index builder collects them;
-    and in both modes every repository the relationships layer has a `by-repo` file
-    for, since that writer runs over every clone, including one with no graph node
-    and no ticket. Never the empty name: a node with no repository is not one,
-    whatever the index holds."""
+    """The estate's repositories, sorted: the repositories the index lists (or the
+    graph and ticket layer read whole list), with every repository provenance
+    records and every one the relationships layer has a `by-repo` file for. A
+    clone with no graph node and no ticket is still in the estate. Never the empty
+    name: a node with no repository is not one, whatever the index holds."""
+    return _estate(store, _listed(store))
+
+
+def _listed(store: Store) -> set[str]:
+    """The repositories the index's `repos` lists, or, without it, the graph's and
+    the ticket layer's, collected as the index builder collects them: those with
+    a graph node or a ticket."""
     if isinstance(store.index, IndexHandle):
-        # An index built before the library stopped listing "" still holds it; the
-        # filter below drops it in every mode.
+        # An index built before the library stopped listing "" still holds it;
+        # `_estate` drops it in every mode.
         rows = store.index.connection.execute("SELECT name FROM repos")
-        names = {name for (name,) in rows}
-    else:
-        names = set(graph.read(store).repositories()) | store.memo(
-            "intent.repositories", lambda: graph.ticket_repositories(store.read("intent"))
-        )
-    names |= set(by_repo_files(store))
+        return {name for (name,) in rows}
+    return set(graph.read(store).repositories()) | store.memo(
+        "intent.repositories", lambda: graph.ticket_repositories(store.read("intent"))
+    )
+
+
+def _estate(store: Store, listed: set[str]) -> list[str]:
+    names = listed | set(provenance_commits(store)) | set(by_repo_files(store))
     return sorted(name for name in names if name)
+
+
+def provenance_commits(store: Store) -> dict[str, str | None]:
+    """Each repository provenance records, with the sha it was cloned at (None when
+    the entry carries no text sha). Read once per loaded store, through the
+    store's layer reader, which keeps the path inside the store; empty when the
+    layer is absent."""
+    return store.memo("provenance.commits", lambda: _read_provenance(store.layer("provenance")))
+
+
+def _read_provenance(document: Any) -> dict[str, str | None]:
+    repositories = document.get("repositories") if isinstance(document, dict) else None
+    if not isinstance(repositories, dict):
+        return {}
+    commits: dict[str, str | None] = {}
+    for name, entry in repositories.items():
+        sha = entry.get("sha") if isinstance(entry, dict) else None
+        commits[name] = sha if isinstance(sha, str) else None
+    return commits
 
 
 @dataclass(frozen=True)
@@ -378,13 +412,22 @@ class Known:
 
     name: str
     matched_case_insensitively: bool
+    # False for a repository the index does not list - a clone with no graph node
+    # and no ticket - so the answer says the graph holds nothing for it.
+    listed: bool = True
+    cloned_at: str | None = None
 
     def as_dict(self) -> dict:
-        return {
+        found: dict[str, Any] = {
             "answer": "in the estate",
             "exact": self.name,
             "matched_case_insensitively": self.matched_case_insensitively,
         }
+        if not self.listed:
+            found["graph_nodes"] = 0
+            found["cloned_at"] = self.cloned_at
+            found["note"] = NO_GRAPH_NODES
+        return found
 
 
 @dataclass(frozen=True)
@@ -419,12 +462,20 @@ class NotHeld:
 
 def repository(store: Store, name: str) -> Known | Unknown | NotHeld:
     """Look `name` up; it is never joined into a path."""
-    names = repository_names(store)
+    listed = _listed(store)
+    names = _estate(store, listed)
+
+    def known(found: str, folded: bool) -> Known:
+        if found in listed:
+            return Known(found, matched_case_insensitively=folded)
+        cloned_at = provenance_commits(store).get(found)
+        return Known(found, folded, listed=False, cloned_at=cloned_at)
+
     if name in names:
-        return Known(name, matched_case_insensitively=False)
+        return known(name, False)
     folded = [n for n in names if n.casefold() == name.casefold()]
     if len(folded) == 1:
-        return Known(folded[0], matched_case_insensitively=True)
+        return known(folded[0], True)
     if folded:
         # Case-only twins: the name cannot say which is meant, so offer each.
         return Unknown(tuple(folded))
@@ -435,12 +486,42 @@ def repository(store: Store, name: str) -> Known | Unknown | NotHeld:
     return Unknown(near_misses(name, names))
 
 
-def near_misses(name: str, names: list[str]) -> tuple[str, ...]:
-    """The top five by similarity, a tie broken by name ascending, at or above the
-    cutoff. Every candidate is scored first: `difflib.get_close_matches` keeps a
-    tie at its fifth place by name descending, so it would drop the wrong names."""
+def answer_layers(answer: Known) -> list[str]:
+    """The layers a known answer quotes beyond the one that listed it: provenance,
+    for the sha of a repository the graph holds nothing for."""
+    return ["provenance"] if answer.cloned_at is not None else []
+
+
+def _remainder(name: str) -> str:
+    """`name` without its first hyphen-separated segment; "" when it has none."""
+    return name.partition("-")[2]
+
+
+def _similarity(candidate: str, name: str) -> float:
     # Scored as difflib scores them: the candidate is the first sequence.
-    scored = sorted((-difflib.SequenceMatcher(None, c, name).ratio(), c) for c in names)
+    return difflib.SequenceMatcher(None, candidate, name).ratio()
+
+
+def _score(candidate: str, name: str) -> float:
+    """The better of the whole-name score and the score of what follows the first
+    `-` in each. An equal remainder scores 1.0, which no other different name can,
+    so a swapped first segment is always offered, and first."""
+    whole = _similarity(candidate, name)
+    rest, asked = _remainder(candidate), _remainder(name)
+    if not (rest and asked):
+        return whole
+    return max(whole, _similarity(rest, asked))
+
+
+def near_misses(name: str, names: list[str]) -> tuple[str, ...]:
+    """The top five, at or above the cutoff, by similarity, a tie broken by name
+    ascending. Each candidate is scored on its whole name and on what follows its
+    first `-`, against the same of `name`, and keeps the better: a swapped prefix
+    (`<one>-module-x` for `<other>-module-x`) is the substitution an asker makes,
+    and the whole name alone ranks it below every name sharing the asker's
+    prefix. Every candidate is scored first: `difflib.get_close_matches` keeps a
+    tie at its fifth place by name descending, so it would drop the wrong names."""
+    scored = sorted((-_score(c, name), c) for c in names)
     close = [c for negative, c in scored if -negative >= NEAR_MISS_CUTOFF]
     return tuple(close[:NEAR_MISS_COUNT])
 

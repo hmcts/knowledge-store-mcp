@@ -270,6 +270,13 @@ FILE_TICKETS_DATA: dict[str, dict[str, dict]] = {
     },
 }
 
+# A repository only provenance records: cloned at a pinned commit, with no graph
+# node, no ticket and no `by-repo` file (DESIGN.md 1.1). Written only by
+# `build(..., provenance_only=True)`. Its commit is older than every other, so
+# `sources_as_of` does not move.
+PROVENANCE_ONLY_REPOSITORY = "release-scripts"
+PROVENANCE_ONLY_COMMIT = ("d" * 40, "2026-05-04T10:00:00+01:00")
+
 # A repository only the ticket layer names: no clone, no graph node, no provenance
 # (DESIGN.md 6.4). Written only by `build(..., ticket_only=True)`, so the default
 # store keeps its estate of twelve.
@@ -950,6 +957,7 @@ def build(
     extra: dict | None = None,
     ticket_only: bool = False,
     by_repo_only: bool = False,
+    provenance_only: bool = False,
     relationships_format: dict | None = RELATIONSHIPS_FORMAT,
 ) -> Path:
     """Write the complete synthetic store at `root` and return it.
@@ -960,8 +968,9 @@ def build(
     `extra` maps layer names a newer library would add to their manifest entries,
     merged into `layers` - together they make the newer-minor manifest a reader
     must still load. `ticket_only` adds a repository that only the ticket layer
-    names (DESIGN.md 6.4), and `by_repo_only` one that only a `by-repo` file names
-    (DESIGN.md 5.6). `relationships_format` is the registry's format stamp; None
+    names (DESIGN.md 6.4), `by_repo_only` one that only a `by-repo` file names
+    (DESIGN.md 5.6), and `provenance_only` one that only provenance records
+    (DESIGN.md 1.1). `relationships_format` is the registry's format stamp; None
     writes a registry without one, as a library before the stamp did (DESIGN.md
     5.7). The manifest is written last, so its digests describe
     the files as they finally are.
@@ -975,7 +984,12 @@ def build(
     _write(root, LABELS, _library_json(COMMUNITY_LABELS))
     provenance = {
         repo: {"sha": sha, "branch": "main", "committed": committed}
-        for repo, (sha, committed) in sorted(REPOSITORIES.items())
+        for repo, (sha, committed) in sorted(
+            {
+                **REPOSITORIES,
+                **({PROVENANCE_ONLY_REPOSITORY: PROVENANCE_ONLY_COMMIT} if provenance_only else {}),
+            }.items()
+        )
     }
     _write(root, PROVENANCE, _library_json({"repositories": provenance}))
     _write(root, TELEMETRY, _library_json({"measurements": dict(sorted(TELEMETRY_DATA.items()))}))

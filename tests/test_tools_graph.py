@@ -491,8 +491,8 @@ class FindRepoTest(ToolTestCase):
                         "answer": "not in the estate",
                         "exact": None,
                         "near_misses": [
-                            {"repository": "payment-apis", "near_miss": True},
                             {"repository": "payments-api", "near_miss": True},
+                            {"repository": "payment-apis", "near_miss": True},
                         ],
                         "searched": searched_in(base, "relationships"),
                     },
@@ -646,8 +646,8 @@ class SearchTest(ToolTestCase):
                             "answer": "not in the estate",
                             "exact": None,
                             "near_misses": [
-                                {"repository": "payment-apis", "near_miss": True},
                                 {"repository": "payments-api", "near_miss": True},
+                                {"repository": "payment-apis", "near_miss": True},
                             ],
                         },
                         "items": [],
@@ -1134,6 +1134,38 @@ class RepositoryListTest(ToolTestCase):
                     },
                 )
                 missing = tools_graph.node(session, "retired-batch::nothing")
+                self.assertEqual(
+                    missing["searched"], f"searched 13 repositories in the {base} layer"
+                )
+
+    def test_a_repository_only_provenance_records_is_in_the_estate_with_no_nodes(self):
+        """Catches: a cloned repository that provenance records, with no graph node,
+        no ticket and no by-repo file, answered "not in the estate" because the
+        index's `repos` does not list it; or answered in the estate without saying
+        the graph holds nothing for it, so an empty search reads as a finding
+        (DESIGN.md 1.1). The estate is then thirteen, in both modes."""
+        for index, base in (("gz", "index"), ("none", "graph")):
+            with self.subTest(index=index):
+                session = self.session(index, provenance_only=True)
+                self.assertEqual(
+                    results.repository_names(session.current()[0]),
+                    sorted([*SHA_DIGIT, "release-scripts"]),
+                )
+                self.assertEqual(
+                    tools_graph.find_repo(session, "release-scripts"),
+                    {
+                        **envelope(INDEXED if index == "gz" else FALLBACK, [base, "provenance"]),
+                        "answer": "in the estate",
+                        "exact": "release-scripts",
+                        "matched_case_insensitively": False,
+                        "graph_nodes": 0,
+                        "cloned_at": "d" * 40,
+                        "note": "in the estate, but the graph holds no nodes for it",
+                    },
+                )
+                # A repository the graph does hold says nothing of the kind.
+                self.assertNotIn("graph_nodes", tools_graph.find_repo(session, "payment-apis"))
+                missing = tools_graph.node(session, "release-scripts::nothing")
                 self.assertEqual(
                     missing["searched"], f"searched 13 repositories in the {base} layer"
                 )

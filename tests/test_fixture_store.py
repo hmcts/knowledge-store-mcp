@@ -357,7 +357,7 @@ class TrapTest(FixtureStoreCase):
     def test_near_misses(self):
         """Catches: losing the tie that makes the near-miss order matter, or the
         case-only twin. DESIGN.md section 2."""
-        self.assertInDesign("`payment-api`", "`Ledger-Service`", '["payment-apis", "payments-api"]')
+        self.assertInDesign("`payment-api`", "`Ledger-Service`", '["payments-api", "payment-apis"]')
         held = set(_json(self.root, "knowledge/provenance.json")["repositories"])
         graph = _json(self.root, "graphify-out/graph.json.gz")
         # The glossary page has no repository (DESIGN.md 3.5).
@@ -551,6 +551,28 @@ class TrapTest(FixtureStoreCase):
         self.assertNotIn("docs-site", _json(root, "knowledge/intent/file-tickets.json.gz"))
         self.assertNotIn("docs-site", _json(root, "knowledge/provenance.json")["repositories"])
         self.assertFalse((self.root / "knowledge/relationships/by-repo/docs-site.json").exists())
+
+    def test_a_repository_only_provenance_records_is_opt_in(self):
+        """Catches: the provenance-only repository missing from its option, leaking
+        into another layer (a graph node, a ticket, a by-repo file), which would make
+        the test of it pass through that layer instead, or moving `sources_as_of`.
+        DESIGN.md 1.1."""
+        self.assertInDesign("`release-scripts`", "`2026-05-04T10:00:00+01:00`")
+        root = build(Path(tempfile.mkdtemp(dir=self.root.parent)) / "s", provenance_only=True)
+        provenance = _json(root, "knowledge/provenance.json")["repositories"]
+        self.assertEqual(
+            provenance["release-scripts"],
+            {"sha": "d" * 40, "branch": "main", "committed": "2026-05-04T10:00:00+01:00"},
+        )
+        self.assertEqual(sorted(provenance), sorted([*TWELVE_REPOSITORIES, "release-scripts"]))
+        graph = _json(root, "graphify-out/graph.json.gz")
+        self.assertNotIn("release-scripts", {n.get("repo") for n in graph["nodes"]})
+        self.assertNotIn("release-scripts", _json(root, "knowledge/intent/file-tickets.json.gz"))
+        self.assertFalse((root / "knowledge/relationships/by-repo/release-scripts.json").exists())
+        manifest = _json(root, "knowledge/store-manifest.json")
+        self.assertEqual(manifest["sources_as_of"], "2026-10-15T23:30:00-02:00")
+        default = _json(self.root, "knowledge/provenance.json")["repositories"]
+        self.assertNotIn("release-scripts", default)
 
     def test_the_registry_carries_the_format_stamp_and_the_variant_does_not(self):
         """Catches: the default store losing its stamp, so every relationships test

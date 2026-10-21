@@ -216,11 +216,12 @@ def _paged(
 
 
 def _repository_layers(store: Store, base: str, answer: Any) -> list[str]:
-    """The layers a repository answer read: the relationships registry is consulted
-    only for a name the estate does not hold, and only when it is present in a
-    format this server reads."""
+    """The layers a repository answer read: provenance when the answer quotes the
+    sha it records; the relationships registry is consulted only for a name the
+    estate does not hold, and only when it is present in a format this server
+    reads."""
     if isinstance(answer, Known):
-        return [base]
+        return [base, *results.answer_layers(answer)]
     if results.relationships_readable(store):
         return [base, "relationships"]
     return [base]
