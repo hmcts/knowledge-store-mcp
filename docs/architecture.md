@@ -19,4 +19,4 @@ Teal marks what the MCP work adds. The dashed teal line is the trust boundary: t
 
 ## Still open
 
-- **Delivery of ⑥.** Running `uvx --from git+https://github.com/hmcts/knowledge-store-mcp@vX.Y.Z knowledge-store-mcp --store-id <id>` keeps the asker free of a Python install step. It needs `uv` on the host, and the spec does not decide it yet.
+- **Delivery of ⑥.** Running `uvx --from git+https://github.com/hmcts/knowledge-store-mcp@vX.Y.Z knowledge-store-mcp --store-id <id>` keeps the asker free of a Python install step. It needs `uv` on the host. The spec's [Installation](superpowers/specs/2026-10-20-knowledge-store-mcp-design.md#installation) section sets it out as the proposed route, awaiting the owner's confirmation.
