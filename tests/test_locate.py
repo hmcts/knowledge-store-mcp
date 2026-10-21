@@ -91,8 +91,9 @@ class PrecedenceTest(LocateTestCase):
         that ships no store sets it too, and would be served as an empty store."""
         bare = self.tmp / "bare-plugin"
         bare.mkdir()
+        given, env = args(), self.env(CLAUDE_PLUGIN_ROOT=str(bare))
         with self.assertRaises(NotFound):
-            resolve(args(), self.env(CLAUDE_PLUGIN_ROOT=str(bare)), self.home)
+            resolve(given, env, self.home)
 
     def test_the_root_is_realpath_resolved_once(self):
         """Catches: a root left as the symlink the asker typed, so every later
@@ -121,12 +122,10 @@ class PluginRootTest(LocateTestCase):
         example-store with a plugin bundling other-store would answer questions
         about the wrong estate, silently."""
         set_store_id(self.plugin, "other-store")
+        given = args(store_id="example-store")
+        env = self.env(CLAUDE_PLUGIN_ROOT=str(self.plugin))
         with self.assertRaises(NotFound) as caught:
-            resolve(
-                args(store_id="example-store"),
-                self.env(CLAUDE_PLUGIN_ROOT=str(self.plugin)),
-                self.home,
-            )
+            resolve(given, env, self.home)
         self.assertIn(
             "CLAUDE_PLUGIN_ROOT holds store 'other-store', not 'example-store'",
             str(caught.exception),
@@ -144,8 +143,9 @@ class NotFoundTest(LocateTestCase):
     def test_the_message_names_all_four_sources(self):
         """Catches: a refusal that says only "no store" and leaves the asker to
         guess which of the four ways of naming one they had not used."""
+        given, env = args(store_id="example-store"), self.env()
         with self.assertRaises(NotFound) as caught:
-            resolve(args(store_id="example-store"), self.env(), self.home)
+            resolve(given, env, self.home)
         message = str(caught.exception)
         for source in ("--store", "KNOWLEDGE_STORE_PATH", "--store-id", "CLAUDE_PLUGIN_ROOT"):
             self.assertIn(source, message)
@@ -187,8 +187,9 @@ class LocationsFileTest(LocateTestCase):
         first = self.store("first", index="none")
         second = self.store("second", index="none")
         self.write_locations(str(first), str(second))
+        given, env = args(store_id="example-store"), self.env()
         with self.assertRaises(AmbiguousStoreId) as caught:
-            resolve(args(store_id="example-store"), self.env(), self.home)
+            resolve(given, env, self.home)
         self.assertEqual(caught.exception.paths, [first, second])
         self.assertIn(str(first), str(caught.exception))
         self.assertIn(str(second), str(caught.exception))
@@ -245,8 +246,9 @@ class LocationsFileTest(LocateTestCase):
         """Catches: a NotFound that hides why a listed clone was ignored, leaving
         the asker with a locations file that looks right and finds nothing."""
         self.write_locations("# note", "relative/path", str(self.tmp / "deleted-clone"))
+        given, env = args(store_id="example-store"), self.env()
         with self.assertRaises(NotFound) as caught:
-            resolve(args(store_id="example-store"), self.env(), self.home)
+            resolve(given, env, self.home)
         message = str(caught.exception)
         self.assertIn("2 entries skipped", message)
         self.assertIn("relative/path (not absolute)", message)
@@ -307,7 +309,8 @@ class ContainmentTest(LocateTestCase):
         with self.assertRaises(Refused) as caught:
             manifest.load(self.root)
         self.assertIn("a manifest outside the store", str(caught.exception))
-        self.assertIn(str(real), str(caught.exception))
+        # Where it resolves to is never said, on stderr or anywhere (SECURITY.md).
+        self.assertNotIn(str(real), str(caught.exception))
 
     def test_a_listed_clone_whose_manifest_escapes_is_not_matched(self):
         """Catches: a --store-id lookup reading a manifest outside the clone, so a
@@ -316,8 +319,9 @@ class ContainmentTest(LocateTestCase):
         (self.root / MANIFEST).replace(real)
         (self.root / MANIFEST).symlink_to(real)
         self.write_locations(str(self.root))
+        given, env = args(store_id="example-store"), self.env()
         with self.assertRaises(NotFound):
-            resolve(args(store_id="example-store"), self.env(), self.home)
+            resolve(given, env, self.home)
 
 
 if __name__ == "__main__":

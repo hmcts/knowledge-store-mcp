@@ -62,24 +62,9 @@ class Manifest:
     unread: list[str] = field(default_factory=list)
 
 
-def load(root: Path) -> Manifest:
-    try:
-        path = contained(root, MANIFEST)
-    except OutsideStore as error:
-        raise Refused(
-            f"a manifest outside the store ({error.resolved})", SUPPORTED_MAJORS
-        ) from error
-    if not path.is_file():
-        raise Refused(f"no {MANIFEST.as_posix()} under {root}", SUPPORTED_MAJORS)
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise Refused(
-            f"a manifest that cannot be read as JSON ({error})", SUPPORTED_MAJORS
-        ) from error
-    if not isinstance(document, dict):
-        raise Refused("a manifest that is not a JSON object", SUPPORTED_MAJORS)
-
+def _format(document: dict) -> tuple[int, int]:
+    """The manifest's `format.major` and `format.minor`, refused unless both are
+    integers and the major is one this server reads."""
     format_ = document.get("format")
     major = format_.get("major") if isinstance(format_, dict) else None
     minor = format_.get("minor") if isinstance(format_, dict) else None
@@ -93,6 +78,30 @@ def load(root: Path) -> Manifest:
         raise Refused(
             f"a manifest with no integer format.minor (format={format_!r})", SUPPORTED_MAJORS
         )
+    return major, minor
+
+
+def load(root: Path) -> Manifest:
+    try:
+        path = contained(root, MANIFEST)
+    except OutsideStore:
+        # Where it resolves to is not said: stderr names no symlink target either.
+        raise Refused(
+            f"a manifest outside the store ({MANIFEST.as_posix()} resolves outside it)",
+            SUPPORTED_MAJORS,
+        ) from None
+    if not path.is_file():
+        raise Refused(f"no {MANIFEST.as_posix()} under {root}", SUPPORTED_MAJORS)
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise Refused(
+            f"a manifest that cannot be read as JSON ({error})", SUPPORTED_MAJORS
+        ) from error
+    if not isinstance(document, dict):
+        raise Refused("a manifest that is not a JSON object", SUPPORTED_MAJORS)
+
+    major, minor = _format(document)
 
     store = document.get("store")
     store = store if isinstance(store, dict) else {}

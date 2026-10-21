@@ -87,17 +87,20 @@ _REPORT = "src/main/java/com/example/reporting/"
 _LIB = "src/main/java/com/example/lib/"
 
 # (repo, local id, label, source file, line, community, kind). The node id is
-# `<repo>::<local id>`, the namespacing a merged graph carries.
-NODES: tuple[tuple[str, str, str, str, int, int, str], ...] = (
+# `<repo>::<local id>`, the namespacing a merged graph carries. Two are traps
+# (DESIGN.md 3.4): a kind in its legacy form, and a label that is not a string.
+NODES: tuple[tuple[str, str, str | int, str, int, int, str], ...] = (
     ("accounts-web", "AccountPage", "AccountPage", "src/app/account/account-page.component.ts", 8, 0, ""),
     ("accounts-web", "PaymentForm", "PaymentForm", "src/app/payment/payment-form.component.ts", 15, 0, ""),
     ("accounts-web", "feature:pay", "Pay an outstanding balance", "features/pay.feature", 1, 0, "feature"),
     ("accounts-web", "scenario:pay-saved-card", "Pay with a saved card", "features/pay.feature", 6, 0, "scenario"),
+    ("accounts-web", "scenario:pay-new-card", "Pay with a new card", "features/pay.feature", 12, 0, "gherkin_scenario"),
     ("audit-service", "AuditTrail", "AuditTrail", _AUDIT + "AuditTrail.java", 9, 1, ""),
     ("audit-service", "AuditClient", "AuditClient", _AUDIT + "AuditClient.java", 4, 1, ""),
     ("audit-service", "AuditExporter", "AuditExporter", _AUDIT + "AuditExporter.java", 18, 1, ""),
     ("chart-web", "chart:web", "web chart", "Chart.yaml", 1, 1, ""),
     ("chart-web", "template:deployment", "web deployment template", "templates/deployment.yaml", 1, 1, ""),
+    ("chart-web", "value:replicas", 3, "values.yaml", 4, 1, ""),
     ("gateway-service", "GatewayRouter", "GatewayRouter", "src/router.ts", 4, 0, ""),
     ("gateway-service", "PaymentsProxy", "PaymentsProxy", "src/payments-proxy.ts", 10, 0, ""),
     ("gateway-service", "RateLimiter", "RateLimiter", "src/rate-limiter.ts", 2, 0, ""),
@@ -135,9 +138,58 @@ NODES: tuple[tuple[str, str, str, str, int, int, str], ...] = (
 # (library CLAUDE.md 6.4).
 STRUCTURAL_NODE = "ledger-service::com.example.ledger"
 
+# Two more copies of one node, listed after the first and disagreeing on its label.
+# The index keeps the copy first in (repo, file, kind, label, url, community) order:
+# "FormField", the middle one, so neither the first nor the last listed copy is
+# the answer (DESIGN.md 3.4).
+DUPLICATE_NODES = (
+    ("ui-components", "FormFieldComponent", "FormField", "src/form-field/form-field.component.ts", 4, 1, ""),
+    ("ui-components", "FormFieldComponent", "FormFieldComponent (legacy)", "src/form-field/form-field.component.ts", 4, 1, ""),
+)  # fmt: skip
+
+# Three nodes written as raw graph JSON, each breaking a rule the index builder
+# normalises (DESIGN.md 3.5): an id that is a number, a community written as text,
+# and a node with no repository - a knowledge-corpus page, which no clone holds.
+_NOTIFY = "https://github.com/example-org/notifications-service/blob/" + "7" * 40 + "/"
+RAW_NODES: tuple[dict, ...] = (
+    {
+        "id": 7,
+        "label": "Delivery retry policy",
+        "repo": "notifications-service",
+        "source_file": "src/retry.py",
+        "source_location": "L3",
+        "community": 1,
+        "file_type": "code",
+        "metadata": {},
+        "url": _NOTIFY + "src/retry.py#L3",
+    },
+    {
+        "id": "notifications-service::SmsTemplate",
+        "label": "SmsTemplate",
+        "repo": "notifications-service",
+        "source_file": "src/templates/sms.py",
+        "source_location": "L2",
+        "community": "1",
+        "file_type": "code",
+        "metadata": {},
+        "url": _NOTIFY + "src/templates/sms.py#L2",
+    },
+    {
+        "id": "glossary::payments",
+        "label": "Payments glossary",
+        "source_file": "knowledge/glossary/payments.md",
+        "file_type": "document",
+        "metadata": {},
+    },
+)
+
+# The library's `kinds._ALIASES`, flattened: a legacy kind and the kind it is now.
+# Copied, not imported from the server, so the fixture stays independent of it.
+LEGACY_KINDS = {"gherkin_feature": "feature", "gherkin_scenario": "scenario", "jira_ticket": "ticket"}  # fmt: skip
+
 # (source, relation, target), as `<repo>::<local id>`. The first two are the
-# 2-cycle.
-LINKS: tuple[tuple[str, str, str], ...] = (
+# 2-cycle. The last points at a node whose id is the number 7 (DESIGN.md 3.5).
+LINKS: tuple[tuple[str, str, str | int], ...] = (
     ("payments-api::PaymentService", "calls", "payments-api::RefundHandler"),
     ("payments-api::RefundHandler", "calls", "payments-api::PaymentService"),
     ("payments-api::PaymentsController", "calls", "payments-api::PaymentService"),
@@ -174,6 +226,7 @@ LINKS: tuple[tuple[str, str, str], ...] = (
     ("infra-modules::module:app-service", "imports", "infra-modules::module:network"),
     ("infra-modules::module:app-service", "imports", "infra-modules::module:database"),
     ("payment-apis::doc:refunds-runbook", "references", "payments-api::RefundHandler"),
+    ("notifications-service::EmailChannel", "references", 7),
 )  # fmt: skip
 
 COMMUNITY_LABELS = {"0": "Payments and the ledger", "1": "Platform and delivery"}
@@ -213,6 +266,20 @@ FILE_TICKETS_DATA: dict[str, dict[str, dict]] = {
             "tickets": {"EX-102": 2},
             "first": "2026-09-10",
             "last": "2026-09-24",
+        },
+    },
+}
+
+# A repository only the ticket layer names: no clone, no graph node, no provenance
+# (DESIGN.md 6.4). Written only by `build(..., ticket_only=True)`, so the default
+# store keeps its estate of twelve.
+TICKET_ONLY_REPOSITORY = "retired-batch"
+TICKET_ONLY_DATA: dict[str, dict[str, dict]] = {
+    TICKET_ONLY_REPOSITORY: {
+        "jobs/nightly-settlement.sh": {
+            "tickets": {"EX-105": 1},
+            "first": "2026-06-02",
+            "last": "2026-06-02",
         },
     },
 }
@@ -271,7 +338,7 @@ TICKET_DESCRIPTIONS_DATA: dict[str, dict] = {
 # manifest's deployments flag is null - unknown, not false.
 TELEMETRY_DATA = {
     "intent.repositories_without_reach": 0,
-    "source_urls.linked": 40,
+    "source_urls.linked": 44,
 }
 
 # --- Relationships -----------------------------------------------------------
@@ -299,10 +366,36 @@ DECLARATIONS: tuple[tuple[str, str, str, str, str, str, str, tuple[int, ...]], .
     ("reporting-worker", "ledger-service", "", "maven_artifact", "com.example:ledger-client", "1.0.0", "pom.xml", (44,)),
 )  # fmt: skip
 
+# The built-in kinds, in the writer's `relationships.BUILTIN` order. The writer
+# lists every one in `kinds.json` and in `unresolved_targets_outside_estate`,
+# whether or not it met a reference, so "none" reads differently from "not run".
+KINDS = ("terraform_module", "helm_chart", "maven_artifact", "npm_package")
+
+# A Terraform GitHub source the estate does not hold is keyed `<org>/<repo>`, as the
+# writer's resolver keys it; a chart no clone defines is keyed by its bare name. So
+# `legacy-network` is three targets: the estate's own organisation's repository, a
+# same-named one in another organisation, and a chart (DESIGN.md 5.4).
 UNRESOLVED_OUTSIDE_ESTATE = {
-    "terraform_module": {
-        "legacy-network": {"references": 3, "referenced_by": ["ledger-service", "payments-api"]},
+    "helm_chart": {
+        "legacy-network": {"references": 1, "referenced_by": ["payments-api"]},
     },
+    "maven_artifact": {},
+    "npm_package": {},
+    "terraform_module": {
+        f"{ORG}/legacy-network": {
+            "references": 3,
+            "referenced_by": ["ledger-service", "payments-api"],
+        },
+        "other-org/legacy-network": {"references": 1, "referenced_by": ["audit-service"]},
+    },
+}
+
+# What each kind set aside, by reason, as `kinds.json`'s `skipped` (DESIGN.md 5.5).
+SKIPPED = {
+    "helm_chart": {},
+    "maven_artifact": {"self": 1},
+    "npm_package": {},
+    "terraform_module": {"local": 2},
 }
 
 EXAMPLES_PER_EDGE = 3  # the library's default RELATIONSHIP_EXAMPLES
@@ -404,7 +497,7 @@ def _prose_metadata(prose: Iterable[str]) -> dict:
 
 def graph_document() -> dict:
     nodes: list[dict] = []
-    for repo, local, label, path, line, community, kind in NODES:
+    for repo, local, label, path, line, community, kind in (*NODES, *DUPLICATE_NODES):
         node = {
             "id": f"{repo}::{local}",
             "label": label,
@@ -417,6 +510,7 @@ def graph_document() -> dict:
             "url": f"{base_url(repo)}{path}#L{line}",
         }
         nodes.append(node)
+    nodes.extend(dict(raw) for raw in RAW_NODES)
     nodes.append({"id": STRUCTURAL_NODE, "repo": "ledger-service", "metadata": {}})
     links = [{"source": s, "relation": r, "target": t} for s, r, t in LINKS]
     return {"directed": True, "multigraph": False, "graph": {}, "nodes": nodes, "links": links}
@@ -482,25 +576,45 @@ def by_repo_documents(edges: list[dict]) -> dict[str, dict]:
 
 
 def kinds_document(edges: list[dict]) -> dict:
-    kinds: dict[str, dict] = {}
-
-    def entry(kind: str) -> dict:
-        # A kind can have unresolved targets and no edge, so either loop may be
-        # the first to meet it.
-        return kinds.setdefault(
-            kind, {"origin": "builtin", "edges": 0, "references": 0, "unresolved": 0}
-        )
-
+    """`kinds.json` as `relationships.build` writes it: every registered kind, with
+    its counts, what it skipped, and its notes (none here: the writer notes only an
+    unread Flux file, which depends on the machine that built the store)."""
+    kinds = {
+        kind: {
+            "origin": "builtin",
+            "edges": 0,
+            "references": 0,
+            "unresolved": len(UNRESOLVED_OUTSIDE_ESTATE[kind]),
+            "skipped": SKIPPED[kind],
+            "notes": {},
+        }
+        for kind in KINDS
+    }
     for edge in edges:
         for kind, references in edge["kinds"].items():
-            entry(kind)["edges"] += 1
-            entry(kind)["references"] += references
-    for kind, targets in UNRESOLVED_OUTSIDE_ESTATE.items():
-        entry(kind)["unresolved"] = len(targets)
+            kinds[kind]["edges"] += 1
+            kinds[kind]["references"] += references
     return kinds
 
 
-def _write_relationships(root: Path) -> None:
+# DESIGN.md 5.6 (opt-in): a clone the relationships layer has a `by-repo` file for,
+# with no graph node, no ticket and no provenance entry, so the writer has no commit
+# or link for it either.
+BY_REPO_ONLY_REPOSITORY = "docs-site"
+
+
+def _by_repo_only_document() -> dict:
+    return {
+        "repository": BY_REPO_ONLY_REPOSITORY,
+        "commit": None,
+        "base_url": None,
+        "depends_on": [],
+        "depended_on_by": [],
+        "extra": {},
+    }
+
+
+def _write_relationships(root: Path, by_repo_only: bool = False) -> None:
     edges = relationship_edges()
     _write(
         root,
@@ -517,16 +631,22 @@ def _write_relationships(root: Path) -> None:
     _write(root, f"{RELATIONSHIPS}/kinds.json", _sorted_json(kinds_document(edges)))
     for repo, document in by_repo_documents(edges).items():
         _write(root, f"{BY_REPO}/{repo}.json", _sorted_json(document))
+    if by_repo_only:
+        _write(
+            root,
+            f"{BY_REPO}/{BY_REPO_ONLY_REPOSITORY}.json",
+            _sorted_json(_by_repo_only_document()),
+        )
 
 
 # --- The query index (#457) -------------------------------------------------------
 
 
-def _ticket_rows() -> list[tuple[str, str, str, int, int]]:
+def _ticket_rows(file_tickets: dict) -> list[tuple[str, str, str, int, int]]:
     """(repo, path, ticket, count, landed); a ticket landed in a file is not also
     proposed there, as `store_index._ticket_rows` keeps it."""
     rows = []
-    for repo, paths in FILE_TICKETS_DATA.items():
+    for repo, paths in file_tickets.items():
         for path, entry in paths.items():
             seen: set[str] = set()
             for section, landed in (("tickets", 1), ("proposed", 0)):
@@ -537,31 +657,86 @@ def _ticket_rows() -> list[tuple[str, str, str, int, int]]:
     return rows
 
 
-def _index_rows(graph: dict) -> dict[str, list[tuple]]:
+def _staged(node: dict) -> dict:
+    """A node as the index's staging table stores it, for the values this fixture
+    writes: a numeric id becomes its text, a missing repository "", and a community
+    written as digits an integer (SQLite column affinity)."""
+    community = node.get("community")
+    return {
+        **node,
+        "id": str(node["id"]),
+        "repo": node.get("repo") or "",
+        "community": int(community) if isinstance(community, str) else community,
+    }
+
+
+def _label(node: dict) -> str | None:
+    """`store_index._text`: a label that is not a string is stored as its text."""
+    return None if node.get("label") is None else str(node["label"])
+
+
+def _node_kind(node: dict) -> str:
+    raw: str = (node.get("metadata") or {}).get("kind", "")
+    return LEGACY_KINDS.get(raw, raw)
+
+
+def _survivor_key(node: dict) -> tuple:
+    """`store_index._fill`'s order for a repeated id; None sorts first, as NULL does.
+    Every fixture node has a url and every copy a community, so only the label
+    can be NULL here."""
+    label = _label(node)
+    return (
+        node["repo"],
+        node.get("source_file") or "",
+        _node_kind(node),
+        (0, "") if label is None else (1, label),
+        node.get("url") or "",
+        node.get("community") or 0,
+    )
+
+
+def _index_rows(graph: dict, file_tickets: dict) -> dict[str, list[tuple]]:
     """Every final table's rows, keyed and ordered as `store_index._fill` orders
     them: each table sorted on its content, so keys never follow input order."""
-    tickets = _ticket_rows()
-    nodes = graph["nodes"]
-    repos = sorted({n["repo"] for n in nodes} | {row[0] for row in tickets})
-    repo_k = {name: k for k, name in enumerate(repos, 1)}
+    tickets = _ticket_rows(file_tickets)
+    nodes = [_staged(n) for n in graph["nodes"]]
+    links = [
+        {**link, "source": str(link["source"]), "target": str(link["target"])}
+        for link in graph["links"]
+    ]
+    # The empty name is not listed (library `_fill` at d94d33f): a file of a node with
+    # no repository has a NULL `repo`, and NULL sorts first in `ORDER BY r.k`.
+    repos = sorted(({n["repo"] for n in nodes} | {row[0] for row in tickets}) - {""})
+    repo_k: dict[str, int | None] = {name: k for k, name in enumerate(repos, 1)}
+    repo_k[""] = None
     file_pairs = {(n["repo"], n.get("source_file") or "") for n in nodes}
     file_pairs |= {(row[0], row[1]) for row in tickets}
-    files = sorted(file_pairs, key=lambda pair: (repo_k[pair[0]], pair[1]))
+
+    def file_order(pair: tuple[str, str]) -> tuple:
+        k = repo_k[pair[0]]
+        return ((0, 0) if k is None else (1, k), pair[1])
+
+    files = sorted(file_pairs, key=file_order)
     file_k = {pair: k for k, pair in enumerate(files, 1)}
-    relations = sorted({link["relation"] for link in graph["links"]})
+    relations = sorted({link["relation"] for link in links})
     relation_k = {name: k for k, name in enumerate(relations, 1)}
-    ordered = sorted(nodes, key=lambda n: n["id"])
+    survivors: dict[str, dict] = {}
+    for n in nodes:
+        held = survivors.get(n["id"])
+        if held is None or _survivor_key(n) < _survivor_key(held):
+            survivors[n["id"]] = n
+    ordered = sorted(survivors.values(), key=lambda n: n["id"])
     node_k = {n["id"]: k for k, n in enumerate(ordered, 1)}
     return {
-        "repos": [(repo_k[name], name) for name in repos],
+        "repos": [(k, name) for k, name in enumerate(repos, 1)],
         "files": [(file_k[pair], repo_k[pair[0]], pair[1]) for pair in files],
         "relations": [(relation_k[name], name) for name in relations],
         "nodes": [
             (
                 node_k[n["id"]],
                 n["id"],
-                n.get("label"),
-                (n.get("metadata") or {}).get("kind", ""),
+                _label(n),
+                _node_kind(n),
                 file_k[(n["repo"], n.get("source_file") or "")],
                 n.get("url"),
                 n.get("community"),
@@ -571,7 +746,7 @@ def _index_rows(graph: dict) -> dict[str, list[tuple]]:
         "edges": sorted(
             {
                 (node_k[link["source"]], relation_k[link["relation"]], node_k[link["target"]])
-                for link in graph["links"]
+                for link in links
             }
         ),
         "tickets": sorted(
@@ -591,7 +766,7 @@ _INSERTS = {
 }
 
 
-def _build_index(path: Path, graph: dict, meta: dict[str, str]) -> None:
+def _build_index(path: Path, graph: dict, file_tickets: dict, meta: dict[str, str]) -> None:
     """The index, with the pragmas and statement order `store_index` uses for
     byte-identical output: fixed page size, no journal, FTS optimised, VACUUM last."""
     path.unlink(missing_ok=True)
@@ -602,7 +777,7 @@ def _build_index(path: Path, graph: dict, meta: dict[str, str]) -> None:
         connection.execute("PRAGMA synchronous=OFF")
         connection.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
         connection.execute("BEGIN")
-        for table, rows in _index_rows(graph).items():
+        for table, rows in _index_rows(graph, file_tickets).items():
             connection.executemany(_INSERTS[table], rows)
         connection.execute(
             "INSERT INTO labels(rowid, label) SELECT k, label FROM nodes"
@@ -616,7 +791,7 @@ def _build_index(path: Path, graph: dict, meta: dict[str, str]) -> None:
         connection.close()
 
 
-def _write_index(root: Path, graph: dict, mode: str) -> None:
+def _write_index(root: Path, graph: dict, file_tickets: dict, mode: str) -> None:
     if mode == "none":
         return
     meta = {
@@ -628,7 +803,7 @@ def _write_index(root: Path, graph: dict, mode: str) -> None:
     plain = root / INDEX_PLAIN
     plain.parent.mkdir(parents=True, exist_ok=True)
     building = plain.with_name(plain.name + ".building")
-    _build_index(building, graph, meta)
+    _build_index(building, graph, file_tickets, meta)
     if mode == "plain":
         os.replace(building, plain)
         return
@@ -771,6 +946,8 @@ def build(
     index: str = "gz",
     manifest_minor: int = 0,
     extra: dict | None = None,
+    ticket_only: bool = False,
+    by_repo_only: bool = False,
 ) -> Path:
     """Write the complete synthetic store at `root` and return it.
 
@@ -779,8 +956,10 @@ def build(
     the graph). `manifest_minor` sets the manifest's minor format version, and
     `extra` maps layer names a newer library would add to their manifest entries,
     merged into `layers` - together they make the newer-minor manifest a reader
-    must still load. The manifest is written last, so its digests describe the
-    files as they finally are.
+    must still load. `ticket_only` adds a repository that only the ticket layer
+    names (DESIGN.md 6.4), and `by_repo_only` one that only a `by-repo` file names
+    (DESIGN.md 5.6). The manifest is written last, so its digests describe
+    the files as they finally are.
     """
     if index not in INDEX_MODES:
         raise ValueError(f"index must be one of {INDEX_MODES}, not {index!r}")
@@ -795,7 +974,8 @@ def build(
     }
     _write(root, PROVENANCE, _library_json({"repositories": provenance}))
     _write(root, TELEMETRY, _library_json({"measurements": dict(sorted(TELEMETRY_DATA.items()))}))
-    _write(root, FILE_TICKETS, _gzip_json(FILE_TICKETS_DATA))
+    file_tickets = {**FILE_TICKETS_DATA, **(TICKET_ONLY_DATA if ticket_only else {})}
+    _write(root, FILE_TICKETS, _gzip_json(file_tickets))
     _write(root, TICKET_DESCRIPTIONS, _gzip_json(TICKET_DESCRIPTIONS_DATA))
     _write(
         root,
@@ -809,8 +989,8 @@ def build(
         _write(root, rel, _library_json({**entries, "_metadata": _prose_metadata(prose)}))
     _write(root, EXTRA_LAYERS_CONFIG, _library_json(EXTRA_LAYERS_DECLARED))
     _write(root, FAQ, _library_json(FAQ_DATA))
-    _write_relationships(root)
-    _write_index(root, graph, index)
+    _write_relationships(root, by_repo_only)
+    _write_index(root, graph, file_tickets, index)
 
     _write(root, MANIFEST, _sorted_json(manifest_document(root, manifest_minor, extra or {})))
     return root

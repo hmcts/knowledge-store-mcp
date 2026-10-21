@@ -1,10 +1,15 @@
 """Open the query index read-only (spec, Start-up step 3).
 
 The committed `store.sqlite.gz` cannot be opened by SQLite, so it is decompressed once into
-`<cache_home>/knowledge-store/<store.id>/<sha256 of the archive>.sqlite`. That
-cache is the server's only write: it is never inside the store, an entry is
-written to a temp file in the same directory and renamed into place, so no
-partial entry is ever opened, and a failure to write it falls back to the graph.
+`<cache_home>/knowledge-store/<store.id>/<sha256 of the archive>.sqlite`, beside
+`<that name>.sha256`, the sha256 of the decompressed bytes. That cache is the
+server's only write: it is never inside the store, each file is written to a temp
+file in the same directory and renamed into place, so no partial entry is ever
+opened, and a failure to write it falls back to the graph.
+
+An entry is checked against its `.sha256` before it is first opened in a process,
+so damage on disk is caught whatever SQLite would make of it: the entry is
+written again.
 
 The archive wins whenever it exists: the manifest's index digest describes it.
 A plain `store.sqlite` is a local, gitignored build that goes stale after a pull,
@@ -52,6 +57,14 @@ class IndexTooLarge(OSError):
     def __init__(self, cap: int):
         super().__init__(f"the index archive decompresses to more than {cap} bytes")
 
+
+# The entries whose bytes matched their `.sha256` in this process, by (path, size,
+# mtime_ns). Checking costs one read and hash of the whole index per process
+# start; reopening an entry unchanged since it was checked costs a stat.
+_VERIFIED: set[tuple[str, int, int]] = set()
+
+# What a temp file's name holds, for an entry and for its digest.
+_TEMP_MARKERS = (".sqlite.tmp-", ".sqlite.sha256.tmp-")
 
 # `store.id` becomes one directory name, so it must be one plain path component.
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -117,12 +130,14 @@ def open_index(
     try:
         plain = contained(root, INDEX_PLAIN)
         archive = contained(root, INDEX_ARCHIVE)
-    except OutsideStore as error:
-        return Fallback(f"the index is outside the store: {error}")
+    except OutsideStore:
+        return Fallback(
+            f"the index is outside the store ({INDEX_ARCHIVE.as_posix()} or {INDEX_PLAIN.name})"
+        )
     if not archive.is_file():
         if plain.is_file():
             # Not immutable: a rebuild may rewrite this file while the server runs.
-            return _connect(plain, immutable=False)
+            return _connect(plain, INDEX_PLAIN.as_posix(), immutable=False)
         return Fallback(f"no index in the store ({INDEX_ARCHIVE.as_posix()} or {INDEX_PLAIN.name})")
 
     if not _SAFE_ID.fullmatch(manifest.store_id):
@@ -130,7 +145,12 @@ def open_index(
     directory = cache_home / "knowledge-store" / manifest.store_id
     resolved = directory.resolve()
     if resolved == root or root in resolved.parents:
-        return Fallback(f"the index cache {directory} would be inside the store")
+        return Fallback("the index cache directory would be inside the store")
+    return _open_cached(archive, directory, max_bytes)
+
+
+def _open_cached(archive: Path, directory: Path, max_bytes: int) -> IndexHandle | Fallback:
+    """The archive's cache entry in `directory`, written if need be, opened."""
     result: IndexHandle | Fallback = Fallback("unreachable")
     # Twice at most. An entry that will not open was either left bad by a crash or
     # removed by a peer serving another archive under this store id, after our
@@ -142,21 +162,33 @@ def open_index(
         except IndexTooLarge as error:
             return Fallback(str(error))
         except (OSError, EOFError, zlib.error) as error:
-            return Fallback(f"the index cache could not be written: {error}")
+            return Fallback(f"the index cache could not be written: {_reason(error)}")
         # Immutable is safe here: an entry is named by its content, appears only by
         # an atomic rename, and is never written again. Skipping SQLite's locking
         # also means a peer removing the entry cannot disturb an open handle.
-        result = _connect(entry, immutable=True, archive_sha256=entry.stem)
+        result = _connect(entry, "the cached index", immutable=True, archive_sha256=entry.stem)
         if isinstance(result, IndexHandle):
             return result
         if isinstance(result, _UnreadSchema):
             # The entry is a whole copy of the archive: keep it, and fall back now.
             return result
         try:
-            entry.unlink(missing_ok=True)
+            _discard(entry)
         except OSError as error:
-            return Fallback(f"{result.reason}; the bad cache entry could not be removed: {error}")
+            return Fallback(
+                f"{result.reason}; the bad cache entry could not be removed: {_reason(error)}"
+            )
     return result
+
+
+def _reason(error: BaseException) -> str:
+    """Why a cache write or removal failed, without the filename an `OSError` names:
+    its `strerror`, or what kind of failure it was."""
+    if isinstance(error, (EOFError, zlib.error, gzip.BadGzipFile)):
+        return "the archive is damaged"
+    if isinstance(error, OSError) and error.strerror:
+        return error.strerror
+    return type(error).__name__
 
 
 class _HashingReader:
@@ -186,40 +218,105 @@ def _sha256(path: Path) -> str:
 
 
 def _cached(archive: Path, directory: Path, max_bytes: int) -> Path:
-    """The cache entry for `archive`, decompressing it only when absent."""
+    """The cache entry for `archive`, decompressing it when it is absent or does
+    not match its digest."""
     entry = directory / f"{_sha256(archive)}.sqlite"
-    if not entry.is_file():
-        directory.mkdir(parents=True, exist_ok=True)
-        # The pid says whose file it is; the random suffix keeps two threads of
-        # one process, which share a pid, from writing the same temp file.
-        fd, name = tempfile.mkstemp(dir=directory, prefix=f"{entry.name}.tmp-{os.getpid()}-")
-        temp = Path(name)
-        try:
-            with os.fdopen(fd, "wb") as out, archive.open("rb") as raw:
-                reader = _HashingReader(raw)
-                with gzip.GzipFile(fileobj=reader, mode="rb") as stream:
-                    _copy_capped(stream, out, max_bytes)
-                # The bytes reach the disk before the name does, so a crash cannot
-                # leave a whole-looking entry over a short file.
-                out.flush()
-                os.fsync(out.fileno())
-            entry = directory / f"{reader.sha256.hexdigest()}.sqlite"
-            os.replace(temp, entry)
-            _fsync_directory(directory)
-        except BaseException:
-            temp.unlink(missing_ok=True)
-            raise
+    if not _verified(entry):
+        _discard(entry)
+        entry = _write(archive, directory, entry, max_bytes)
     _remove_others(directory, entry)
     return entry
 
 
-def _copy_capped(source, out, max_bytes: int) -> None:
+def _digest_path(entry: Path) -> Path:
+    return entry.with_name(entry.name + ".sha256")
+
+
+def _stat_key(path: Path) -> tuple[str, int, int]:
+    info = path.stat()
+    return (str(path), info.st_size, info.st_mtime_ns)
+
+
+def _verified(entry: Path) -> bool:
+    """Whether `entry` holds the bytes its `.sha256` names. A missing or unreadable
+    entry or digest is not verified."""
+    try:
+        key = _stat_key(entry)
+        if key in _VERIFIED:
+            return True
+        expected = _digest_path(entry).read_text(encoding="ascii").strip()
+        if _sha256(entry) != expected:
+            return False
+    except (OSError, ValueError):
+        return False
+    _VERIFIED.add(key)
+    return True
+
+
+def _discard(entry: Path) -> None:
+    """Remove an entry and its digest; either may already be gone."""
+    entry.unlink(missing_ok=True)
+    _digest_path(entry).unlink(missing_ok=True)
+
+
+def _write(archive: Path, directory: Path, entry: Path, max_bytes: int) -> Path:
+    """Decompress `archive` into `directory`, named by the archive bytes actually
+    read, with its digest. The digest is renamed into place first, so an entry is
+    never visible without one."""
+    directory.mkdir(parents=True, exist_ok=True)
+    # The pid says whose file it is; the random suffix keeps two threads of one
+    # process, which share a pid, from writing the same temp file.
+    fd, name = tempfile.mkstemp(dir=directory, prefix=f"{entry.name}.tmp-{os.getpid()}-")
+    temp = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as out, archive.open("rb") as raw:
+            reader = _HashingReader(raw)
+            with gzip.GzipFile(fileobj=reader, mode="rb") as stream:
+                content = _copy_capped(stream, out, max_bytes)
+            # The bytes reach the disk before the name does, so a crash cannot
+            # leave a whole-looking entry over a short file.
+            out.flush()
+            os.fsync(out.fileno())
+        entry = directory / f"{reader.sha256.hexdigest()}.sqlite"
+        _write_digest(directory, _digest_path(entry), content)
+        os.replace(temp, entry)
+        _fsync_directory(directory)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+    try:
+        _VERIFIED.add(_stat_key(entry))
+    except OSError:
+        # A peer already removed it: opening it fails, and the caller retries.
+        pass
+    return entry
+
+
+def _write_digest(directory: Path, digest: Path, content: str) -> None:
+    fd, name = tempfile.mkstemp(dir=directory, prefix=f"{digest.name}.tmp-{os.getpid()}-")
+    temp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as out:
+            out.write(content + "\n")
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temp, digest)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+
+
+def _copy_capped(source, out, max_bytes: int) -> str:
+    """Copy at most `max_bytes`; the sha256 of what was copied."""
+    digest = hashlib.sha256()
     written = 0
     while chunk := source.read(CHUNK):
         written += len(chunk)
         if written > max_bytes:
             raise IndexTooLarge(max_bytes)
         out.write(chunk)
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _fsync_directory(directory: Path) -> None:
@@ -237,16 +334,20 @@ def _fsync_directory(directory: Path) -> None:
 
 
 def _remove_others(directory: Path, keep: Path) -> None:
-    """Remove this store id's other entries, and temp files a crashed writer left.
-    A young temp file may be a live peer's write and is kept; a file a peer has
-    already removed is not an error."""
+    """Remove this store id's other entries and their digests, and temp files a
+    crashed writer left. A young temp file may be a live peer's write and is kept;
+    a file a peer has already removed is not an error."""
     stale_before = time.time() - STALE_TEMP_SECONDS
+    kept = {keep.name, _digest_path(keep).name}
     for other in directory.iterdir():
         try:
-            if other.name.endswith(".sqlite"):
-                remove = other.name != keep.name
+            if other.name.endswith((".sqlite", ".sqlite.sha256")):
+                remove = other.name not in kept
             else:
-                remove = ".sqlite.tmp-" in other.name and other.stat().st_mtime < stale_before
+                remove = (
+                    any(marker in other.name for marker in _TEMP_MARKERS)
+                    and other.stat().st_mtime < stale_before
+                )
             if remove:
                 other.unlink()
         except OSError:
@@ -254,19 +355,21 @@ def _remove_others(directory: Path, keep: Path) -> None:
 
 
 def _connect(
-    path: Path, *, immutable: bool, archive_sha256: str | None = None
+    path: Path, described: str, *, immutable: bool, archive_sha256: str | None = None
 ) -> IndexHandle | Fallback:
+    """`described` names the file in a reason: store-relative, or "the cached
+    index", never its path on this host."""
     uri = path.as_uri() + "?mode=ro" + ("&immutable=1" if immutable else "")
     try:
         connection = sqlite3.connect(uri, uri=True)
     except sqlite3.Error as error:
-        return Fallback(f"the index {path} could not be opened: {error}")
+        return Fallback(f"{described} could not be opened: {error}")
     try:
         connection.execute("PRAGMA query_only=1")
         row = connection.execute("SELECT value FROM meta WHERE key = 'index_schema'").fetchone()
     except sqlite3.Error as error:
         connection.close()
-        return Fallback(f"the index {path} could not be read: {error}")
+        return Fallback(f"{described} could not be read: {error}")
     schema = row[0] if row else None
     if _major(schema) != SCHEMA_MAJOR:
         connection.close()

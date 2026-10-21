@@ -135,8 +135,9 @@ class AbsenceTest(StoreTestCase):
 
     def test_a_layer_name_the_server_does_not_know_is_refused(self):
         """Catches: a name neither known nor declared reaching server prose."""
+        loaded = self.open()
         with self.assertRaises(ValueError):
-            results.searched(self.open(), ["graph", "nonesuch"])
+            results.searched(loaded, ["graph", "nonesuch"])
 
     def test_a_declared_answers_layer_can_be_named(self):
         """Catches: an answers tool unable to say its extra layer was searched
@@ -261,6 +262,49 @@ class RepositoryTest(StoreTestCase):
             results.repository(self.open(), "legacy-network"),
             NotHeld("legacy-network", referenced_by=("ledger-service", "payments-api")),
         )
+
+    def test_the_stores_own_organisation_is_matched_ignoring_case(self):
+        """Catches: a case-sensitive organisation match, so a Terraform source
+        written `Example-Org/...` - which GitHub and the library's resolver both
+        treat as the store's own organisation - reads as not in the estate."""
+        loaded = self.open()
+        registry = loaded.root / RELATIONSHIPS / "repository-dependencies.json"
+        detail = {"references": 2, "referenced_by": ["ledger-service"]}
+        registry.write_text(
+            json.dumps(
+                {
+                    "unresolved_targets_outside_estate": {
+                        "terraform_module": {"Example-Org/vpc": detail}
+                    }
+                }
+            )
+        )
+        self.assertEqual(
+            results.repository(loaded, "vpc"), NotHeld("vpc", referenced_by=("ledger-service",))
+        )
+        self.assertEqual(
+            results.outside_estate(loaded, "vpc"),
+            (results.Outside("terraform_module", "Example-Org/vpc", 2, ("ledger-service",)),),
+        )
+
+    def test_the_organisation_is_compared_as_the_writer_compares_it(self):
+        """Catches: comparing organisations with `casefold`, where the library's
+        resolver uses `lower`: `Straße` casefolds to `strasse` but lowers to
+        `straße`, so the writer treats `Straße/vpc` as another organisation's
+        repository and a reader must too."""
+
+        def edit(document):
+            document["store"]["github_org"] = "strasse"
+
+        loaded = self.open(edit=edit)
+        registry = loaded.root / RELATIONSHIPS / "repository-dependencies.json"
+        detail = {"references": 1, "referenced_by": ["ledger-service"]}
+        registry.write_text(
+            json.dumps(
+                {"unresolved_targets_outside_estate": {"terraform_module": {"Straße/vpc": detail}}}
+            )
+        )
+        self.assertEqual(results.outside_estate(loaded, "vpc"), ())
 
     def test_without_the_relationships_layer_a_target_is_not_in_the_estate(self):
         """Catches: reading the relationships files when the manifest says the layer
@@ -473,6 +517,27 @@ class RealResponseTest(StoreTestCase):
         self.assertEqual(first(size - 1)["items"], page["items"][:-1])
 
 
+class HostPathTest(unittest.TestCase):
+    def test_every_form_of_absolute_path_is_replaced_whole(self):
+        """Catches: a scrub that stops at the first space of a quoted path, misses a
+        path straight after a colon, or leaves the pieces of an unquoted path that
+        follow a space; and one that eats a URL or a store-relative path."""
+        cases = {
+            "denied: '/tmp/a b/Application Support/user/x'": "denied: '<host path>'",
+            "denied: '/tmp/a b/Application Support'": "denied: '<host path>'",
+            'opened: "/var/a b/c"': 'opened: "<host path>"',
+            "error:/abs/path/x here": "error:<host path> here",
+            "see /x/Application Support/secret-user/y now": "see <host path> now",
+            "file:///private/x y/z": "<host path>",
+            "https://github.com/example-org/a kept": "https://github.com/example-org/a kept",
+            "knowledge/index/store.sqlite.gz kept": "knowledge/index/store.sqlite.gz kept",
+            "1/2 and a/b": "1/2 and a/b",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(results.without_host_paths(text), expected)
+
+
 class CursorTest(unittest.TestCase):
     def setUp(self):
         # Page 1 is 90 bytes with one item and 96 with two, so at 92 it holds one.
@@ -500,8 +565,9 @@ class CursorTest(unittest.TestCase):
         """Catches: a cursor from one query or cap used on another, where it points
         at different items."""
         cursor = whole(self.items, 92)[0]["next_page"]
+        others = strings(3, 3, 4)
         with self.assertRaises(CursorRefused):
-            results.page(strings(3, 3, 4), 92, cursor, digest="d1", key=str, frame=FRAME)
+            results.page(others, 92, cursor, digest="d1", key=str, frame=FRAME)
         with self.assertRaises(CursorRefused):
             results.page(self.items, 93, cursor, digest="d1", key=str, frame=FRAME)
 

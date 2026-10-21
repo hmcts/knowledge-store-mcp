@@ -103,12 +103,15 @@ def _listed_clones(path: Path) -> tuple[list[Path], list[str]]:
         if not entry or entry.startswith("#"):
             continue
         candidate = Path(entry)
+        # The locations file is the operator's own configuration, and naming a
+        # directory to serve is its purpose: each clone is then read only through
+        # `contained`, which resolves before it compares.
         if not candidate.is_absolute():
             skipped.append(f"{entry} (not absolute)")
-        elif not candidate.is_dir():
+        elif not candidate.is_dir():  # NOSONAR(S6549) the operator's own locations file
             skipped.append(f"{entry} (not a directory)")
         else:
-            clones.append(candidate.resolve())
+            clones.append(candidate.resolve())  # NOSONAR(S6549) the operator's own locations file
     return clones, skipped
 
 
@@ -140,28 +143,44 @@ def resolve(args: argparse.Namespace, env: Mapping[str, str], home: Path) -> Res
 
     store_id = getattr(args, "store_id", None)
     if store_id:
-        listing = locations_file(home)
-        found, skipped = _by_store_id(store_id, listing)
+        found, why = _from_listing(store_id, home)
         if found is not None:
             return Resolved(found, "--store-id")
-        note = f"no clone with that store.id listed in {listing}"
-        if skipped:
-            note += f"; {len(skipped)} entries skipped: " + ", ".join(skipped)
-        checked.append(f"--store-id {store_id!r} ({note})")
+        checked.append(why)
     else:
         checked.append("--store-id (not given)")
 
     plugin_root = env.get("CLAUDE_PLUGIN_ROOT")
     if plugin_root:
-        root = Path(plugin_root).resolve()
-        held = _store_id_of(root)
-        if _has_manifest(root) and (not store_id or held == store_id):
-            return Resolved(root, "CLAUDE_PLUGIN_ROOT")
-        if _has_manifest(root):
-            checked.append(f"CLAUDE_PLUGIN_ROOT holds store {held!r}, not {store_id!r}")
-        else:
-            checked.append(f"CLAUDE_PLUGIN_ROOT ({root} holds no {MANIFEST.as_posix()})")
+        found, why = _from_plugin_root(plugin_root, store_id)
+        if found is not None:
+            return Resolved(found, "CLAUDE_PLUGIN_ROOT")
+        checked.append(why)
     else:
         checked.append("CLAUDE_PLUGIN_ROOT (not set)")
 
     raise NotFound(checked)
+
+
+def _from_listing(store_id: str, home: Path) -> tuple[Path | None, str]:
+    """The listed clone holding `store_id`, or None and what was checked."""
+    listing = locations_file(home)
+    found, skipped = _by_store_id(store_id, listing)
+    if found is not None:
+        return found, ""
+    note = f"no clone with that store.id listed in {listing}"
+    if skipped:
+        note += f"; {len(skipped)} entries skipped: " + ", ".join(skipped)
+    return None, f"--store-id {store_id!r} ({note})"
+
+
+def _from_plugin_root(plugin_root: str, store_id: str | None) -> tuple[Path | None, str]:
+    """The plugin root when it holds a store, and the one asked for if any; or None
+    and what was checked."""
+    root = Path(plugin_root).resolve()
+    held = _store_id_of(root)
+    if _has_manifest(root) and (not store_id or held == store_id):
+        return root, ""
+    if _has_manifest(root):
+        return None, f"CLAUDE_PLUGIN_ROOT holds store {held!r}, not {store_id!r}"
+    return None, f"CLAUDE_PLUGIN_ROOT ({root} holds no {MANIFEST.as_posix()})"

@@ -247,7 +247,8 @@ class IndexTest(FixtureStoreCase):
     def test_index_opens_with_fts5_and_populated_columns(self):
         """Catches: an index built without the FTS5 table, or with `nodes.community`
         and `tickets.landed` left empty - each silently turns a later search or
-        landed/proposed test into a test of nothing. DESIGN.md section 4."""
+        landed/proposed test into a test of nothing; or `repos` listing the empty
+        name, which the library's index no longer does. DESIGN.md section 4."""
         db = self._connect(self.root)
         self.assertEqual(
             db.execute("SELECT value FROM meta WHERE key = 'index_schema'").fetchone(), ("1.0",)
@@ -262,7 +263,7 @@ class IndexTest(FixtureStoreCase):
             db.execute(
                 "SELECT community, count(*) FROM nodes GROUP BY community ORDER BY community"
             ).fetchall(),
-            [(None, 1), (0, 19), (1, 21)],
+            [(None, 2), (0, 20), (1, 24)],
         )
         self.assertEqual(
             db.execute(
@@ -275,6 +276,53 @@ class IndexTest(FixtureStoreCase):
         self.assertEqual(
             [name for (name,) in db.execute("SELECT name FROM repos ORDER BY k")],
             TWELVE_REPOSITORIES,
+        )
+        # DESIGN.md 3.5: the corpus page names no repository, so its file's `repo` is
+        # NULL, and NULL sorts first in `files` (library `_fill` at d94d33f).
+        self.assertEqual(
+            db.execute("SELECT k, repo, path FROM files WHERE repo IS NULL").fetchall(),
+            [(1, None, "knowledge/glossary/payments.md")],
+        )
+        self.assertEqual(
+            db.execute(
+                "SELECT f.repo FROM nodes n JOIN files f ON f.k = n.file WHERE n.id = ?",
+                ("glossary::payments",),
+            ).fetchone(),
+            (None,),
+        )
+
+    def test_the_nodes_the_index_normalises(self):
+        """Catches: the fixture losing a node a fallback reader must build as the
+        index does - a legacy kind, a label that is not a string, or a repeated
+        id whose surviving copy is not the first listed. DESIGN.md 3.4."""
+        self.assertInDesign("`gherkin_scenario`", "`chart-web::value:replicas`", "`FormField`")
+        graph = _json(self.root, "graphify-out/graph.json.gz")
+        listed = [n for n in graph["nodes"] if n["id"] == "ui-components::FormFieldComponent"]
+        self.assertEqual(
+            [n["label"] for n in listed],
+            ["FormFieldComponent", "FormField", "FormFieldComponent (legacy)"],
+        )
+        by_id = {n["id"]: n for n in graph["nodes"]}
+        self.assertEqual(
+            by_id["accounts-web::scenario:pay-new-card"]["metadata"]["kind"], "gherkin_scenario"
+        )
+        self.assertEqual(by_id["chart-web::value:replicas"]["label"], 3)
+        db = self._connect(self.root)
+        rows = db.execute(
+            "SELECT id, label, kind FROM nodes WHERE id IN (?, ?, ?) ORDER BY id",
+            (
+                "accounts-web::scenario:pay-new-card",
+                "chart-web::value:replicas",
+                "ui-components::FormFieldComponent",
+            ),
+        ).fetchall()
+        self.assertEqual(
+            rows,
+            [
+                ("accounts-web::scenario:pay-new-card", "Pay with a new card", "scenario"),
+                ("chart-web::value:replicas", "3", ""),
+                ("ui-components::FormFieldComponent", "FormField", ""),
+            ],
         )
 
     def test_index_modes(self):
@@ -312,7 +360,8 @@ class TrapTest(FixtureStoreCase):
         self.assertInDesign("`payment-api`", "`Ledger-Service`", '["payment-apis", "payments-api"]')
         held = set(_json(self.root, "knowledge/provenance.json")["repositories"])
         graph = _json(self.root, "graphify-out/graph.json.gz")
-        self.assertEqual(held, {node["repo"] for node in graph["nodes"]})
+        # The glossary page has no repository (DESIGN.md 3.5).
+        self.assertEqual(held, {node["repo"] for node in graph["nodes"] if "repo" in node})
         self.assertLessEqual({"payments-api", "payment-apis", "ledger-service"}, held)
         self.assertNotIn("payment-api", held)
         self.assertNotIn("Ledger-Service", held)
@@ -322,10 +371,13 @@ class TrapTest(FixtureStoreCase):
         its 2-cycle, a pinned URL, or a community summary. DESIGN.md section 3."""
         graph = _json(self.root, "graphify-out/graph.json.gz")
         nodes = {node["id"]: node for node in graph["nodes"]}
-        self.assertEqual(len(nodes), 41)
+        self.assertEqual(len(graph["nodes"]), 48)
+        self.assertEqual(len(nodes), 46)
         labelled = [n for n in nodes.values() if "label" in n]
-        self.assertEqual(len(labelled), 40)
-        for node in labelled:
+        self.assertEqual(len(labelled), 45)
+        pinned = [n for n in labelled if "url" in n]
+        self.assertEqual(len(pinned), 44)
+        for node in pinned:
             self.assertRegex(
                 node["url"], r"^https://github\.com/example-org/[a-z-]+/blob/[0-9a-f]{40}/.+#L\d+$"
             )
@@ -376,16 +428,71 @@ class TrapTest(FixtureStoreCase):
         self.assertEqual(gateway["references"], 4)
         self.assertEqual(len(gateway["examples"]), 3)
         dependencies = _json(self.root, "knowledge/relationships/repository-dependencies.json")
-        self.assertInDesign("legacy-network")
+        self.assertInDesign(
+            '"example-org/legacy-network"', '"other-org/legacy-network"', '"legacy-network"'
+        )
         self.assertEqual(
             dependencies["unresolved_targets_outside_estate"],
             {
+                "helm_chart": {
+                    "legacy-network": {"references": 1, "referenced_by": ["payments-api"]}
+                },
+                "maven_artifact": {},
+                "npm_package": {},
                 "terraform_module": {
-                    "legacy-network": {
+                    "example-org/legacy-network": {
                         "references": 3,
                         "referenced_by": ["ledger-service", "payments-api"],
-                    }
-                }
+                    },
+                    "other-org/legacy-network": {
+                        "references": 1,
+                        "referenced_by": ["audit-service"],
+                    },
+                },
+            },
+        )
+
+    def test_kinds_json_carries_the_writers_additive_keys(self):
+        """Catches: a fixture `kinds.json` missing what `relationships.build` writes
+        for every kind - `skipped` by reason and `notes` - or omitting a kind whose
+        counts are zero, so a reader written against the fixture fails on a real
+        store. DESIGN.md 5.5."""
+        kinds = _json(self.root, "knowledge/relationships/kinds.json")
+        self.assertEqual(
+            kinds,
+            {
+                "helm_chart": {
+                    "origin": "builtin",
+                    "edges": 2,
+                    "references": 2,
+                    "unresolved": 1,
+                    "skipped": {},
+                    "notes": {},
+                },
+                "maven_artifact": {
+                    "origin": "builtin",
+                    "edges": 6,
+                    "references": 6,
+                    "unresolved": 0,
+                    "skipped": {"self": 1},
+                    "notes": {},
+                },
+                "npm_package": {
+                    "origin": "builtin",
+                    "edges": 3,
+                    "references": 3,
+                    "unresolved": 0,
+                    "skipped": {},
+                    "notes": {},
+                },
+                "terraform_module": {
+                    "origin": "builtin",
+                    "edges": 7,
+                    "references": 20,
+                    "unresolved": 2,
+                    "skipped": {"local": 2},
+                    "notes": {},
+                },
             },
         )
 
@@ -402,18 +509,48 @@ class TrapTest(FixtureStoreCase):
 
     def test_an_unresolved_kind_with_no_edges_is_still_listed(self):
         """Catches: `kinds_document` assuming every kind with an unresolved target
-        also has an edge, and raising when a variant fixture has none."""
+        also has an edge, and raising when a variant fixture has none; or listing
+        only the kinds that met an edge, where the writer lists every registered
+        kind (DESIGN.md 5.5)."""
+        empty = kinds_document([])
         self.assertEqual(
-            kinds_document([]),
+            sorted(empty), ["helm_chart", "maven_artifact", "npm_package", "terraform_module"]
+        )
+        self.assertEqual(
+            empty["terraform_module"],
             {
-                "terraform_module": {
-                    "origin": "builtin",
-                    "edges": 0,
-                    "references": 0,
-                    "unresolved": 1,
-                }
+                "origin": "builtin",
+                "edges": 0,
+                "references": 0,
+                "unresolved": 2,
+                "skipped": {"local": 2},
+                "notes": {},
             },
         )
+
+    def test_a_repository_with_only_a_by_repo_file_is_opt_in(self):
+        """Catches: the by-repo-only repository missing from its option, or leaking
+        into another layer (a graph node, a ticket, provenance), which would make the
+        test of it pass through that layer instead. DESIGN.md 5.6."""
+        self.assertInDesign("`docs-site`")
+        root = build(Path(tempfile.mkdtemp(dir=self.root.parent)) / "s", by_repo_only=True)
+        document = _json(root, "knowledge/relationships/by-repo/docs-site.json")
+        self.assertEqual(
+            document,
+            {
+                "repository": "docs-site",
+                "commit": None,
+                "base_url": None,
+                "depends_on": [],
+                "depended_on_by": [],
+                "extra": {},
+            },
+        )
+        graph = _json(root, "graphify-out/graph.json.gz")
+        self.assertNotIn("docs-site", {n.get("repo") for n in graph["nodes"]})
+        self.assertNotIn("docs-site", _json(root, "knowledge/intent/file-tickets.json.gz"))
+        self.assertNotIn("docs-site", _json(root, "knowledge/provenance.json")["repositories"])
+        self.assertFalse((self.root / "knowledge/relationships/by-repo/docs-site.json").exists())
 
     def test_three_hop_chain_and_cycle(self):
         """Catches: a broken link in the chain or the cycle, which would let a

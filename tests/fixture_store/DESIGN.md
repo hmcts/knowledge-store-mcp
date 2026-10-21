@@ -36,8 +36,14 @@ checks that every trap is still in the store, by its literal value.
 | `shared-lib-java` | `b` | `2026-09-12T09:00:00+01:00` |
 | `ui-components` | `c` | `2026-10-07T15:30:00+01:00` |
 
-Every repository has graph nodes, so the index's `repos` table holds all twelve
-(`k` 1 to 12 in the order above), and every repository has a `by-repo` file.
+Every repository has graph nodes, and every repository has a `by-repo` file. The
+index's `repos` table holds the twelve, `k` 1 to 12 in the order above. One graph
+node has no repository (section 3.5); the library's index does not list the empty
+name for it (`feat/query-index` at d94d33f), and its file's `repo` is NULL. The
+graph read whole still holds `""` for that node. The empty name is not a
+repository: the server leaves it out of every list and count in both modes, so it
+reports an estate of twelve, and refuses a repository name that is empty after
+stripping.
 
 ## 2. Near misses
 
@@ -65,22 +71,26 @@ re-sorted by (similarity descending, name ascending).
 
 ### 3.1 Nodes
 
-41 nodes. 40 carry a `label`, a `source_file`, a `source_location` and a pinned
-`url` of the form `https://github.com/example-org/<repo>/blob/<sha>/<path>#L<line>`.
-`source_urls.linked` in telemetry is therefore 40.
+48 node entries, 46 distinct ids: one id is listed three times (section 3.4). 45
+ids carry a `label` and a `source_file`. 44 of those also carry a
+`source_location` and a pinned `url` of the form
+`https://github.com/example-org/<repo>/blob/<sha>/<path>#L<line>`; the 45th, the
+glossary page, belongs to no repository and has no url (section 3.5).
+`source_urls.linked` in telemetry is therefore 44.
 
-The 41st is the structural node `ledger-service::com.example.ledger`: no `label`,
+The 46th is the structural node `ledger-service::com.example.ledger`: no `label`,
 no `source_file`, no `url`, no `community` (library CLAUDE.md 6.4). A reader must
 not fail on it, and it is never a search hit: the index's FTS table holds only
 labelled nodes.
 
-Node ids are `<repo>::<local id>`. Two nodes carry kinds: `accounts-web::feature:pay`
-(`feature`) and `accounts-web::scenario:pay-saved-card` (`scenario`); every other
-node's kind is `""`.
+Node ids are `<repo>::<local id>`. Three nodes carry kinds:
+`accounts-web::feature:pay` (`feature`), `accounts-web::scenario:pay-saved-card`
+(`scenario`) and `accounts-web::scenario:pay-new-card` (`gherkin_scenario`, the
+legacy form of `scenario`: section 3.4). Every other node's kind is `""`.
 
 ### 3.2 Edges and the 2-cycle
 
-36 links, relations `calls`, `contains`, `imports` and `references`. The 2-cycle:
+37 links, relations `calls`, `contains`, `imports` and `references`. The 2-cycle:
 `payments-api::PaymentService` calls `payments-api::RefundHandler`, and
 `payments-api::RefundHandler` calls `payments-api::PaymentService`.
 
@@ -98,11 +108,48 @@ summary (`knowledge/summaries/communities.json`):
 
 | Id | Label | Members |
 |---|---|---|
-| `0` | Payments and the ledger | 19: every node of accounts-web, gateway-service, ledger-service (bar the structural node), payment-apis and payments-api |
-| `1` | Platform and delivery | 21: every node of audit-service, chart-web, infra-modules, notifications-service, reporting-worker, shared-lib-java and ui-components |
+| `0` | Payments and the ledger | 20: every node of accounts-web, gateway-service, ledger-service (bar the structural node), payment-apis and payments-api |
+| `1` | Platform and delivery | 24: every node of audit-service, chart-web, infra-modules, notifications-service, reporting-worker, shared-lib-java and ui-components |
 
 The summaries file carries the library's `_metadata` block, which is not a
 community.
+
+### 3.4 Nodes the index normalises
+
+A reader without the index must build each node as the library's index builder
+does (`store_index._node_rows` and `_fill`), or the two modes disagree. Three
+nodes test that:
+
+- **A legacy kind.** `accounts-web::scenario:pay-new-card` ("Pay with a new card")
+  is written with `metadata.kind` `gherkin_scenario`. The index stores `scenario`
+  (`kinds.node_kind`), so a `kind="scenario"` search finds it beside
+  `pay-saved-card`.
+- **A label that is not a string.** `chart-web::value:replicas` has the label `3`,
+  a JSON number. The index stores the text `"3"`, and a search for `3` finds it.
+- **A repeated id.** `ui-components::FormFieldComponent` is listed three times,
+  otherwise identical: first with the label `FormFieldComponent`, then, after
+  every other node, with `FormField` and with `FormFieldComponent (legacy)`.
+  The index keeps the copy first in `(repo, file, kind, label, url, community)`
+  order, whatever order the graph listed them in: `FormField`, the middle one.
+  A reader keeping the first listed copy or the last keeps the wrong one.
+
+### 3.5 Values the index converts
+
+Three more nodes are written as raw graph JSON, each with a value the index's
+staging tables convert (SQLite column affinity) or default. A reader without the
+index must store each as the index does:
+
+- **An id that is a number.** The node `7` ("Delivery retry policy",
+  notifications-service, community 1) is stored with the id `"7"`.
+  `notifications-service::EmailChannel` `references` it, written with the number
+  `7` as its target, and the index keeps that edge.
+- **A community written as text.** `notifications-service::SmsTemplate` has the
+  community `"1"`, stored as the integer `1`: it is a member of community 1.
+- **No repository.** `glossary::payments` ("Payments glossary",
+  `knowledge/glossary/payments.md`, a knowledge-corpus page) has no `repo`, no
+  `url` and no `community`. The index stores its file with a NULL `repo`, and
+  NULL sorts first, so that file is `files.k` 1; `repos` does not list `""`
+  (section 1).
 
 ## 4. Index
 
@@ -111,14 +158,18 @@ Built from the same graph and ticket layer with the schema in
 `1.0`, `meta.graph` is `graphify-out/graph.json.gz`, and `graph_sha256` and
 `file_tickets_sha256` are the 16-hex digests of those two files.
 
-- `repos` 12, `files` 40, `relations` 4, `nodes` 41, `edges` 36, `tickets` 5.
-- `nodes.community`: 19 rows `0`, 21 rows `1`, one `NULL`.
+- `repos` 12 (the twelve; not `""`), `files` 44, `relations` 4, `nodes` 46,
+  `edges` 37, `tickets` 5.
+- `nodes.community`: 20 rows `0`, 24 rows `1`, two `NULL` (the structural node and
+  the glossary page).
 - `tickets.landed`: `EX-201` is the only row with `0`.
-- FTS5 `labels` holds the 40 labels. `"RefundHandler"` matches one node,
+- FTS5 `labels` holds the 45 labels. `"RefundHandler"` matches one node,
   `payments-api::RefundHandler`.
 
 The index was checked against the library's own `store_index.build` over the same
-two inputs: every table's rows are identical, and so is the plain file.
+two inputs, run from a `git archive` of `feat/query-index` at d94d33f, with and
+without the section 6.4 option: the DDL copy matches, every table's rows are
+identical, and so is the plain file.
 
 ## 5. Relationships
 
@@ -181,11 +232,17 @@ Direct dependents (`depended_on_by`):
   reporting-worker);
 - depth 3: `accounts-web` (path ledger-service, payments-api, gateway-service,
   accounts-web) - the three-hop chain;
-- the cycle: `audit-service`'s dependent is `reporting-worker`, already on the
-  path ledger-service, reporting-worker, audit-service. It is reported once in
-  `cycles` and not followed.
+- the cycle: `audit-service`'s dependent is `reporting-worker`, already reached.
+  It is not followed, and `cycles` reports the loop once, as its repositories by
+  name: `[["audit-service", "reporting-worker"]]`.
 
 Five repositories in all; `accounts-web` has no dependents, so the walk ends.
+
+**`dependents("infra-modules", transitive=True)`** reaches all seven dependents
+at depth 1, so `audit-service` and `reporting-worker` are each reached on their own
+branch and no single path repeats either. The loop between them is still reported,
+`[["audit-service", "reporting-worker"]]`: cycles are the strongly connected
+components of the edges the walk read, not repeats along one path.
 
 ### 5.3 The oversize repository
 
@@ -196,15 +253,55 @@ cleanly over `depended_on_by`.
 
 ### 5.4 The target outside the estate
 
-`legacy-network` is a `terraform_module` target no clone holds, referenced 3
-times by two repositories:
+The writer lists `unresolved_targets_outside_estate` per kind, every kind
+included, and keys a target as its resolver does: a Terraform GitHub source the
+estate does not hold as `<org>/<repo>`, a chart no clone defines by its bare name.
+`legacy-network` is therefore three targets:
 
 ```json
-{"terraform_module": {"legacy-network": {"references": 3, "referenced_by": ["ledger-service", "payments-api"]}}}
+{"helm_chart": {"legacy-network": {"references": 1, "referenced_by": ["payments-api"]}},
+ "maven_artifact": {},
+ "npm_package": {},
+ "terraform_module": {
+   "example-org/legacy-network": {"references": 3, "referenced_by": ["ledger-service", "payments-api"]},
+   "other-org/legacy-network": {"references": 1, "referenced_by": ["audit-service"]}}}
 ```
 
 Asked about `legacy-network`, a reader answers "referenced but not held", naming
-both referrers - never "unknown", and never an empty list.
+`ledger-service` and `payments-api` - never "unknown", and never an empty list. The
+name matches the chart's key exactly, and `example-org/legacy-network` because
+`example-org` is the store's own organisation (`store.github_org`, compared
+ignoring case, as GitHub and the writer compare it). **The trap:**
+`other-org/legacy-network` is another organisation's repository, so a reader that
+matches on the part after the `/` alone adds `audit-service` to the referrers.
+Reported per kind, the answer is the chart entry and the `example-org` entry, each
+under its own kind and key; with `kind="helm_chart"`, the chart entry only.
+
+### 5.5 `kinds.json`
+
+As the writer writes it: every built-in kind, each with `origin`, `edges`,
+`references`, `unresolved` (the number of its targets outside the estate),
+`skipped` by reason and `notes`:
+
+| Kind | Edges | References | Unresolved | Skipped |
+|---|---|---|---|---|
+| helm_chart | 2 | 2 | 1 | `{}` |
+| maven_artifact | 6 | 6 | 0 | `{"self": 1}` |
+| npm_package | 3 | 3 | 0 | `{}` |
+| terraform_module | 7 | 20 | 2 | `{"local": 2}` |
+
+`notes` is `{}` for every kind: the writer notes only an unread Flux file, which
+depends on the machine that built the store.
+
+### 5.6 A repository only a `by-repo` file names (opt-in)
+
+`build(root, by_repo_only=True)` adds `by-repo/docs-site.json`: a clone the
+relationships writer saw, with both lists empty, `commit` and `base_url` null and
+`extra` empty. No graph node, ticket or provenance entry names `docs-site`, so the
+index does not list it. It is still a cloned repository: a reader lists the
+`by-repo/` names as repositories when the relationships layer is present - from
+the directory listing alone - so the estate is thirteen in both modes, and
+`docs-site` is "in the estate, zero results". The default store does not write it.
 
 ## 6. Tickets
 
@@ -238,6 +335,15 @@ It has no `proposed` field: the ticket landed, only that text did not.
 Telemetry records `intent.repositories_without_reach` as 0, so the manifest's
 `layers.intent.reach` is `true`.
 
+### 6.4 A repository only the ticket layer names (opt-in)
+
+`build(root, ticket_only=True)` adds `retired-batch` to `file-tickets.json.gz`:
+`jobs/nightly-settlement.sh` with `EX-105` (1 commit, landed). No clone, graph node,
+provenance entry or `by-repo` file names it. The index builder stages ticket rows
+as well as nodes, so its `repos` lists `retired-batch`, and a reader without the
+index must list it too: the estate is then thirteen, in both modes. The default
+store does not write it, and keeps its twelve.
+
 ## 7. Answers
 
 - Topic briefs (`knowledge/topics/briefs.json`): `payments` ("How a card payment
@@ -247,7 +353,9 @@ Telemetry records `intent.repositories_without_reach` as 0, so the manifest's
   `config/store-extra-layers.json`, at `knowledge/answers/faq.json`. Its one entry
   is `how-refunds-reach-the-ledger`, titled "How does a refund reach the ledger?".
 
-All three files carry the library's `_metadata` block, which is not an entry.
+The briefs and deep-dives files carry the library's `_metadata` block, which
+is not an entry. `faq.json` carries none: the library writes no extra layer's
+file, so nothing adds one.
 
 ## 8. Hostile text
 
@@ -284,7 +392,7 @@ gets the wrong one.
 
 ### 9.3 Flags
 
-- `layers.graph.source_urls`: `true` (`source_urls.linked` is 40).
+- `layers.graph.source_urls`: `true` (`source_urls.linked` is 44).
 - `layers.intent.reach`: `true`.
 - `layers.deployments.present`: `null`. Nothing recorded `deployments.pairs`, so
   it is unknown - not `false`, which would mean measured and absent.
@@ -302,16 +410,15 @@ Present: `graph`, `labels`, `provenance`, `intent`, `ticket_descriptions`,
 - **Manifest (#454):** `feat/store-manifest` at `b0a7841`, the review fix that
   replaced `built` with `digest` and `sources_as_of`. All field names are in one
   section of `build.py`.
-- **Relationships (#455):** the shapes follow the #455 plan's interface. The
-  writer now exists, in progress on `feat/relationships-registry`, and adds keys
-  this fixture does not write: `skipped`, `notes`, every registered kind listed in
-  `kinds.json` (edges or not), and its own form of
-  `unresolved_targets_outside_estate`. Task 10 reconciles those against the merged
-  format. `kinds.json`'s `unresolved` is here the number of unresolved targets of
-  that kind.
-- **Index (#457):** the schema is `feat/query-index` at `e4c55a2`, where the DDL
-  is unchanged from the copied `a839a4e`. The plain file is byte-identical to the
-  library's.
+- **Relationships (#455):** the shapes follow the writer as committed on
+  `feat/relationships-registry` at `85be01e` (`relationships.build` and `write`):
+  every built-in kind in `kinds.json` and in `unresolved_targets_outside_estate`,
+  `skipped` and `notes` per kind, Terraform targets keyed `<org>/<repo>`, and each
+  file written sorted, indented by one, with a final newline. Task 10 re-checks this
+  against the merged format.
+- **Index (#457):** the schema is `feat/query-index` at `d94d33f`, where
+  `files.repo` became nullable and `repos` stopped listing the empty name. The
+  plain file is byte-identical to the library's.
 - **Archive bytes:** the library writes every `.gz` through `io.gzip_text`, whose
   text wrapper flushes a zlib sync point on close; the fixture compresses in one
   pass. So the index archive and both intent files
