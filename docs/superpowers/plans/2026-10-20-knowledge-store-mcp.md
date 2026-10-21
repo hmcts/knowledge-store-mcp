@@ -169,7 +169,7 @@
 
 **Behaviour:**
 - Resolution uses the spec's order, and the first rule that resolves wins.
-- `--store-id` reads `~/.config/knowledge-store/locations`, one absolute clone path per line, with blank lines and `#` comments ignored. It takes the first entry, in file order, whose manifest has `store.id` equal to the argument.
+- `--store-id` reads `~/.config/knowledge-store/locations`, one absolute clone path per line, with blank lines and `#` comments ignored. It takes the entry whose manifest has `store.id` equal to the argument, and when two entries carry that id it refuses and names both (the #454 contract). The path is always under `home`, never `XDG_CONFIG_HOME`. `CLAUDE_PLUGIN_ROOT` serves a `--store-id` request only when its manifest holds that id.
 - `CLAUDE_PLUGIN_ROOT` counts only when it contains `knowledge/store-manifest.json`.
 - The root is `realpath`-resolved once, here.
 - A missing manifest, or a major version outside `SUPPORTED_MAJORS`, refuses, and the message names what was found and what is supported. A newer minor version loads, and lists its unknown layer names in `unread`.
@@ -269,7 +269,9 @@
 
 **Files:** create `src/knowledgestore_mcp/tools_relationships.py` and `tests/test_tools_relationships.py`.
 
-**Tools:** `repo_answer(repo, page?)`, `dependents(target, kind?, ref_prefix_not?, transitive?, max_depth≤4, page?)` and `dependencies(repo, kind?, page?)`.
+**Tools:** `repo_answer(repo, cursor?)`, `dependents(target, kind?, ref_prefix_not?, transitive?, max_depth≤4, cursor?)` and `dependencies(repo, kind?, cursor?)`.
+
+`cursor` is the opaque `next_page` from Task 5's `page()`, not a page number: a number cannot say which store, cap and query it belongs to, so a cursor from another digest, cap or query is refused rather than followed.
 
 **Behaviour:**
 - **`repo_answer`:** returns the `by-repo` file whole when it fits the cap. Otherwise it is paged over `depends_on` then `depended_on_by`, with `total` per list.
