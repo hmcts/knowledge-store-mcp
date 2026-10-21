@@ -129,8 +129,8 @@ UNKNOWN = {
     "answer": "not in the estate",
     "exact": None,
     "near_misses": [
-        {"repository": "payment-apis", "near_miss": True},
         {"repository": "payments-api", "near_miss": True},
+        {"repository": "payment-apis", "near_miss": True},
     ],
 }
 NOT_HELD = {
@@ -478,8 +478,9 @@ class UnknownNameTest(RelationshipsTestCase):
 
     def test_a_repository_with_only_a_by_repo_file_is_in_the_estate(self):
         """Catches: a cloned repository that has no graph node and no ticket - only
-        its `by-repo/` file - answered "not in the estate", in either mode
-        (DESIGN.md 5.6). The estate is then thirteen."""
+        its `by-repo/` file - answered "not in the estate", in either mode; or
+        answered without saying the graph holds no nodes for it (DESIGN.md 5.6).
+        The estate is then thirteen."""
         for index, label, base in (("gz", INDEXED, "index"), ("none", FALLBACK, "graph")):
             with self.subTest(index=index):
                 session = self.session(index, by_repo_only=True)
@@ -487,7 +488,12 @@ class UnknownNameTest(RelationshipsTestCase):
                     tools_relationships.dependencies(session, "docs-site"),
                     {
                         **envelope(label, [base, "relationships"]),
-                        "repository": known("docs-site"),
+                        "repository": {
+                            **known("docs-site"),
+                            "graph_nodes": 0,
+                            "cloned_at": None,
+                            "note": "in the estate, but the graph holds no nodes for it",
+                        },
                         "totals": {"depends_on": 0, "outside_estate": 0},
                         "searched": f"searched 13 repositories in the {base} and relationships layers",
                         "items": [],

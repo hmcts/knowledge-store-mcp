@@ -182,13 +182,14 @@ class AbsenceTest(StoreTestCase):
 
 class RepositoryTest(StoreTestCase):
     def test_near_misses_are_ordered_by_score_then_name(self):
-        """Catches: returning difflib's own order for a tie, which puts
-        `payments-api` first (DESIGN.md 2)."""
+        """Catches: breaking the tie by name alone, which puts `payment-apis` first:
+        the two score the same, and `payments-api` swaps only the first segment,
+        so its remainder `api` is the asker's own (DESIGN.md 2)."""
         for index in ("gz", "none"):
             with self.subTest(index=index):
                 self.assertEqual(
                     results.repository(self.open(index=index), "payment-api"),
-                    Unknown(near_misses=("payment-apis", "payments-api")),
+                    Unknown(near_misses=("payments-api", "payment-apis")),
                 )
 
     def test_near_misses_are_the_top_five_whatever_the_size_of_the_tie(self):
@@ -204,6 +205,52 @@ class RepositoryTest(StoreTestCase):
         )
         # At the cutoff is in: `servic` matches, 2 x 6 / 16 = 0.75.
         self.assertEqual(results.near_misses("service", ["servic-xy"]), ("servic-xy",))
+
+    def test_a_first_segment_substitution_is_offered_first(self):
+        """Catches: ranking by the whole name alone, which offers five names sharing
+        the asker's prefix and never the one that swaps it. Scored with difflib by
+        hand, whole name then remainder after the first `-`: `core-module-key-vault`
+        0.826, remainder equal (1.0); `platform-module-key-vaults` 0.980;
+        `platform-module-vault-x` 0.875; `platform-module-keys` 0.844;
+        `platform-module-key-store` 0.840; `platform-module-kv` 0.837;
+        `platform-module-vnet` 0.800; `platform-module-vng` 0.773. By the whole name
+        the swap is sixth, past the cap."""
+        names = ["platform-module-vng", "platform-module-vault-x", "core-module-key-vault"]
+        names += ["platform-module-key-store", "platform-module-keys", "platform-module-vnet"]
+        names += ["platform-module-kv", "platform-module-key-vaults", "unrelated-thing"]
+        self.assertEqual(
+            results.near_misses("platform-module-key-vault", names),
+            (
+                "core-module-key-vault",
+                "platform-module-key-vaults",
+                "platform-module-vault-x",
+                "platform-module-keys",
+                "platform-module-key-store",
+            ),
+        )
+
+    def test_an_equal_remainder_is_offered_below_the_cutoff(self):
+        """Catches: holding a same-remainder name to the whole-name cutoff. Against
+        `longprefix-kv`, `x-kv` scores 0.471 whole and `zz-kv` 0.333, and both
+        remainders are `kv`, the asker's own: both are offered, first, the two
+        tied and so ordered by name. `longprefix-kx` scores 0.923 and follows."""
+        self.assertEqual(
+            results.near_misses("longprefix-kv", ["longprefix-kx", "zz-kv", "x-kv", "q"]),
+            ("x-kv", "zz-kv", "longprefix-kx"),
+        )
+
+    def test_the_remainder_score_counts_when_it_beats_the_whole_name(self):
+        """Catches: ranking by the whole-name score alone, or the remainder score
+        alone. Against `bbbbbbbb-service-apx`: `bbbbbbbb-service-apxyz` scores 0.952
+        whole (0.917 remainder); `aa-service-api` 0.647 whole, below the cutoff,
+        but 0.909 on its remainder `service-api`; `bbbbbbbb-servic` 0.857 whole
+        (0.706 remainder); `ccc-service-zzz` 0.514 and 0.727, out on both."""
+        names = ["ccc-service-zzz", "bbbbbbbb-servic", "aa-service-api"]
+        names += ["bbbbbbbb-service-apxyz", "bbbbbbbb-qqqq"]
+        self.assertEqual(
+            results.near_misses("bbbbbbbb-service-apx", names),
+            ("bbbbbbbb-service-apxyz", "aa-service-api", "bbbbbbbb-servic"),
+        )
 
     def test_the_registry_is_read_once_per_loaded_store(self):
         """Catches: re-reading the relationships registry on every unknown name;
@@ -221,6 +268,20 @@ class RepositoryTest(StoreTestCase):
         reloaded = store.open_store(loaded.root, self.cache)
         self.addCleanup(reloaded.close)
         self.assertEqual(results.repository(reloaded, "legacy-network"), Unknown(()))
+
+    def test_provenance_is_read_once_per_loaded_store(self):
+        """Catches: re-reading provenance on every name lookup; or keeping it across
+        a reload, so a new store answers from the old file (DESIGN.md 1.1)."""
+        root = build(self.tmp / "provenance-only", provenance_only=True)
+        loaded = store.open_store(root, self.cache)
+        self.addCleanup(loaded.close)
+        expected = Known("release-scripts", False, listed=False, cloned_at="d" * 40)
+        self.assertEqual(results.repository(loaded, "release-scripts"), expected)
+        (root / "knowledge" / "provenance.json").write_text(json.dumps({"repositories": {}}))
+        self.assertEqual(results.repository(loaded, "release-scripts"), expected)
+        reloaded = store.open_store(root, self.cache)
+        self.addCleanup(reloaded.close)
+        self.assertEqual(results.repository(reloaded, "release-scripts"), Unknown(()))
 
     def test_a_case_only_difference_is_an_exact_match_and_flagged(self):
         """Catches: offering `ledger-service` as a near miss of `Ledger-Service`,

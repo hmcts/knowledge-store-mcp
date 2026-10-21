@@ -61,8 +61,8 @@ UNKNOWN = {
     "answer": "not in the estate",
     "exact": None,
     "near_misses": [
-        {"repository": "payment-apis", "near_miss": True},
         {"repository": "payments-api", "near_miss": True},
+        {"repository": "payment-apis", "near_miss": True},
     ],
 }
 NOT_HELD = {
@@ -312,6 +312,28 @@ class TicketsTest(TicketsTestCase):
                     found["landed"],
                     [{"ticket": "EX-105", "path": "jobs/nightly-settlement.sh", "commits": 1}],
                 )
+
+    def test_a_repository_only_provenance_records_is_in_the_estate(self):
+        """Catches: tickets for a cloned repository with no graph node and no ticket,
+        recorded only in provenance, answered "not in the estate" with near misses
+        (DESIGN.md 1.1); the answer is in the estate, zero results, and says the
+        graph holds no nodes for it."""
+        for index, _ in MODES:
+            with self.subTest(index=index):
+                found = tools_tickets.tickets(
+                    self.session(index, provenance_only=True), "release-scripts"
+                )
+                self.assertEqual(
+                    found["repository"],
+                    {
+                        **known("release-scripts"),
+                        "graph_nodes": 0,
+                        "cloned_at": "d" * 40,
+                        "note": "in the estate, but the graph holds no nodes for it",
+                    },
+                )
+                self.assertEqual((found["landed"], found["proposed"], found["total"]), ([], [], 0))
+                self.assertIn("searched 13 repositories", found["searched"])
 
     def test_an_empty_name_is_refused(self):
         """Catches: an empty repository name looked up, and answered with every

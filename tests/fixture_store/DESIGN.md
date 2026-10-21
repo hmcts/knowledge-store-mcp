@@ -47,18 +47,36 @@ repository: the server leaves it out of every list and count in both modes, so i
 reports an estate of twelve, and refuses a repository name that is empty after
 stripping.
 
+### 1.1 A repository only provenance records (opt-in)
+
+`build(root, provenance_only=True)` adds `release-scripts` to
+`knowledge/provenance.json`, sha `d` repeated forty times, committed
+`2026-05-04T10:00:00+01:00`, older than every other commit so `sources_as_of`
+does not move. No graph node, ticket or `by-repo` file names it, so the index's
+`repos` does not list it. It is still a cloned repository: a reader lists the
+provenance names as repositories, so the estate is thirteen in both modes, and
+`release-scripts` is "in the estate" with `"graph_nodes": 0` and `"cloned_at"`
+its sha, never "not in the estate". The default store does not write it.
+
 ## 2. Near misses
 
-Rule (plan rulings): `difflib.get_close_matches(name, repos, n=5, cutoff=0.75)`,
-re-sorted by (similarity descending, name ascending).
+Rule (plan rulings): every candidate is scored with `difflib`'s ratio twice, on
+its whole name and on its remainder (the name without its first `-`-separated
+segment) against the same of the asked name, and keeps the better score. A
+candidate whose remainder equals the asked name's is always offered, first: a
+swapped prefix is the substitution an asker makes. The rest are offered at or
+above 0.75. The order is (equal remainder first, score descending, name
+ascending), cut to five.
 
 - **`payment-api` is not in the estate.** Two names score the same,
   2 x 11 / (11 + 12) = 0.9565: `payments-api` (the 11 characters `payment` and
   `-api` match) and `payment-apis` (`payment-api` is its prefix). No other name
-  scores above 0.35. The answer is `["payment-apis", "payments-api"]`: the tie
-  breaks on the name, and `-` sorts before `s`. **The trap:** `difflib` itself
-  returns the tie the other way round, `["payments-api", "payment-apis"]`, so a
-  reader that skips the re-sort fails here.
+  scores above 0.35. The answer is `["payments-api", "payment-apis"]`:
+  `payments-api` swaps only the first segment, so its remainder `api` is the
+  asked name's own. **The trap:** breaking the tie on the name alone gives
+  `["payment-apis", "payments-api"]`, since `-` sorts before `s`, so a reader
+  without the remainder rule fails here. The tie-break on the name is held by a
+  synthetic list in `tests/test_results.py`.
 - **`Ledger-Service` is a case-only difference** from `ledger-service`. It is an
   exact match, flagged `"matched_case_insensitively": true`. Without the case
   rule, `difflib` would score it 0.857 and call it a near miss.
@@ -303,7 +321,9 @@ relationships writer saw, with both lists empty, `commit` and `base_url` null an
 index does not list it. It is still a cloned repository: a reader lists the
 `by-repo/` names as repositories when the relationships layer is present - from
 the directory listing alone - so the estate is thirteen in both modes, and
-`docs-site` is "in the estate, zero results". The default store does not write it.
+`docs-site` is "in the estate, zero results", with `"graph_nodes": 0` and
+`"cloned_at"` null, since no provenance entry records its commit. The default
+store does not write it.
 
 ### 5.7 The format stamp
 
