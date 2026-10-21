@@ -14,6 +14,8 @@ checks that every trap is still in the store, by its literal value.
   `"none"` writes neither, so a reader falls back to the graph.
 - `manifest_minor` sets `format.minor`. `extra` maps layer names a newer library
   would add to their manifest entries, merged into `layers`.
+- `relationships_format` is the relationships registry's format stamp (section
+  5.7). `None` writes the registry without one.
 
 ## 1. Identity
 
@@ -303,6 +305,24 @@ index does not list it. It is still a cloned repository: a reader lists the
 the directory listing alone - so the estate is thirteen in both modes, and
 `docs-site` is "in the estate, zero results". The default store does not write it.
 
+### 5.7 The format stamp
+
+`repository-dependencies.json` carries a top-level
+`"format": {"layer": "relationships", "major": 1, "minor": 0}`, the stamp the
+library's `relationships.format_stamp()` writes. A reader checks it on first use
+of the layer, before reading anything else in it.
+
+`build(root, relationships_format=None)` writes the registry without the stamp,
+as a library before it did; `relationships_format` set to another stamp writes
+that one instead (another `layer`, a `major` of 2). Either way the layer is
+**present but unrecognised**: a correct reader reads neither the registry nor
+`by-repo/`, so `dependents("ledger-service")`, `dependencies` and `repo_answer`
+answer with the reason - "relationships layer present but format unrecognised
+(found none, supports 1.x); not read" for the unstamped registry, "found 2.0"
+for a major of 2 - and never with an empty list. A stamp of a newer minor,
+`{"layer": "relationships", "major": 1, "minor": 7}`, is read as 1.0 is. The
+default store writes the 1.0 stamp.
+
 ## 6. Tickets
 
 `knowledge/intent/file-tickets.json.gz` and
@@ -415,7 +435,9 @@ Present: `graph`, `labels`, `provenance`, `intent`, `ticket_descriptions`,
   every built-in kind in `kinds.json` and in `unresolved_targets_outside_estate`,
   `skipped` and `notes` per kind, Terraform targets keyed `<org>/<repo>`, and each
   file written sorted, indented by one, with a final newline. Task 10 re-checks this
-  against the merged format.
+  against the merged format. The registry's `format` stamp (section 5.7) follows
+  `relationships.format_stamp()` as hmcts/knowledge-store-builder#460 writes it:
+  `layer`, `major` and `minor`.
 - **Index (#457):** the schema is `feat/query-index` at `d94d33f`, where
   `files.repo` became nullable and `repos` stopped listing the empty name. The
   plain file is byte-identical to the library's.

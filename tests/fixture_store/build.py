@@ -399,6 +399,10 @@ SKIPPED = {
 }
 
 EXAMPLES_PER_EDGE = 3  # the library's default RELATIONSHIP_EXAMPLES
+
+# The registry's own format stamp, as `relationships.format_stamp()` writes it
+# (DESIGN.md 5.7). A reader checks it before reading the layer at all.
+RELATIONSHIPS_FORMAT = {"layer": "relationships", "major": 1, "minor": 0}
 _MODULES = ("network", "database", "app-service", "network")
 
 # --- Written answers -----------------------------------------------------------
@@ -614,20 +618,18 @@ def _by_repo_only_document() -> dict:
     }
 
 
-def _write_relationships(root: Path, by_repo_only: bool = False) -> None:
+def _write_relationships(
+    root: Path, by_repo_only: bool = False, stamp: dict | None = RELATIONSHIPS_FORMAT
+) -> None:
     edges = relationship_edges()
-    _write(
-        root,
-        f"{RELATIONSHIPS}/repository-dependencies.json",
-        _sorted_json(
-            {
-                "format": {"major": 1, "minor": 0},
-                "edges": edges,
-                "unresolved_targets_outside_estate": UNRESOLVED_OUTSIDE_ESTATE,
-                "conflicts": {},
-            }
-        ),
-    )
+    registry = {
+        "edges": edges,
+        "unresolved_targets_outside_estate": UNRESOLVED_OUTSIDE_ESTATE,
+        "conflicts": {},
+    }
+    if stamp is not None:
+        registry["format"] = stamp
+    _write(root, f"{RELATIONSHIPS}/repository-dependencies.json", _sorted_json(registry))
     _write(root, f"{RELATIONSHIPS}/kinds.json", _sorted_json(kinds_document(edges)))
     for repo, document in by_repo_documents(edges).items():
         _write(root, f"{BY_REPO}/{repo}.json", _sorted_json(document))
@@ -948,6 +950,7 @@ def build(
     extra: dict | None = None,
     ticket_only: bool = False,
     by_repo_only: bool = False,
+    relationships_format: dict | None = RELATIONSHIPS_FORMAT,
 ) -> Path:
     """Write the complete synthetic store at `root` and return it.
 
@@ -958,7 +961,9 @@ def build(
     merged into `layers` - together they make the newer-minor manifest a reader
     must still load. `ticket_only` adds a repository that only the ticket layer
     names (DESIGN.md 6.4), and `by_repo_only` one that only a `by-repo` file names
-    (DESIGN.md 5.6). The manifest is written last, so its digests describe
+    (DESIGN.md 5.6). `relationships_format` is the registry's format stamp; None
+    writes a registry without one, as a library before the stamp did (DESIGN.md
+    5.7). The manifest is written last, so its digests describe
     the files as they finally are.
     """
     if index not in INDEX_MODES:
@@ -989,7 +994,7 @@ def build(
         _write(root, rel, _library_json({**entries, "_metadata": _prose_metadata(prose)}))
     _write(root, EXTRA_LAYERS_CONFIG, _library_json(EXTRA_LAYERS_DECLARED))
     _write(root, FAQ, _library_json(FAQ_DATA))
-    _write_relationships(root, by_repo_only)
+    _write_relationships(root, by_repo_only, relationships_format)
     _write_index(root, graph, file_tickets, index)
 
     _write(root, MANIFEST, _sorted_json(manifest_document(root, manifest_minor, extra or {})))

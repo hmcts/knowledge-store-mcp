@@ -2,7 +2,10 @@
 
 - `envelope` says which store, version and index answered, and which layers.
 - `searched` and `empty`: an empty result always says what was searched, with
-  the store's own counts, and which layers were absent.
+  the store's own counts, and which layers were absent or unrecognised.
+- `relationships_unrecognised` checks the relationships registry's format stamp
+  on first use: a layer without one this server reads is present but
+  unrecognised, never read, and refused by every tool that needs it.
 - `repository` is the three-way answer for a repository name: in the estate, not
   in the estate (with near misses), or referenced by the estate but not held.
 - `page` cuts a list so the whole response fits the cap, without cutting an
@@ -10,7 +13,9 @@
 
 Store text is data. The only prose composed here is `searched`'s sentence, built
 from counts and layer names: the ones this server knows, and answers layers the
-manifest declares, which are store structure and must be plain identifiers. So
+manifest declares, which are store structure and must be plain identifiers; and
+an unrecognised layer's reason, which quotes a stamp only as integers and a plain
+identifier. So
 nothing a person wrote into the store can reach it; every store value goes in a
 named field.
 """
@@ -25,9 +30,9 @@ from pathlib import Path
 from typing import Any
 
 from . import graph
-from .index import IndexHandle
+from .index import IndexHandle, UnrecognisedIndex
 from .locate import OutsideStore, contained
-from .manifest import KNOWN_LAYERS
+from .manifest import KNOWN_LAYERS, unrecognised
 from .store import Notice, Store
 
 # The response cap. The spec sets it above the largest per-repository file a store
@@ -48,6 +53,13 @@ NEAR_MISS_CUTOFF = 0.75
 
 INDEX_PRESENT = "present"
 INDEX_ABSENT = "absent: graph read whole"
+INDEX_UNRECOGNISED = "present but format unrecognised: graph read whole"
+
+# The relationships registry's format majors this server reads. Source: FORMAT in
+# knowledge-store-builder src/knowledgestore/relationships.py (#455, PR #460),
+# written as the registry's top-level `"format": {"layer", "major", "minor"}`.
+RELATIONSHIPS = "relationships"
+RELATIONSHIPS_MAJORS = (1,)
 
 
 # A lone UTF-16 surrogate, which `json.loads` accepts from `"\\ud800"` but UTF-8
@@ -98,6 +110,14 @@ def without_host_paths(text: str) -> str:
 # --- The envelope -----------------------------------------------------------------
 
 
+def _index_state(store: Store) -> str:
+    if isinstance(store.index, IndexHandle):
+        return INDEX_PRESENT
+    if isinstance(store.index, UnrecognisedIndex):
+        return INDEX_UNRECOGNISED
+    return INDEX_ABSENT
+
+
 def envelope(store: Store, layers_used: list[str], notice: Notice | None) -> dict:
     found = store.manifest
     return {
@@ -106,11 +126,89 @@ def envelope(store: Store, layers_used: list[str], notice: Notice | None) -> dic
             "format": {"major": found.major, "minor": found.minor},
             "library_version": found.library_version,
             "sources_as_of": found.sources_as_of,
-            "index": INDEX_PRESENT if isinstance(store.index, IndexHandle) else INDEX_ABSENT,
+            "index": _index_state(store),
             "layers_used": sorted(set(layers_used)),
             "notice": notice.message if notice else None,
         }
     }
+
+
+# --- Unrecognised layers ----------------------------------------------------------
+
+
+class LayerUnrecognised(ValueError):
+    """A tool needs a layer that is present in a format this server does not read.
+    The message is `manifest.unrecognised`'s sentence, which quotes no store text."""
+
+
+def _present(store: Store, name: str) -> bool:
+    entry = store.manifest.layers.get(name)
+    return isinstance(entry, dict) and entry.get("present") is True
+
+
+def relationships_unrecognised(store: Store) -> str | None:
+    """Why the relationships layer is present but not read, or None when it is
+    absent or its registry carries a stamp this server reads. Checked once per
+    loaded store, on first use, before anything else in the layer is read."""
+    if not _present(store, RELATIONSHIPS):
+        return None
+    return store.memo("relationships.unrecognised", lambda: _check_relationships_stamp(store))
+
+
+def _check_relationships_stamp(store: Store) -> str | None:
+    found = _relationships_stamp_found(store)
+    return None if found is None else unrecognised(RELATIONSHIPS, found, RELATIONSHIPS_MAJORS)
+
+
+def _relationships_stamp_found(store: Store) -> str | None:
+    """None for a stamp this server reads; otherwise what was found, in this
+    server's own words. Only a layer name that is a plain identifier, and integers,
+    are quoted."""
+    path = contained(store.root, REGISTRY)
+    if not path.is_file():
+        return "none"
+    try:
+        document = json.loads(path.read_bytes())
+    except ValueError:
+        return "a registry that is not JSON"
+    stamp = document.get("format") if isinstance(document, dict) else None
+    if not isinstance(stamp, dict):
+        return "none"
+    layer, major, minor = stamp.get("layer"), stamp.get("major"), stamp.get("minor")
+    if layer != RELATIONSHIPS:
+        if isinstance(layer, str) and _LAYER_NAME.fullmatch(layer):
+            return f"a stamp for the {layer} layer"
+        return "a stamp for another layer"
+    if isinstance(major, bool) or not isinstance(major, int):
+        return "a stamp with no integer major"
+    if major in RELATIONSHIPS_MAJORS:
+        return None
+    shown = minor if isinstance(minor, int) and not isinstance(minor, bool) else "x"
+    return f"{major}.{shown}"
+
+
+def relationships_readable(store: Store) -> bool:
+    """The relationships layer is present and in a format this server reads."""
+    return _present(store, RELATIONSHIPS) and relationships_unrecognised(store) is None
+
+
+def require_relationships(store: Store) -> None:
+    """Refuse, with the reason, a tool that needs a relationships layer this server
+    cannot read: an unrecognised layer is never answered as an empty one."""
+    reason = relationships_unrecognised(store)
+    if reason is not None:
+        raise LayerUnrecognised(reason)
+
+
+def unrecognised_layers(store: Store) -> dict[str, str]:
+    """Each layer present in a format this server does not read, with the reason."""
+    found: dict[str, str] = {}
+    if isinstance(store.index, UnrecognisedIndex):
+        found["index"] = store.index.reason
+    reason = relationships_unrecognised(store)
+    if reason is not None:
+        found[RELATIONSHIPS] = reason
+    return found
 
 
 # --- Absence ----------------------------------------------------------------------
@@ -161,9 +259,9 @@ def by_repo_files(store: Store) -> dict[str, Path]:
 
 
 def _list_by_repo(store: Store) -> ByRepo:
-    entry = store.manifest.layers.get("relationships")
-    if not isinstance(entry, dict) or entry.get("present") is not True:
+    if not relationships_readable(store):
         return ByRepo({}, 0)
+    entry = store.manifest.layers["relationships"]
     paths = entry.get("paths")
     skipped = 0
     for rel in paths if isinstance(paths, list) else []:
@@ -228,14 +326,17 @@ def nameable_layers(store: Store) -> dict[str, Any]:
 def searched(store: Store, layers: Sequence[str]) -> str:
     """What an empty answer searched: `searched 12 repositories in the graph layer;
     the relationships layer is absent`. A layer whose presence the store did not
-    record (`present: null`) is said to be not recorded, never absent."""
+    record (`present: null`) is said to be not recorded, never absent; a layer
+    present in a format this server does not read is given its reason, never
+    counted as searched."""
     nameable = nameable_layers(store)
     refused = set(layers) - set(nameable)
     if refused:
         # Counted, not quoted: a refused name may be anything the store holds.
         raise ValueError(f"{len(refused)} layer name(s) this server cannot name")
+    unread = unrecognised_layers(store)
     present, absent, unrecorded = [], [], []
-    for name in sorted(set(layers)):
+    for name in sorted(set(layers) - set(unread)):
         entry = nameable[name]
         state = entry.get("present") if isinstance(entry, dict) else False
         if state is True:
@@ -247,6 +348,7 @@ def searched(store: Store, layers: Sequence[str]) -> str:
     parts = [_searched_present(store, present)]
     if absent:
         parts.append(layers_clause(absent, "absent"))
+    parts.extend(unread[name] for name in sorted(set(layers) & set(unread)))
     if unrecorded:
         parts.append(layers_clause(unrecorded, "not recorded"))
     return "; ".join(parts)
@@ -406,8 +508,7 @@ def _outside_names(target: str, own: str) -> set[str]:
 
 
 def _read_outside_estate(store: Store) -> dict[str, tuple[Outside, ...]]:
-    entry = store.manifest.layers.get("relationships")
-    if not isinstance(entry, dict) or entry.get("present") is not True:
+    if not relationships_readable(store):
         return {}
     path = contained(store.root, REGISTRY)
     if not path.is_file():

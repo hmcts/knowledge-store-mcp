@@ -394,6 +394,26 @@ class StoreInfoTest(ToolTestCase):
             },
         )
 
+    def test_an_unrecognised_index_is_stated_in_the_terms_of_every_unrecognised_layer(self):
+        """Catches: an index of an unknown schema reported only as a fallback, so
+        `store_info` lists the index layer as plainly present and a tool's envelope
+        calls it absent, in other terms than an unrecognised relationships layer is
+        stated in (spec, Absence semantics). The graph still answers."""
+        root = build(self.tmp / "s", index="plain")
+        with closing(sqlite3.connect(root / INDEX_PLAIN)) as db, db:
+            db.execute("UPDATE meta SET value = '2.0' WHERE key = 'index_schema'")
+        session = store.Session(lambda: store.open_store(root, self.cache), lambda: NOW)
+        self.addCleanup(lambda: session.current()[0].close())
+        reason = "index layer present but format unrecognised (found 2.0, supports 1.x); not read"
+        info = tools_graph.store_info(session)
+        self.assertEqual(info["index"], {"schema": None, "fallback": reason})
+        self.assertEqual(info["layers"]["index"], {"present": True, "unrecognised": reason})
+        unrecognised = "present but format unrecognised: graph read whole"
+        self.assertEqual(info["store"]["index"], unrecognised)
+        found = tools_graph.search(session, "RefundHandler")
+        self.assertEqual(found["store"]["index"], unrecognised)
+        self.assertEqual([item["id"] for item in found["items"]], ["payments-api::RefundHandler"])
+
     def test_thousands_of_repositories_page_under_the_cap(self):
         """Catches: `store_info` returning its repository list whole, so an estate of
         thousands outgrows the cap, or paging that drops, repeats or reorders one.

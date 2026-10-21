@@ -331,6 +331,29 @@ class ErrorMappingTest(ServerTestCase):
             {"error": {"type": "store_unreadable", "message": "a store file could not be parsed"}},
         )
 
+    async def test_an_unrecognised_layer_is_a_refusal_with_its_reason(self):
+        """Catches: `LayerUnrecognised` reported as an unreadable store file - the
+        generic `ValueError` sentence, which drops the format found and the format
+        read - or answered as a result, which a client reads as an answer (spec,
+        Absence semantics). The reason names no host path."""
+        root = self.store(relationships_format=None)
+        async with self.client(self.served(root)) as client:
+            answer, is_error, text = await self.call(
+                client, "dependents", {"target": "ledger-service"}
+            )
+        self.assertTrue(is_error)
+        self.assertEqual(
+            answer,
+            {
+                "error": {
+                    "type": "layer_unrecognised",
+                    "message": "relationships layer present but format unrecognised "
+                    "(found none, supports 1.x); not read",
+                }
+            },
+        )
+        self.assertNoHostPath(text)
+
     async def test_an_escaping_registry_names_no_host_path(self):
         """Catches: `OutsideStore`'s own message, which names the store root and the
         target, reaching the client through the registry lookup a name outside the

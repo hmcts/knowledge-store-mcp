@@ -552,6 +552,22 @@ class TrapTest(FixtureStoreCase):
         self.assertNotIn("docs-site", _json(root, "knowledge/provenance.json")["repositories"])
         self.assertFalse((self.root / "knowledge/relationships/by-repo/docs-site.json").exists())
 
+    def test_the_registry_carries_the_format_stamp_and_the_variant_does_not(self):
+        """Catches: the default store losing its stamp, so every relationships test
+        runs against an unrecognised layer; or the unstamped variant still writing
+        one, so the refusal tests pass over a layer a reader recognises. Nothing but
+        the stamp may differ, or the refusal could come from another change.
+        DESIGN.md 5.7."""
+        stamp = {"layer": "relationships", "major": 1, "minor": 0}
+        self.assertInDesign('`"format": {"layer": "relationships", "major": 1, "minor": 0}`')
+        registry = "knowledge/relationships/repository-dependencies.json"
+        stamped = _json(self.root, registry)
+        self.assertEqual(stamped["format"], stamp)
+        root = build(Path(tempfile.mkdtemp(dir=self.root.parent)) / "s", relationships_format=None)
+        unstamped = _json(root, registry)
+        self.assertNotIn("format", unstamped)
+        self.assertEqual(unstamped, {k: v for k, v in stamped.items() if k != "format"})
+
     def test_three_hop_chain_and_cycle(self):
         """Catches: a broken link in the chain or the cycle, which would let a
         transitive walk pass without walking three hops or meeting a repeat.
