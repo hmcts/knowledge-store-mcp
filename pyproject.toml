@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hmcts-knowledge-store-mcp"
+# The version is the git tag (hatch-vcs): no file states a version.
+dynamic = ["version"]
+description = "A read-only MCP server that answers questions from a knowledge store on local disk"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "HM Courts & Tribunals Service" }]
+dependencies = ["mcp==2.3.0"]
+
+[project.scripts]
+knowledge-store-mcp = "knowledgestore_mcp.cli:main"
+
+[dependency-groups]
+# Installed by `uv sync`, which CI runs with --frozen.
+dev = ["ruff==0.16.10", "pyright==1.1.414"]
+
+[tool.hatch.version]
+source = "vcs"
+# A source archive has no .git to read a tag from; without a fallback it cannot
+# be installed at all. 0.0.0 says plainly that the version is unknown.
+fallback-version = "0.0.0"
+raw-options = { local_scheme = "node-and-date" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/knowledgestore_mcp"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "C901"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.pyright]
+include = ["src", "tests"]
