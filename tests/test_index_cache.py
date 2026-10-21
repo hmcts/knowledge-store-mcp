@@ -258,11 +258,13 @@ class ArchiveTest(CacheTestCase):
         root = build(self.tmp / "s")
         first = self.open_handle(root)
         first.close()
-        before = first.path.stat().st_ino
+        # An mtime no write now can have; an inode number may be reused, so it
+        # cannot tell a rewritten entry from the old one.
+        os.utime(first.path, ns=(1_000_000_000, 1_000_000_000))
         first.path.with_name(first.path.name + ".sha256").unlink()
         with mock.patch.object(index, "_VERIFIED", set()):
             handle = self.open_handle(root)
-        self.assertNotEqual(handle.path.stat().st_ino, before)
+        self.assertNotEqual(handle.path.stat().st_mtime_ns, 1_000_000_000)
         self.assertEqual(self.listing(self.entries), pair(first.path.name))
         self.assertEqual(repo_names(handle), REPOS)
 
