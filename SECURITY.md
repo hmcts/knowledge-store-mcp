@@ -53,7 +53,10 @@ identifier, and counts the rest.
   (`tests/test_security.py`).
 - **A layer path that resolves outside the store refuses the whole store at
   start-up.** A symlinked layer is a hostile or broken store, not one to serve in
-  part (`tests/test_security.py`).
+  part (`tests/test_security.py`). If a pull makes a layer escape while the
+  server runs, the reload is refused and the previous store keeps answering. Each
+  answer's `notice` then says `reload refused: a layer path leaves the store;
+  still serving the previous store` (`tests/test_security.py`).
 - A file inside a layer directory that escapes is skipped and counted. A
   fixed-layout file that escapes (the relationships registry, `kinds.json`)
   makes the call fail with an `outside_store` error result.
@@ -68,11 +71,15 @@ An error result has one shape:
 
 `type` is one of:
 
-- `argument_refused`, `cursor_refused` and `unknown_tool`: the call was refused;
+- `argument_refused` and `cursor_refused`: the call was refused;
 - `graph_refused`, `outside_store` and `store_unreadable`: the store failed the
   call;
 - `store_refused`: the store cannot be served;
 - `internal`: an unexpected failure.
+
+A call to a tool that does not exist is not a failed call. It is answered with a
+JSON-RPC protocol error, invalid params (`-32602`), as the MCP specification
+says (`tests/test_stdio.py`).
 
 Messages are the server's own sentences. An unexpected failure is logged with its
 traceback to stderr, and the client receives only its type and a fixed sentence. Any absolute path a
@@ -107,5 +114,14 @@ served (`tests/test_stdio.py`).
 ## Bounded answers
 
 Each answer has a byte cap (`--max-response-bytes`, default 512 KiB). A longer
-list is paged, never cut. Every page says `total` and `next_page`. The bytes sent
-are the bytes the cap measured (`tests/test_server.py`).
+list is paged, never cut, and that includes `store_info`'s list of repositories.
+Every page says `total` and `next_page`. The cap bounds the tool result's text,
+which is what the model reads, and that text is exactly the bytes the cap
+measured (`tests/test_server.py`). The JSON-RPC framing around the text is
+transport, and the cap does not count it.
+
+## Reporting a vulnerability
+
+Report a vulnerability as the
+[HMCTS security policy](https://github.com/hmcts/.github/blob/master/SECURITY.md)
+describes, to the address it gives. Do not open a public issue for it.

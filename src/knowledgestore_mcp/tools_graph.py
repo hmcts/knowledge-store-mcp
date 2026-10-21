@@ -237,9 +237,15 @@ def _repository_layers(store: Store, base: str, answer: Any) -> list[str]:
 # --- The tools ----------------------------------------------------------------------
 
 
-def store_info(session: Session) -> dict[str, Any]:
-    """The store's format, versions, provenance, layer states and flags, as recorded;
-    and `stale_days` from the session's clock."""
+def store_info(
+    session: Session,
+    cursor: str | None = None,
+    *,
+    cap_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+) -> dict[str, Any]:
+    """The store's format, versions, layer states and flags, as recorded, and
+    `stale_days` from the session's clock; with each repository's provenance as the
+    `items`, paged under the cap by name, since that list grows with the estate."""
     store, notice = session.current()
     found = store.manifest
     if isinstance(store.index, IndexHandle):
@@ -253,13 +259,16 @@ def store_info(session: Session) -> dict[str, Any]:
             "schema": None,
             "fallback": results.without_host_paths(store.index.reason),
         }
-    return _respond(
+    return _paged(
         store,
         notice,
         ["provenance"],
+        _provenance(store.layer("provenance")),
+        key=lambda row: row["repository"],
+        cursor=cursor,
+        cap_bytes=cap_bytes,
         stale_days=session.stale_days(),
         index=index,
-        repositories=_provenance(store.layer("provenance")),
         layers={
             name: {"present": entry.get("present") if isinstance(entry, dict) else None}
             for name, entry in found.layers.items()

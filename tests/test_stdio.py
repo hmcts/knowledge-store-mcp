@@ -32,7 +32,7 @@ UNTRUSTED = (
 
 # Each tool's parameters, by name, and the ones it requires.
 PARAMETERS = {
-    "store_info": ([], []),
+    "store_info": (["cursor"], []),
     "find_repo": (["name"], ["name"]),
     "search": (["text", "repo", "kind", "limit", "cursor"], ["text"]),
     "node": (["id"], ["id"]),
@@ -243,6 +243,16 @@ class RawProtocolTest(StdioTestCase):
                 answer = json.loads(by_id[number]["content"][0]["text"])
                 for what, read, literal in checks(tool):
                     self.assertEqual(read(answer), literal, what)
+
+    def test_an_unknown_tool_is_a_json_rpc_invalid_params_error(self):
+        """Catches: a call to no tool answered as a tool result over the real
+        stdio transport, rather than the protocol error the MCP spec names."""
+        lines = self.exchange(calls=[("delete_everything", {}), ("node", {"id": "x"})])
+        by_id = {message["id"]: message for message in map(json.loads, lines)}
+        self.assertNotIn("result", by_id[3])
+        self.assertEqual(by_id[3]["error"]["code"], -32602)
+        self.assertNotIn("delete_everything", by_id[3]["error"]["message"])
+        self.assertFalse(by_id[4]["result"].get("isError", False))
 
     def test_a_failure_is_logged_to_stderr_and_answered_without_its_text(self):
         """Catches: an unexpected failure's traceback written to stdout, or its text

@@ -34,7 +34,9 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
+from mcp.shared.exceptions import MCPError
 from mcp_types import (
+    INVALID_PARAMS,
     CallToolRequestParams,
     CallToolResult,
     ListToolsResult,
@@ -113,9 +115,8 @@ TOOLS: tuple[ToolSpec, ...] = (
         tools_graph.store_info,
         "The store's format and library version, each repository's pinned commit, which "
         "layers are present, whether the query index answers, and `stale_days`: how old "
-        "the newest source the store reflects is.",
-        (),
-        paged=False,
+        "the newest source the store reflects is. The repositories are the paged `items`.",
+        (CURSOR,),
     ),
     ToolSpec(
         "find_repo",
@@ -372,27 +373,32 @@ class KnowledgeStoreServer:
         return ListToolsResult(tools=listed())
 
     async def _on_call_tool(self, _context: Any, params: CallToolRequestParams) -> CallToolResult:
+        if params.name not in BY_NAME:
+            # Not a failed call but a request for no tool: the MCP spec reports that
+            # as a protocol error, invalid params. The name asked for is not quoted.
+            raise MCPError(
+                code=INVALID_PARAMS,
+                message=f"no tool by that name; the tools are: {', '.join(BY_NAME)}",
+            )
         future = self._thread.submit(self.call, params.name, params.arguments)
         text, is_error = await asyncio.wrap_future(future)
         return CallToolResult(content=[TextContent(text=text)], is_error=is_error)
 
     def call(self, name: str, arguments: dict[str, Any] | None) -> tuple[str, bool]:
-        """One call, on the store's thread: the text to send, and whether it is an
-        error result. Nothing raised escapes: every failure is an error result."""
+        """One call to a listed tool, on the store's thread: the text to send, and
+        whether it is an error result. Nothing raised escapes: every failure is an
+        error result."""
+        spec = BY_NAME[name]
         try:
-            spec = BY_NAME.get(name)
-            if spec is None:
-                kind, message = "unknown_tool", f"no such tool; the tools are: {', '.join(BY_NAME)}"
-            else:
-                keywords = convert(spec, arguments)
-                if spec.paged:
-                    keywords["cap_bytes"] = self.cap
-                answer = spec.function(self._session, **keywords)
-                return results.encode(answer).decode("utf-8"), False
+            keywords = convert(spec, arguments)
+            if spec.paged:
+                keywords["cap_bytes"] = self.cap
+            answer = spec.function(self._session, **keywords)
+            return results.encode(answer).decode("utf-8"), False
         except Exception as exception:
             kind, message = error(exception)
             if kind == "internal":
-                log.exception("tool %s failed", name if name in BY_NAME else "(unknown)")
+                log.exception("tool %s failed", name)
         failure = {"error": {"type": kind, "message": results.without_host_paths(message)}}
         return results.encode(failure).decode("utf-8"), True
 

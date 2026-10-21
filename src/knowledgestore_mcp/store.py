@@ -35,6 +35,12 @@ class Notice:
 RELOADED = Notice("reloaded: store digest changed")
 RELOADED_ARCHIVE = Notice("reloaded: index archive changed")
 DEFERRED = Notice("reload deferred: manifest unreadable")
+ESCAPING = Notice("reload refused: a layer path leaves the store; still serving the previous store")
+
+
+class LayerEscapes(Refused):
+    """A declared layer path resolves outside the store. Kept apart from other
+    refusals so a reload that meets it can say so rather than "unreadable"."""
 
 
 class Store:
@@ -146,7 +152,7 @@ def _refuse_escaping_layers(root: Path, found: Manifest) -> None:
         try:
             contained(root, rel)
         except OutsideStore:
-            raise Refused(
+            raise LayerEscapes(
                 f"layer {name!r} at {rel!r}, which resolves outside the store",
                 manifest.SUPPORTED_MAJORS,
             ) from None
@@ -200,6 +206,8 @@ class Session:
         manifest_sha256 = _manifest_sha256(self._store.root)
         try:
             fresh = self._factory()
+        except LayerEscapes:
+            return self._store, ESCAPING
         except Refused:
             return self._store, DEFERRED
         previous, self._store = self._store, fresh

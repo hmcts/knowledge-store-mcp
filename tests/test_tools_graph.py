@@ -348,7 +348,10 @@ class StoreInfoTest(ToolTestCase):
                 **envelope(INDEXED, ["provenance"]),
                 "stale_days": 4,
                 "index": {"schema": "1.0", "fallback": None},
-                "repositories": REPOSITORIES,
+                "items": REPOSITORIES,
+                "total": 12,
+                "page": 1,
+                "next_page": None,
                 "layers": layers(index_present=True),
                 "extra_layers": {"faq": {"present": True, "kind": "answers"}},
                 "unread": [],
@@ -374,7 +377,10 @@ class StoreInfoTest(ToolTestCase):
                         "no index in the store (knowledge/index/store.sqlite.gz or store.sqlite)"
                     ),
                 },
-                "repositories": REPOSITORIES,
+                "items": REPOSITORIES,
+                "total": 12,
+                "page": 1,
+                "next_page": None,
                 "layers": layers(index_present=False),
                 "extra_layers": {"faq": {"present": True, "kind": "answers"}},
                 "unread": [],
@@ -385,6 +391,40 @@ class StoreInfoTest(ToolTestCase):
                 },
             },
         )
+
+    def test_thousands_of_repositories_page_under_the_cap(self):
+        """Catches: `store_info` returning its repository list whole, so an estate of
+        thousands outgrows the cap, or paging that drops, repeats or reorders one.
+        The provenance file is replaced by 3,000 invented repositories, `repo-0000`
+        to `repo-2999`, each at the sha of forty `0`s, written in reverse."""
+        session = self.session()
+        root = session.current()[0].root
+        names = [f"repo-{n:04d}" for n in range(3000)]
+        provenance = {
+            name: {"sha": "0" * 40, "branch": "main", "committed": "2026-10-01T00:00:00+00:00"}
+            for name in reversed(names)
+        }
+        (root / "knowledge" / "provenance.json").write_text(
+            json.dumps({"repositories": provenance}), encoding="utf-8"
+        )
+        cap = 16 * 1024
+        seen: list[str] = []
+        cursor = None
+        pages = 0
+        while True:
+            answer = tools_graph.store_info(session, cursor, cap_bytes=cap)
+            pages += 1
+            self.assertEqual(answer["page"], pages)
+            self.assertEqual(answer["total"], 3000)
+            self.assertLessEqual(len(results.encode(answer)), cap)
+            self.assertNotIn("oversize", answer)
+            self.assertEqual(answer["store"]["id"], "example-store")
+            seen.extend(row["repository"] for row in answer["items"])
+            cursor = answer["next_page"]
+            if cursor is None:
+                break
+        self.assertEqual(seen, names)
+        self.assertGreater(pages, 1)
 
     def test_a_newer_minor_lists_its_layer_as_present_but_unread(self):
         """Catches: a layer a newer library added that store_info drops, or lists

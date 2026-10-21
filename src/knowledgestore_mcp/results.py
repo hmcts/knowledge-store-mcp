@@ -58,7 +58,11 @@ _SURROGATE = re.compile("[\ud800-\udfff]")
 def encode(value: Any) -> bytes:
     """The bytes a response is sent as, and so the bytes the cap measures: compact,
     key-sorted UTF-8 JSON. A lone surrogate in store text becomes U+FFFD, the
-    replacement character, rather than failing the whole response."""
+    replacement character, rather than failing the whole response.
+
+    The cap bounds this text, the tool result the model reads. The JSON-RPC frame
+    around it (the envelope, and an escape before every quote) is transport, and
+    is not counted."""
     text = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return _SURROGATE.sub("\ufffd", text).encode("utf-8")
 

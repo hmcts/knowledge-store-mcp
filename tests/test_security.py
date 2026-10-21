@@ -26,7 +26,7 @@ from unittest import mock
 from mcp import Client
 from mcp_types import TextContent
 
-from fixture_store.build import EXTRA_LAYERS_DECLARED, GRAPH, INDEX_MODES, build
+from fixture_store.build import EXTRA_LAYERS_DECLARED, GRAPH, INDEX_MODES, MANIFEST, build
 from fixture_store.sweep import CALLS, checks
 from knowledgestore_mcp import store
 from knowledgestore_mcp.manifest import Refused
@@ -132,6 +132,34 @@ class ContainmentTest(SecurityTestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("resolves outside the store", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+
+    async def test_a_reload_that_meets_an_escaping_layer_says_so(self):
+        """Catches: a pull that makes a layer escape served from the new store, or
+        refused with the notice for an unreadable manifest, which names the wrong
+        cause; and a notice that names a host path."""
+        root = self.store()
+        served = self.served(root)
+        async with Client(served.server, mode="legacy") as client:
+            self.escape(root, FAQ)
+            path = root / MANIFEST
+            document = json.loads(path.read_text(encoding="utf-8"))
+            document["digest"] = "changed-by-a-pull"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            for tool, arguments in (("store_info", {}), ("find_repo", {"name": "payment-api"})):
+                result = await client.call_tool(tool, arguments)
+                block = result.content[0]
+                assert isinstance(block, TextContent)
+                answer = json.loads(block.text)
+                with self.subTest(tool=tool):
+                    self.assertFalse(result.is_error, answer)
+                    self.assertEqual(
+                        answer["store"]["notice"],
+                        "reload refused: a layer path leaves the store; "
+                        "still serving the previous store",
+                    )
+                    self.assertNotIn(str(self.tmp), block.text)
+                    for what, read, literal in checks(tool):
+                        self.assertEqual(read(answer), literal, what)
 
     async def test_a_node_id_that_reads_as_a_path_is_a_lookup_miss(self):
         """Catches: a tool argument joined to the store root and read, so an id

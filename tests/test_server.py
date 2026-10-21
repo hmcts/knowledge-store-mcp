@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp import Client
+from mcp.shared.exceptions import MCPError
 from mcp_types import TextContent
 
 from fixture_store.build import BY_REPO, EXTRA_LAYERS_DECLARED, GRAPH, MANIFEST, build
@@ -218,12 +219,17 @@ class WireTypesTest(ServerTestCase):
         self.assertFalse(is_error, answer)
         self.assertEqual(answer["total"], 2)
 
-    async def test_an_unknown_tool_is_an_error_result(self):
-        """Catches: an unknown tool name escaping as an exception."""
+    async def test_an_unknown_tool_is_a_protocol_error(self):
+        """Catches: a call to no tool answered as a tool result (the MCP spec makes
+        it a protocol error, invalid params), or one that crashes the call."""
         async with self.client(self.served(self.root)) as client:
-            answer, is_error, _ = await self.call(client, "delete_everything", {})
-        self.assertTrue(is_error)
-        self.assertEqual(answer["error"]["type"], "unknown_tool")
+            with self.assertRaises(MCPError) as caught:
+                await client.call_tool("delete_everything", {})
+            # The connection still answers afterwards.
+            answer, is_error, _ = await self.call(client, "node", {"id": "x"})
+        self.assertEqual(caught.exception.error.code, -32602)
+        self.assertNotIn("delete_everything", caught.exception.error.message)
+        self.assertFalse(is_error, answer)
 
 
 class ErrorMappingTest(ServerTestCase):
