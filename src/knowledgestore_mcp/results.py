@@ -159,17 +159,17 @@ def _list_by_repo(store: Store) -> ByRepo:
     return ByRepo({}, skipped)
 
 
-def _join(names: list[str]) -> str:
+def join_names(names: list[str]) -> str:
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
-def _layers(names: list[str], verb: str) -> str:
+def layers_clause(names: list[str], verb: str) -> str:
     """`the context layer is absent`, `the context and history layers are absent`."""
     noun = "layer is" if len(names) == 1 else "layers are"
-    return f"the {_join(names)} {noun} {verb}"
+    return f"the {join_names(names)} {noun} {verb}"
 
 
-def _nameable(store: Store) -> dict[str, Any]:
+def nameable_layers(store: Store) -> dict[str, Any]:
     """The layers a sentence may name, with their manifest entries: the ones this
     server knows, and each `extra_layers` entry of kind `answers` whose name is a
     plain identifier."""
@@ -189,7 +189,7 @@ def searched(store: Store, layers: Sequence[str]) -> str:
     """What an empty answer searched: `searched 12 repositories in the graph layer;
     the relationships layer is absent`. A layer whose presence the store did not
     record (`present: null`) is said to be not recorded, never absent."""
-    nameable = _nameable(store)
+    nameable = nameable_layers(store)
     refused = set(layers) - set(nameable)
     if refused:
         # Counted, not quoted: a refused name may be anything the store holds.
@@ -208,13 +208,13 @@ def searched(store: Store, layers: Sequence[str]) -> str:
         count = len(repository_names(store))
         noun = "repository" if count == 1 else "repositories"
         layer = "layer" if len(present) == 1 else "layers"
-        parts = [f"searched {count} {noun} in the {_join(present)} {layer}"]
+        parts = [f"searched {count} {noun} in the {join_names(present)} {layer}"]
     else:
         parts = ["searched no layer"]
     if absent:
-        parts.append(_layers(absent, "absent"))
+        parts.append(layers_clause(absent, "absent"))
     if unrecorded:
-        parts.append(_layers(unrecorded, "not recorded"))
+        parts.append(layers_clause(unrecorded, "not recorded"))
     return "; ".join(parts)
 
 

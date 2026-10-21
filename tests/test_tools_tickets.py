@@ -526,6 +526,72 @@ class HostileTextTest(TicketsTestCase):
             },
         )
 
+    def test_path_and_id_segments_keep_any_script_and_refuse_dots_alone(self):
+        """Catches: a non-ASCII source or id losing its citation (`é.md`, `café`);
+        or a segment of dots alone, a control character, a backslash or a Unicode
+        line separator passed as structure."""
+        entry = {"title": "Ledger", "html": "<p>ledger</p>"}
+        faq = {
+            "café": {**entry, "source": "docs/é.md"},
+            "dots": {**entry, "source": "docs/.../x.md"},
+            "dot": {**entry, "source": "./x.md"},
+            "bell": {**entry, "source": "docs/a\u0007.md"},
+            "slash": {**entry, "source": "docs\\x.md"},
+            "line": {**entry, "source": "docs/a\u2028b.md"},
+            "...": {**entry, "source": "docs/x.md"},
+            "tab\tid": {**entry, "source": "docs/x.md"},
+        }
+        session = self.session(files={FAQ: json.dumps(faq).encode("utf-8")})
+        found = tools_tickets.answers(session, "ledger")
+        self.assertEqual(
+            {i["id"]: i["source"] for i in found["items"] if i["layer"] == "faq"},
+            {
+                "bell": None,
+                "café": "docs/é.md",
+                "dot": None,
+                "dots": None,
+                "line": None,
+                "slash": None,
+            },
+        )
+        self.assertEqual(found["entries_skipped"], 2)
+
+    def test_one_malformed_answers_layer_is_reported_and_the_others_answer(self):
+        """Catches: invalid JSON, text that is not UTF-8, or a damaged gzip file in
+        one extra answers layer failing the whole call, or being searched as empty
+        without saying so."""
+        gz = "knowledge/answers/faq.json.gz"
+        whole = gzip.compress(json.dumps(FAQ_DATA).encode("utf-8"))
+
+        def gzipped(document):
+            document["extra_layers"]["faq"]["path"] = gz
+
+        for name, rel, written, edit in (
+            ("invalid json", FAQ, b'{"how": ', None),
+            ("not utf-8", FAQ, b'{"how": "\xff"}', None),
+            ("not gzip", gz, b"not gzip at all", gzipped),
+            ("truncated gzip", gz, whole[: len(whole) // 2], gzipped),
+            ("corrupt deflate", gz, whole[:10] + b"\xff" * 20 + whole[30:], gzipped),
+        ):
+            with self.subTest(name):
+                session = self.session(edit=edit, files={rel: written})
+                found = tools_tickets.answers(session, "ledger")
+                self.assertEqual(found["not_read"], {"faq": tools_tickets.NOT_JSON})
+                self.assertEqual(
+                    [(i["layer"], i["id"]) for i in found["items"]], [("topics", "payments")]
+                )
+                self.assertEqual(found["store"]["layers_used"], ["deep_dives", "topics"])
+
+    def test_a_missing_answers_file_still_fails(self):
+        """Catches: a layer the manifest says is present, whose file is gone,
+        answered as though it were empty: that is a store fault Task 9 reports."""
+
+        def missing(document):
+            document["extra_layers"]["faq"]["path"] = "knowledge/answers/gone.json"
+
+        with self.assertRaises(FileNotFoundError):
+            tools_tickets.answers(self.session(edit=missing), "ledger")
+
 
 class AnswersTest(TicketsTestCase):
     def test_answers_find_the_extra_layer_entry(self):

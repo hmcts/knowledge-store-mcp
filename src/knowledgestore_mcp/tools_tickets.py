@@ -29,6 +29,7 @@ import gzip
 import html
 import json
 import re
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -76,6 +77,7 @@ PREFIX_MIN = 3
 # Why an answers layer was not searched.
 A_DIRECTORY = "a directory: an answers layer is read as one JSON file of entries"
 NOT_ENTRIES = "not a JSON object of entries"
+NOT_JSON = "not valid JSON"
 
 # The bytes two lists add to a response over the one list `results.page` measures:
 # `"landed":[],"proposed":[]` in place of `"items":[]`. Nothing else differs, so a
@@ -85,10 +87,8 @@ _SPLIT_MARGIN = len(results.encode({"landed": [], "proposed": []})) - len(
 )
 
 # An answer entry's id, and a `source`, are returned as structure only when they
-# have its shape: an id is one plain token, a source a relative path of plain
-# segments. Prose has spaces, so it cannot pass for either.
-_PLAIN_ID = re.compile(r"[A-Za-z0-9._-]+")
-_PLAIN_PATH = re.compile(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*")
+# have its shape: an id is one plain segment, a source a relative path of plain
+# segments (`_plain_segment`). Prose has spaces, so it cannot pass for either.
 _MARKUP = re.compile(r"<[^>]*>")
 
 # The library's metadata block in the briefs and deep-dives files: not an entry.
@@ -422,10 +422,10 @@ def _answers_searched(store: Store, library: "_Library") -> str:
     present = library.read
     if present:
         layer = "layer" if len(present) == 1 else "layers"
-        parts = [f"searched {count} {noun} in the {results._join(present)} {layer}"]
+        parts = [f"searched {count} {noun} in the {results.join_names(present)} {layer}"]
     else:
         parts = ["searched no layer"]
-    nameable = results._nameable(store)
+    nameable = results.nameable_layers(store)
     absent, unrecorded = [], []
     for name in library.searched:
         if name in present:
@@ -434,9 +434,9 @@ def _answers_searched(store: Store, library: "_Library") -> str:
         state = entry.get("present") if isinstance(entry, dict) else False
         (unrecorded if state is None else absent).append(name)
     if absent:
-        parts.append(results._layers(absent, "absent"))
+        parts.append(results.layers_clause(absent, "absent"))
     if unrecorded:
-        parts.append(results._layers(unrecorded, "not recorded"))
+        parts.append(results.layers_clause(unrecorded, "not recorded"))
     return "; ".join(parts)
 
 
@@ -454,7 +454,7 @@ class _Library:
 
 def _library(store: Store) -> _Library:
     library = _Library()
-    nameable = results._nameable(store)
+    nameable = results.nameable_layers(store)
     extras = sorted(name for name in nameable if name not in KNOWN_LAYERS)
     for layer in sorted([*ANSWER_LAYERS, *extras]):
         entry = nameable[layer]
@@ -474,7 +474,7 @@ def _library(store: Store) -> _Library:
         for entry_id, answer in document.items():
             if entry_id == _METADATA or not isinstance(answer, dict):
                 continue
-            if not _PLAIN_ID.fullmatch(entry_id):
+            if not _plain_segment(entry_id):
                 library.skipped += 1
                 continue
             title, body = answer.get("title"), answer.get("html")
@@ -511,12 +511,25 @@ def _extra(store: Store, entry: dict[str, Any]) -> Any:
     if path.is_dir():
         return _Unreadable(A_DIRECTORY)
     data = path.read_bytes()
-    if path.suffix == ".gz":
-        data = gzip.decompress(data)
-    return json.loads(data)
+    try:
+        if path.suffix == ".gz":
+            data = gzip.decompress(data)
+        return json.loads(data)
+    except (ValueError, EOFError, gzip.BadGzipFile, zlib.error):
+        # One malformed layer is reported, not fatal: the others still answer. Text
+        # that is not UTF-8 is a `ValueError` too. A missing file is not caught.
+        return _Unreadable(NOT_JSON)
+
+
+def _plain_segment(segment: str) -> bool:
+    """One path segment or id: letters and digits in any script, `.`, `_` and `-`,
+    and not dots alone (`.`, `..`, `...`). A control character, a separator or a
+    space is none of these."""
+    return bool(segment.strip(".")) and all(c.isalnum() or c in "._-" for c in segment)
 
 
 def _plain_path(value: Any) -> str | None:
-    if not isinstance(value, str) or not _PLAIN_PATH.fullmatch(value):
+    """`value` when it is a relative path of plain segments, else None."""
+    if not isinstance(value, str) or not all(map(_plain_segment, value.split("/"))):
         return None
-    return None if ".." in value.split("/") else value
+    return value
