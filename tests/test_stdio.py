@@ -217,6 +217,7 @@ class RawProtocolTest(StdioTestCase):
         read_until(set(range(2, len(calls) + 3)))
         child.stdin.close()
         lines.extend(line.decode("utf-8") for line in child.stdout)
+        child.stdout.close()
         self.assertEqual(child.wait(TIMEOUT), 0)
         return lines
 

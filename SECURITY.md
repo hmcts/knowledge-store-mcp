@@ -81,11 +81,24 @@ A call to a tool that does not exist is not a failed call. It is answered with a
 JSON-RPC protocol error, invalid params (`-32602`), as the MCP specification
 says (`tests/test_stdio.py`).
 
-Messages are the server's own sentences. An unexpected failure is logged with its
-traceback to stderr, and the client receives only its type and a fixed sentence. Any absolute path a
-message could carry, such as an OS error naming the cache directory, is replaced
-with `<host path>` before it is sent. That covers an escaping symlink at the
-registry, at `kinds.json` and at an extra layer's file (`tests/test_server.py`).
+Messages are the server's own sentences. An unexpected failure, including a misused
+SQLite connection, is logged with its traceback to stderr. The client receives
+only its type and a fixed sentence.
+
+A reason built around an OS error, such as an unwritable cache, is built from the
+error's `strerror` and a store-relative description, never from the error's own
+text, which names the file. As a second guard, any absolute path left in a message
+is replaced whole with `<host path>`, including a quoted path with spaces and a
+path straight after a colon. That covers:
+- an escaping symlink at the registry, at `kinds.json` and at an extra layer's
+  file;
+- a cache directory whose path has spaces (`tests/test_server.py`).
+
+**On stderr**, a start-up refusal names only paths the operator gave: the
+`--store` root, and the locations file and its entries. It never says where a
+symlink in the store resolves to, for the manifest or for a layer
+(`tests/test_security.py`). A logged traceback names the server's own source
+files.
 
 ## Nothing is written except the cache
 
@@ -110,6 +123,12 @@ re-serves only what the store committed.
 Nothing but JSON-RPC is written to stdout. Logging goes to stderr. A store that
 cannot be served is reported on stderr with exit status 2, before anything is
 served (`tests/test_stdio.py`).
+
+**Known limit.** The SDK's stdio reader (`mcp` 2.3.0) drops an input line it
+cannot parse as JSON-RPC without answering it. That includes a line holding a lone
+UTF-16 surrogate escape (`"\ud800"`). It sends no `-32700` parse error, so a client
+that sent such a line waits for an answer that never comes. The server never sees
+the line, so it cannot answer it either.
 
 ## Bounded answers
 

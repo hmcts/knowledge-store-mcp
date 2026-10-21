@@ -67,14 +67,32 @@ def encode(value: Any) -> bytes:
     return _SURROGATE.sub("\ufffd", text).encode("utf-8")
 
 
-# An absolute path on this host: a `/` that starts a word, or a `file:` URI.
-_HOST_PATH = re.compile(r"file:/+[^\s'\"]*|(?<![\w.~:/-])/[^\s'\",;()]+")
+# An absolute path on this host, consumed whole:
+# - a `file:` URI;
+# - a quoted path, to its closing quote, so a space inside it is part of it;
+# - an unquoted path: a `/` that starts a word, or follows a colon (`error:/x`),
+#   but not `//` (a URL's `https://`), with every following space-separated piece
+#   that still holds a `/` (`/x/Application Support/y`).
+_PIECE = r"[^\s'\",;()]"
+_HOST_PATH = re.compile(
+    rf"file:/+{_PIECE}*(?:\s+{_PIECE}*/{_PIECE}*)*"
+    r"|'/[^']*'"
+    r'|"/[^"]*"'
+    rf"|(?<![\w.~/-])/(?!/){_PIECE}+(?:\s+{_PIECE}*/{_PIECE}*)*"
+)
+
+
+def _replace(match: re.Match[str]) -> str:
+    found = match.group(0)
+    quote = found[0] if found[0] in "'\"" else ""
+    return f"{quote}<host path>{quote}"
 
 
 def without_host_paths(text: str) -> str:
     """`text` with every absolute path replaced: a message the server composes
-    around an OS or SQLite error never says where anything is on this host."""
-    return _HOST_PATH.sub("<host path>", text)
+    around an OS or SQLite error never says where anything is on this host. A
+    quoted path keeps its quotes."""
+    return _HOST_PATH.sub(_replace, text)
 
 
 # --- The envelope -----------------------------------------------------------------

@@ -33,6 +33,9 @@ MAX_DEPTH = 2
 # scan of the label index, so an unbounded query is unbounded work.
 MAX_SEARCH_BYTES = 1024
 MAX_SEARCH_WORDS = 32
+# A repository name is bounded as search text is: a name is compared against every
+# name the estate holds, for near misses, so an unbounded one is unbounded work.
+MAX_NAME_BYTES = 1024
 # A community id is an SQLite INTEGER; anything wider cannot be bound.
 INT64 = range(-(2**63), 2**63)
 
@@ -66,6 +69,8 @@ def _repository(value: object, what: str) -> str:
     name = _text(value, what)
     if not name.strip():
         raise ArgumentRefused(f"{what} is empty: a repository name needs a word")
+    if len(name.encode("utf-8")) > MAX_NAME_BYTES:
+        raise ArgumentRefused(f"{what} must be at most {MAX_NAME_BYTES} bytes")
     return name
 
 
@@ -254,11 +259,8 @@ def store_info(
         ).fetchone()
         index = {"schema": row[0] if row else None, "fallback": None}
     else:
-        # The reason may carry an OS error naming the cache path: never a host path.
-        index = {
-            "schema": None,
-            "fallback": results.without_host_paths(store.index.reason),
-        }
+        # `index.open_index` builds every reason without a host path.
+        index = {"schema": None, "fallback": store.index.reason}
     return _paged(
         store,
         notice,

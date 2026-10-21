@@ -65,10 +65,12 @@ class Manifest:
 def load(root: Path) -> Manifest:
     try:
         path = contained(root, MANIFEST)
-    except OutsideStore as error:
+    except OutsideStore:
+        # Where it resolves to is not said: stderr names no symlink target either.
         raise Refused(
-            f"a manifest outside the store ({error.resolved})", SUPPORTED_MAJORS
-        ) from error
+            f"a manifest outside the store ({MANIFEST.as_posix()} resolves outside it)",
+            SUPPORTED_MAJORS,
+        ) from None
     if not path.is_file():
         raise Refused(f"no {MANIFEST.as_posix()} under {root}", SUPPORTED_MAJORS)
     try:

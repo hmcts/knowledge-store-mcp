@@ -117,12 +117,14 @@ def open_index(
     try:
         plain = contained(root, INDEX_PLAIN)
         archive = contained(root, INDEX_ARCHIVE)
-    except OutsideStore as error:
-        return Fallback(f"the index is outside the store: {error}")
+    except OutsideStore:
+        return Fallback(
+            f"the index is outside the store ({INDEX_ARCHIVE.as_posix()} or {INDEX_PLAIN.name})"
+        )
     if not archive.is_file():
         if plain.is_file():
             # Not immutable: a rebuild may rewrite this file while the server runs.
-            return _connect(plain, immutable=False)
+            return _connect(plain, INDEX_PLAIN.as_posix(), immutable=False)
         return Fallback(f"no index in the store ({INDEX_ARCHIVE.as_posix()} or {INDEX_PLAIN.name})")
 
     if not _SAFE_ID.fullmatch(manifest.store_id):
@@ -130,7 +132,7 @@ def open_index(
     directory = cache_home / "knowledge-store" / manifest.store_id
     resolved = directory.resolve()
     if resolved == root or root in resolved.parents:
-        return Fallback(f"the index cache {directory} would be inside the store")
+        return Fallback("the index cache directory would be inside the store")
     result: IndexHandle | Fallback = Fallback("unreachable")
     # Twice at most. An entry that will not open was either left bad by a crash or
     # removed by a peer serving another archive under this store id, after our
@@ -142,11 +144,11 @@ def open_index(
         except IndexTooLarge as error:
             return Fallback(str(error))
         except (OSError, EOFError, zlib.error) as error:
-            return Fallback(f"the index cache could not be written: {error}")
+            return Fallback(f"the index cache could not be written: {_reason(error)}")
         # Immutable is safe here: an entry is named by its content, appears only by
         # an atomic rename, and is never written again. Skipping SQLite's locking
         # also means a peer removing the entry cannot disturb an open handle.
-        result = _connect(entry, immutable=True, archive_sha256=entry.stem)
+        result = _connect(entry, "the cached index", immutable=True, archive_sha256=entry.stem)
         if isinstance(result, IndexHandle):
             return result
         if isinstance(result, _UnreadSchema):
@@ -155,8 +157,20 @@ def open_index(
         try:
             entry.unlink(missing_ok=True)
         except OSError as error:
-            return Fallback(f"{result.reason}; the bad cache entry could not be removed: {error}")
+            return Fallback(
+                f"{result.reason}; the bad cache entry could not be removed: {_reason(error)}"
+            )
     return result
+
+
+def _reason(error: BaseException) -> str:
+    """Why a cache write or removal failed, without the filename an `OSError` names:
+    its `strerror`, or what kind of failure it was."""
+    if isinstance(error, (EOFError, zlib.error, gzip.BadGzipFile)):
+        return "the archive is damaged"
+    if isinstance(error, OSError) and error.strerror:
+        return error.strerror
+    return type(error).__name__
 
 
 class _HashingReader:
@@ -254,19 +268,21 @@ def _remove_others(directory: Path, keep: Path) -> None:
 
 
 def _connect(
-    path: Path, *, immutable: bool, archive_sha256: str | None = None
+    path: Path, described: str, *, immutable: bool, archive_sha256: str | None = None
 ) -> IndexHandle | Fallback:
+    """`described` names the file in a reason: store-relative, or "the cached
+    index", never its path on this host."""
     uri = path.as_uri() + "?mode=ro" + ("&immutable=1" if immutable else "")
     try:
         connection = sqlite3.connect(uri, uri=True)
     except sqlite3.Error as error:
-        return Fallback(f"the index {path} could not be opened: {error}")
+        return Fallback(f"{described} could not be opened: {error}")
     try:
         connection.execute("PRAGMA query_only=1")
         row = connection.execute("SELECT value FROM meta WHERE key = 'index_schema'").fetchone()
     except sqlite3.Error as error:
         connection.close()
-        return Fallback(f"the index {path} could not be read: {error}")
+        return Fallback(f"{described} could not be read: {error}")
     schema = row[0] if row else None
     if _major(schema) != SCHEMA_MAJOR:
         connection.close()

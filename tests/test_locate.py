@@ -307,7 +307,8 @@ class ContainmentTest(LocateTestCase):
         with self.assertRaises(Refused) as caught:
             manifest.load(self.root)
         self.assertIn("a manifest outside the store", str(caught.exception))
-        self.assertIn(str(real), str(caught.exception))
+        # Where it resolves to is never said, on stderr or anywhere (SECURITY.md).
+        self.assertNotIn(str(real), str(caught.exception))
 
     def test_a_listed_clone_whose_manifest_escapes_is_not_matched(self):
         """Catches: a --store-id lookup reading a manifest outside the clone, so a

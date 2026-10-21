@@ -305,6 +305,8 @@ def convert(spec: ToolSpec, arguments: dict[str, Any] | None) -> dict[str, Any]:
 
 # --- Errors -------------------------------------------------------------------------
 
+INTERNAL = "the server failed to answer; its log on stderr says why"
+
 
 def error(exception: BaseException) -> tuple[str, str]:
     """A failure as (type, message). The message is this server's own sentence:
@@ -320,6 +322,10 @@ def error(exception: BaseException) -> tuple[str, str]:
         return "outside_store", "a path in the store resolves outside it, so it was not read"
     if isinstance(exception, (Refused, NotFound, AmbiguousStoreId)):
         return "store_refused", str(exception)
+    if isinstance(exception, sqlite3.ProgrammingError):
+        # Misuse of a connection (a closed one, the wrong thread) is this server's
+        # defect, not the store's: logged as one.
+        return "internal", INTERNAL
     if isinstance(exception, sqlite3.Error):
         return "store_unreadable", "the query index could not be read"
     if isinstance(exception, (EOFError, zlib.error)):
@@ -328,7 +334,7 @@ def error(exception: BaseException) -> tuple[str, str]:
         return "store_unreadable", "a store file could not be read"
     if isinstance(exception, ValueError):
         return "store_unreadable", "a store file could not be parsed"
-    return "internal", "the server failed to answer; its log on stderr says why"
+    return "internal", INTERNAL
 
 
 # --- The server ---------------------------------------------------------------------
@@ -380,11 +386,11 @@ class KnowledgeStoreServer:
                 code=INVALID_PARAMS,
                 message=f"no tool by that name; the tools are: {', '.join(BY_NAME)}",
             )
-        future = self._thread.submit(self.call, params.name, params.arguments)
+        future = self._thread.submit(self._call, params.name, params.arguments)
         text, is_error = await asyncio.wrap_future(future)
         return CallToolResult(content=[TextContent(text=text)], is_error=is_error)
 
-    def call(self, name: str, arguments: dict[str, Any] | None) -> tuple[str, bool]:
+    def _call(self, name: str, arguments: dict[str, Any] | None) -> tuple[str, bool]:
         """One call to a listed tool, on the store's thread: the text to send, and
         whether it is an error result. Nothing raised escapes: every failure is an
         error result."""

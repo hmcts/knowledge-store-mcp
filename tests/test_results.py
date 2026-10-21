@@ -516,6 +516,27 @@ class RealResponseTest(StoreTestCase):
         self.assertEqual(first(size - 1)["items"], page["items"][:-1])
 
 
+class HostPathTest(unittest.TestCase):
+    def test_every_form_of_absolute_path_is_replaced_whole(self):
+        """Catches: a scrub that stops at the first space of a quoted path, misses a
+        path straight after a colon, or leaves the pieces of an unquoted path that
+        follow a space; and one that eats a URL or a store-relative path."""
+        cases = {
+            "denied: '/tmp/a b/Application Support/user/x'": "denied: '<host path>'",
+            "denied: '/tmp/a b/Application Support'": "denied: '<host path>'",
+            'opened: "/var/a b/c"': 'opened: "<host path>"',
+            "error:/abs/path/x here": "error:<host path> here",
+            "see /x/Application Support/secret-user/y now": "see <host path> now",
+            "file:///private/x y/z": "<host path>",
+            "https://github.com/example-org/a kept": "https://github.com/example-org/a kept",
+            "knowledge/index/store.sqlite.gz kept": "knowledge/index/store.sqlite.gz kept",
+            "1/2 and a/b": "1/2 and a/b",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(results.without_host_paths(text), expected)
+
+
 class CursorTest(unittest.TestCase):
     def setUp(self):
         # Page 1 is 90 bytes with one item and 96 with two, so at 92 it holds one.

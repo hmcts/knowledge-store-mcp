@@ -133,6 +133,25 @@ class ContainmentTest(SecurityTestCase):
         self.assertIn("resolves outside the store", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_a_manifest_symlinked_out_names_no_target_on_stderr(self):
+        """Catches: the start-up refusal of an escaping manifest quoting where the
+        symlink resolves to, a host path the store chose."""
+        root = self.store()
+        self.escape(root, MANIFEST)
+        result = subprocess.run(
+            [str(SCRIPT), "--store", str(root)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "HOME": str(self.tmp), "XDG_CACHE_HOME": str(self.cache)},
+            stdin=subprocess.DEVNULL,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("a manifest outside the store", result.stderr)
+        self.assertNotIn(str(self.outside), result.stderr)
+
     async def test_a_reload_that_meets_an_escaping_layer_says_so(self):
         """Catches: a pull that makes a layer escape served from the new store, or
         refused with the notice for an unreadable manifest, which names the wrong

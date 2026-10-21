@@ -9,6 +9,8 @@ clock and the cache directory.
 
 import asyncio
 import gzip
+import os
+import sqlite3
 import json
 import tempfile
 import unittest
@@ -22,7 +24,7 @@ from mcp_types import TextContent
 
 from fixture_store.build import BY_REPO, EXTRA_LAYERS_DECLARED, GRAPH, MANIFEST, build
 from fixture_store.sweep import CALLS, checks
-from knowledgestore_mcp import results
+from knowledgestore_mcp import results, server
 from knowledgestore_mcp.server import KnowledgeStoreServer
 
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
@@ -202,6 +204,30 @@ class WireTypesTest(ServerTestCase):
             "1 argument this tool does not take; it takes: id",
         )
 
+    async def test_a_repository_name_is_bounded_at_1024_bytes(self):
+        """Catches: a repository name of any length compared against every estate
+        name for near misses, which is unbounded work, in any tool that takes one.
+        1024 bytes is accepted (512 two-byte characters); one byte more is not."""
+        at_bound, over = "é" * 512, "é" * 512 + "x"
+        cases = (
+            ("find_repo", "name", {}),
+            ("search", "repo", {"text": "refund"}),
+            ("dependents", "target", {}),
+            ("dependencies", "repo", {}),
+            ("repo_answer", "repo", {}),
+            ("tickets", "repo", {}),
+        )
+        for tool, name, others in cases:
+            with self.subTest(tool=tool):
+                described = "repository name" if tool == "find_repo" else name
+                self.assertEqual(
+                    await self.refused(tool, {**others, name: over}),
+                    f"{described} must be at most 1024 bytes",
+                )
+                async with self.client(self.served(self.root)) as client:
+                    answer, is_error, _ = await self.call(client, tool, {**others, name: at_bound})
+                self.assertFalse(is_error, answer)
+
     async def test_a_boolean_must_be_true_or_false(self):
         """Catches: any truthy value turning on a transitive walk."""
         self.assertEqual(
@@ -341,10 +367,42 @@ class ErrorMappingTest(ServerTestCase):
         async with self.client(self.served(self.store(), cache=blocked)) as client:
             answer, is_error, text = await self.call(client, "store_info", {})
         self.assertFalse(is_error)
-        self.assertTrue(
-            answer["index"]["fallback"].startswith("the index cache could not be written")
+        self.assertEqual(
+            answer["index"]["fallback"], "the index cache could not be written: Not a directory"
         )
         self.assertNoHostPath(text)
+
+    async def test_an_unwritable_cache_whose_path_has_spaces_names_none_of_it(self):
+        """Catches: a fallback reason built from `str(OSError)`, whose quoted filename
+        a scrub cut short at the first space, leaving `Application Support/<user>`
+        in the answer."""
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root ignores file modes")
+        cache = self.tmp / "with space" / "Application Support" / "secret-user-name"
+        cache.mkdir(parents=True)
+        os.chmod(cache, 0o555)
+        self.addCleanup(os.chmod, cache, 0o755)
+        async with self.client(self.served(self.store(), cache=cache)) as client:
+            answer, is_error, text = await self.call(client, "store_info", {})
+        self.assertFalse(is_error)
+        self.assertEqual(
+            answer["index"]["fallback"], "the index cache could not be written: Permission denied"
+        )
+        for fragment in ("with space", "Application Support", "secret-user-name"):
+            self.assertNotIn(fragment, text)
+        self.assertNoHostPath(text)
+
+    def test_a_misused_connection_is_internal_not_unreadable(self):
+        """Catches: `sqlite3.ProgrammingError` (a closed connection, the wrong
+        thread) reported as a damaged store, so the server's own defect is never
+        logged."""
+        self.assertEqual(
+            server.error(sqlite3.ProgrammingError("closed")), ("internal", server.INTERNAL)
+        )
+        self.assertEqual(
+            server.error(sqlite3.DatabaseError("malformed")),
+            ("store_unreadable", "the query index could not be read"),
+        )
 
 
 class ThreadsTest(ServerTestCase):
