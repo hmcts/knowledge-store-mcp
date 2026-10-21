@@ -113,10 +113,43 @@ def open_store(
     root: Path, cache_home: Path, *, max_index_bytes: int = index.DEFAULT_MAX_INDEX_BYTES
 ) -> Store:
     loaded = manifest.load(root)
+    _refuse_escaping_layers(root, loaded)
     # Stat before opening: a change in between is then seen as a change next call.
     state = index.archive_state(root)
     opened = index.open_index(root, loaded, cache_home, max_bytes=max_index_bytes)
     return Store(root, loaded, opened, state)
+
+
+def _declared_paths(found: Manifest) -> list[tuple[str, Any]]:
+    """(layer, path) for every path the manifest declares for a present layer: each
+    library layer's `paths`, and each extra layer's `path`."""
+    declared: list[tuple[str, Any]] = []
+    for name, entry in sorted(found.layers.items()):
+        if isinstance(entry, dict) and entry.get("present") is True:
+            paths = entry.get("paths")
+            declared.extend((name, rel) for rel in (paths if isinstance(paths, list) else []))
+    for name, entry in sorted(found.extra_layers.items()):
+        if isinstance(entry, dict) and entry.get("present") is True:
+            declared.append((name, entry.get("path")))
+    return declared
+
+
+def _refuse_escaping_layers(root: Path, found: Manifest) -> None:
+    """Refuse a store any of whose declared layer paths resolves outside it: a
+    symlinked layer is a hostile or broken store, not one to serve in part. The
+    files inside a layer directory are checked as they are read, and an escaping
+    one is skipped there. The refusal names the layer and its declared path, never
+    where it resolves to."""
+    for name, rel in _declared_paths(found):
+        if not isinstance(rel, str) or not rel:
+            continue
+        try:
+            contained(root, rel)
+        except OutsideStore:
+            raise Refused(
+                f"layer {name!r} at {rel!r}, which resolves outside the store",
+                manifest.SUPPORTED_MAJORS,
+            ) from None
 
 
 def _manifest_sha256(root: Path) -> str | None:

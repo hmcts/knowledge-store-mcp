@@ -248,7 +248,11 @@ def store_info(session: Session) -> dict[str, Any]:
         ).fetchone()
         index = {"schema": row[0] if row else None, "fallback": None}
     else:
-        index = {"schema": None, "fallback": store.index.reason}
+        # The reason may carry an OS error naming the cache path: never a host path.
+        index = {
+            "schema": None,
+            "fallback": results.without_host_paths(store.index.reason),
+        }
     return _respond(
         store,
         notice,

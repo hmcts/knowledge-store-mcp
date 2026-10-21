@@ -63,6 +63,16 @@ def encode(value: Any) -> bytes:
     return _SURROGATE.sub("\ufffd", text).encode("utf-8")
 
 
+# An absolute path on this host: a `/` that starts a word, or a `file:` URI.
+_HOST_PATH = re.compile(r"file:/+[^\s'\"]*|(?<![\w.~:/-])/[^\s'\",;()]+")
+
+
+def without_host_paths(text: str) -> str:
+    """`text` with every absolute path replaced: a message the server composes
+    around an OS or SQLite error never says where anything is on this host."""
+    return _HOST_PATH.sub("<host path>", text)
+
+
 # --- The envelope -----------------------------------------------------------------
 
 
