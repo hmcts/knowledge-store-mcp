@@ -76,6 +76,8 @@ To share it with everyone working in a repository, commit `.github/mcp.json` ins
 
 ### The Copilot coding agent
 
+**Enable this front door only on repositories at least as private as the store.** The agent writes pull requests, commits and comments in whichever repository it works in, and an answer quotes what the tools return: commit messages, paths, ticket ids. In a public repository, that is a route from an internal store into public view. The read-only token limits what the agent can change, not where it can repeat what it reads. A store whose content is already public has no such restriction.
+
 The coding agent works on a fresh runner, so setup steps clone the store and install `uv` before the agent starts. Three pieces, all in the repository the agent works in:
 
 1. **A read-only token for the store**, as an **Agents** secret (Settings → Secrets and variables → Agents): a fine-grained token with *Contents: read* on the store repository and nothing else. Every Agents secret is also exposed to the agent as an environment variable, which is why the scope matters. Do not prefix its name with `COPILOT_MCP_`: those reach MCP servers only, and this one is for the setup steps.
@@ -120,6 +122,8 @@ The coding agent works on a fresh runner, so setup steps clone the store and ins
 
    GitHub recommends listing tools individually, because the agent calls them without asking. `"*"` is equivalent here: every tool is read-only, and declares so in its annotations.
 
+That path configures where the server reads. It never appears in an answer, which cites a pinned URL or a store-relative path.
+
 The path assumes GitHub's hosted Ubuntu runner, whose home directory is `/home/runner`. The agent's firewall does not apply to MCP server processes or to setup steps.
 
 ### A hosted agent
@@ -136,7 +140,7 @@ The server sends them as `instructions` in its initialize result: the constant `
 
 The rules it states:
 
-- **Cite what the tool gave you:** the pinned URL, or the store path, exactly as returned.
+- **Cite what the tool gave you, exactly as returned:** the pinned URL, or the store-relative path of a file committed in the store. Never a host or corpus path, such as `repositories/…` or a clone path on the runner.
 - **A negative answer is about the store, not the estate.** "Not found" means not in the repositories this store holds.
 - **Proposed work is not landed.** A ticket seen only on a branch is reported as proposed.
 - **A near miss is not an answer.** A similarly named repository is a different repository.
@@ -159,14 +163,16 @@ The MCP specification leaves `instructions` optional for clients. A client that 
 
 ### Where a client drops them
 
-**`knowledge-store-mcp --print-instructions` prints the exact text the server sends.** It needs no store. Paste its output into `.github/copilot-instructions.md`, or into a hosted agent's system prompt. The copy is generated from the server's own source, never written by hand, so regenerating it after an upgrade is the whole update.
+**For a client marked unverified, use this by default.** Claude Desktop and the Copilot coding agent are unverified, so treat each as a client that drops the field: paste the printed text into the place that client reads (a project's custom instructions, or `.github/copilot-instructions.md`). Do not wait to see whether the rules arrive. For the other clients it is optional.
+
+**`knowledge-store-mcp --print-instructions` prints the exact text the server sends.** It needs no store. Paste its output into `.github/copilot-instructions.md`, a Claude Desktop project's instructions, or a hosted agent's system prompt. The copy is generated from the server's own source, never written by hand, so regenerating it after an upgrade is the whole update.
 
 **The behaviours that matter most do not depend on that prose.** They are in the tool results themselves, which every front door receives:
 
 - a near miss is labelled as one, never returned as the answer;
 - an empty result names what was searched, and which layers were absent;
 - landed and proposed tickets come back as separate lists;
-- every citation is a pinned URL or a store path.
+- every citation is a pinned URL or a store-relative path, never a host or corpus path.
 
 The guidance tells the model how to read those results. The results stay correct without it.
 
