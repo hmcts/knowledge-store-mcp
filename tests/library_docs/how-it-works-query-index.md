@@ -1,4 +1,4 @@
-<!-- Vendored verbatim from knowledge-store-builder docs/how-it-works.md at b6cbc5a91fac6895188f5158701022b1fe61359f (#457), the "Query index" section. tests/test_index_queries.py holds the server's SQL to the tagged blocks below; refresh this copy, never edit it, when the library's documented queries change. -->
+<!-- Vendored from knowledge-store-builder docs/how-it-works.md at b6cbc5a91fac6895188f5158701022b1fe61359f (#457), the "Query index" section; its tagged query and helper blocks are verbatim. tests/test_index_queries.py holds the server's SQL to the tagged blocks below; refresh this copy, never edit it, when the library's documented queries change. -->
 
 ## Query index
 
