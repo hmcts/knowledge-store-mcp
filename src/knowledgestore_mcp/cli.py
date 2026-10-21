@@ -16,7 +16,7 @@ from . import __version__, index, locate
 from .locate import AmbiguousStoreId, NotFound
 from .manifest import Refused
 from .results import DEFAULT_MAX_RESPONSE_BYTES
-from .server import KnowledgeStoreServer
+from .server import INSTRUCTIONS, KnowledgeStoreServer
 
 # The exit status of a store that cannot be served, as argparse uses for bad usage.
 REFUSED = 2
@@ -52,7 +52,19 @@ def main(argv: list[str] | None = None) -> int:
         help="the most bytes one answer may be; a longer list is paged "
         f"(default {DEFAULT_MAX_RESPONSE_BYTES})",
     )
+    parser.add_argument(
+        "--print-instructions",
+        action="store_true",
+        help="print the answering guidance the server sends to clients, and exit; "
+        "for a client that drops it",
+    )
     args = parser.parse_args(argv)
+    if args.print_instructions:
+        # Bytes, not text: the copy must be exactly what is sent, whatever the
+        # platform does to line endings. No store is resolved or opened.
+        sys.stdout.buffer.write(INSTRUCTIONS.encode("utf-8"))
+        sys.stdout.flush()
+        return 0
     logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
     home = Path.home()

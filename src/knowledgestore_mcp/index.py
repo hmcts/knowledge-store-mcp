@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .locate import OutsideStore, contained
-from .manifest import Manifest
+from .manifest import Manifest, unrecognised
 
 INDEX_PLAIN = Path("knowledge") / "index" / "store.sqlite"
 INDEX_ARCHIVE = Path("knowledge") / "index" / "store.sqlite.gz"
@@ -90,9 +90,10 @@ class Fallback:
     reason: str
 
 
-class _UnreadSchema(Fallback):
-    """The entry opened and holds an index schema this server does not read. The
-    schema came from the archive, so decompressing it again cannot change it."""
+class UnrecognisedIndex(Fallback):
+    """The entry opened and holds an index schema this server does not read: the
+    index layer is present but unrecognised, and the graph answers. The schema came
+    from the archive, so decompressing it again cannot change it."""
 
 
 def cache_home(env: Mapping[str, str], home: Path) -> Path:
@@ -169,7 +170,7 @@ def _open_cached(archive: Path, directory: Path, max_bytes: int) -> IndexHandle 
         result = _connect(entry, "the cached index", immutable=True, archive_sha256=entry.stem)
         if isinstance(result, IndexHandle):
             return result
-        if isinstance(result, _UnreadSchema):
+        if isinstance(result, UnrecognisedIndex):
             # The entry is a whole copy of the archive: keep it, and fall back now.
             return result
         try:
@@ -373,10 +374,21 @@ def _connect(
     schema = row[0] if row else None
     if _major(schema) != SCHEMA_MAJOR:
         connection.close()
-        return _UnreadSchema(
-            f"index schema {schema!r} is not one this server reads (reads major {SCHEMA_MAJOR})"
-        )
+        return UnrecognisedIndex(unrecognised("index", _schema_found(schema), (SCHEMA_MAJOR,)))
     return IndexHandle(connection, path, archive_sha256)
+
+
+# A schema a reason may quote: a short version number. Anything else is store text.
+_VERSION = re.compile(r"\d{1,6}(?:\.\d{1,6}){0,2}", re.ASCII)
+
+
+def _schema_found(schema: object) -> str:
+    """The schema found, as a reason may say it: quoted only as a version number."""
+    if schema is None:
+        return "none"
+    if isinstance(schema, str) and _VERSION.fullmatch(schema):
+        return schema
+    return "a schema that is not a version number"
 
 
 def _major(schema: object) -> int | None:

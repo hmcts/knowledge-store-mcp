@@ -14,7 +14,14 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from fixture_store.build import BY_REPO, INDEX_PLAIN, MANIFEST, RELATIONSHIPS, build
+from fixture_store.build import (
+    BY_REPO,
+    INDEX_PLAIN,
+    MANIFEST,
+    RELATIONSHIPS,
+    RELATIONSHIPS_FORMAT,
+    build,
+)
 from knowledgestore_mcp import results, store
 from knowledgestore_mcp.results import CursorRefused, Known, NotHeld, Unknown
 from knowledgestore_mcp.store import Notice
@@ -204,7 +211,9 @@ class RepositoryTest(StoreTestCase):
         loaded = self.open()
         self.assertIsInstance(results.repository(loaded, "legacy-network"), NotHeld)
         registry = loaded.root / RELATIONSHIPS / "repository-dependencies.json"
-        registry.write_text(json.dumps({"unresolved_targets_outside_estate": {}}))
+        registry.write_text(
+            json.dumps({"format": RELATIONSHIPS_FORMAT, "unresolved_targets_outside_estate": {}})
+        )
         self.assertEqual(
             results.repository(loaded, "legacy-network"),
             NotHeld("legacy-network", referenced_by=("ledger-service", "payments-api")),
@@ -273,9 +282,10 @@ class RepositoryTest(StoreTestCase):
         registry.write_text(
             json.dumps(
                 {
+                    "format": RELATIONSHIPS_FORMAT,
                     "unresolved_targets_outside_estate": {
                         "terraform_module": {"Example-Org/vpc": detail}
-                    }
+                    },
                 }
             )
         )
@@ -301,7 +311,12 @@ class RepositoryTest(StoreTestCase):
         detail = {"references": 1, "referenced_by": ["ledger-service"]}
         registry.write_text(
             json.dumps(
-                {"unresolved_targets_outside_estate": {"terraform_module": {"Straße/vpc": detail}}}
+                {
+                    "format": RELATIONSHIPS_FORMAT,
+                    "unresolved_targets_outside_estate": {
+                        "terraform_module": {"Straße/vpc": detail}
+                    },
+                }
             )
         )
         self.assertEqual(results.outside_estate(loaded, "vpc"), ())

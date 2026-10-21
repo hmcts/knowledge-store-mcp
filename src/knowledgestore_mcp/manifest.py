@@ -48,6 +48,16 @@ class Refused(Exception):
         )
 
 
+def unrecognised(layer: str, found: str, supported: tuple[int, ...]) -> str:
+    """Why a layer that carries its own format stamp is present but not read: `found`
+    is this server's own description of the stamp, never text quoted from it."""
+    majors = ", ".join(f"{major}.x" for major in supported)
+    return (
+        f"{layer} layer present but format unrecognised "
+        f"(found {found}, supports {majors}); not read"
+    )
+
+
 @dataclass(frozen=True)
 class Manifest:
     major: int

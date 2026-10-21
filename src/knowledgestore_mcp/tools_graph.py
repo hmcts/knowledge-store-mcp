@@ -217,13 +217,23 @@ def _paged(
 
 def _repository_layers(store: Store, base: str, answer: Any) -> list[str]:
     """The layers a repository answer read: the relationships registry is consulted
-    only for a name the estate does not hold, and only when it is present."""
+    only for a name the estate does not hold, and only when it is present in a
+    format this server reads."""
     if isinstance(answer, Known):
         return [base]
-    entry = store.manifest.layers.get("relationships")
-    if isinstance(entry, dict) and entry.get("present") is True:
+    if results.relationships_readable(store):
         return [base, "relationships"]
     return [base]
+
+
+def _searched_name(store: Store, layers_used: list[str]) -> str:
+    """What a name lookup searched. A relationships layer present in a format this
+    server does not read was not searched, and the sentence gives its reason, so
+    "not in the estate" is not read as "the registry does not name it either"."""
+    consulted = list(layers_used)
+    if results.relationships_unrecognised(store) is not None:
+        consulted.append("relationships")
+    return results.searched(store, consulted)
 
 
 # --- The tools ----------------------------------------------------------------------
@@ -248,6 +258,12 @@ def store_info(
     else:
         # `index.open_index` builds every reason without a host path.
         index = {"schema": None, "fallback": store.index.reason}
+    layers: dict[str, dict[str, Any]] = {
+        name: {"present": entry.get("present") if isinstance(entry, dict) else None}
+        for name, entry in found.layers.items()
+    }
+    for name, reason in results.unrecognised_layers(store).items():
+        layers.setdefault(name, {"present": True})["unrecognised"] = reason
     return _paged(
         store,
         notice,
@@ -258,10 +274,7 @@ def store_info(
         cap_bytes=cap_bytes,
         stale_days=session.stale_days(),
         index=index,
-        layers={
-            name: {"present": entry.get("present") if isinstance(entry, dict) else None}
-            for name, entry in found.layers.items()
-        },
+        layers=layers,
         extra_layers={
             name: {
                 "present": entry.get("present") if isinstance(entry, dict) else None,
@@ -303,7 +316,7 @@ def find_repo(session: Session, name: str) -> dict[str, Any]:
     layers_used = _repository_layers(store, base, answer)
     fields = answer.as_dict()
     if not isinstance(answer, Known):
-        fields["searched"] = results.searched(store, layers_used)
+        fields["searched"] = _searched_name(store, layers_used)
     return _respond(store, notice, layers_used, **fields)
 
 
@@ -344,6 +357,7 @@ def search(
                 cursor=cursor,
                 cap_bytes=cap_bytes,
                 matches=0,
+                searched=_searched_name(store, layers_used),
                 **fields,
             )
         repo = answer.name

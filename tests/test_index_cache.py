@@ -552,16 +552,25 @@ class SchemaTest(CacheTestCase):
 
     def test_an_unknown_schema_major_falls_back_and_names_it(self):
         """Catches: querying an index whose layout this server does not know, or
-        falling back without saying which schema was found and which is read."""
-        for value, shown in (("2.0", "'2.0'"), ("one", "'one'"), (None, "None")):
+        falling back without saying which schema was found and which is read, in
+        the terms every unrecognised layer is stated in (spec, Absence semantics);
+        or quoting a schema that is not a version number, which is store text."""
+        for value, shown in (
+            ("2.0", "2.0"),
+            ("one", "a schema that is not a version number"),
+            (None, "none"),
+        ):
             with self.subTest(index_schema=value):
                 root = build(self.tmp / f"s-{value}", index="plain")
                 self.set_schema(root, value)
                 result = self.open(root)
-                self.assertIsInstance(result, Fallback)
+                self.assertIsInstance(result, index.UnrecognisedIndex)
                 assert isinstance(result, Fallback)
-                self.assertIn(f"index schema {shown}", result.reason)
-                self.assertIn("reads major 1", result.reason)
+                self.assertEqual(
+                    result.reason,
+                    "index layer present but format unrecognised "
+                    f"(found {shown}, supports 1.x); not read",
+                )
 
     def test_an_unknown_schema_archive_is_decompressed_once_and_its_entry_kept(self):
         """Catches: discarding the entry and decompressing again when only the schema
@@ -585,7 +594,7 @@ class SchemaTest(CacheTestCase):
         for result in (first, again):
             self.assertIsInstance(result, Fallback)
             assert isinstance(result, Fallback)
-            self.assertIn("index schema '2.0'", result.reason)
+            self.assertIn("(found 2.0, supports 1.x)", result.reason)
         # One decompress over two opens: the entry is kept and reused, unchanged.
         self.assertEqual(len(decompressed), 1)
         self.assertEqual(

@@ -23,6 +23,7 @@ from mcp_types import TextContent
 
 from fixture_store.build import MANIFEST, build
 from fixture_store.sweep import CALLS, checks
+from knowledgestore_mcp import server
 
 SCRIPT = Path(sys.executable).parent / "knowledge-store-mcp"
 
@@ -336,6 +337,47 @@ class StartUpRefusalTest(StdioTestCase):
         result = self.run_script("--store", str(self.root), "--max-response-bytes", "0")
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
+
+
+class InstructionsTest(StdioTestCase):
+    """The answering guidance (README, How the model is told to answer): sent in
+    the initialize result, and printed for a client that drops it."""
+
+    def test_the_initialize_result_carries_the_instructions(self):
+        """Catches: the server started without `instructions`, so a client that
+        honours the field hands the model nothing, or with text other than the
+        module's constant, so `--print-instructions` no longer prints what is sent."""
+
+        async def body(client):
+            return client.instructions
+
+        self.assertEqual(self.run_client(body), server.INSTRUCTIONS)
+
+    def test_print_instructions_prints_the_same_bytes_without_a_store(self):
+        """Catches: `--print-instructions` opening a store first (so it fails where
+        no store resolves), printing text other than what is sent (a re-wrapped or
+        hand-written copy, an added line), or exiting non-zero."""
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("KNOWLEDGE_STORE_PATH", "CLAUDE_PLUGIN_ROOT")
+        }
+        result = subprocess.run(
+            [str(SCRIPT), "--print-instructions"],
+            capture_output=True,
+            check=False,
+            env={**env, **self.env},
+            stdin=subprocess.DEVNULL,
+            timeout=TIMEOUT,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, server.INSTRUCTIONS.encode("utf-8"))
+        self.assertEqual(result.stderr, b"")
+
+    def test_the_instructions_fit_where_claude_code_cuts_them(self):
+        """Catches: guidance grown past 4,096 characters, where Claude Code cuts
+        server instructions, so the rules at the end never reach the model."""
+        self.assertLess(len(server.INSTRUCTIONS), 4096)
 
 
 if __name__ == "__main__":

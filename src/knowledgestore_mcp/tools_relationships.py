@@ -8,6 +8,10 @@ never joined into a path: a `by-repo/` file is found by listing the directory th
 manifest names (`results.by_repo_files`) and matching file stems against the name
 the lookup returned.
 
+A layer whose registry carries no format stamp, or one this server does not read,
+is present but unrecognised: each tool refuses with the reason
+(`results.LayerUnrecognised`) and reads nothing in the layer.
+
 Every list is complete and paged under the cap (`results.page`), with `total` and
 `next_page`. An empty answer says what was searched, and an absent layer is named
 rather than read as "nothing depends on it". Store text - an example line, an
@@ -46,8 +50,9 @@ Edge = dict[str, Any]
 
 
 def _present(store: Store) -> bool:
-    entry = store.manifest.layers.get(LAYER)
-    return isinstance(entry, dict) and entry.get("present") is True
+    """Present and in a format this server reads; `_lookup` has already refused a
+    layer that is present but unrecognised."""
+    return results.relationships_readable(store)
 
 
 def _by_repo(store: Store, name: str) -> dict[str, Any] | None:
@@ -114,8 +119,11 @@ def _lookup(
     session: Session, name: str
 ) -> tuple[Store, Notice | None, str, Known | results.Unknown | NotHeld, list[str]]:
     """The store, the layer that answered the name, the three-way answer, and the
-    layers the response used."""
+    layers the response used. A relationships layer present in a format this
+    server does not read is refused before the name is looked up: the lookup
+    itself would read it."""
     store, notice = session.current()
+    results.require_relationships(store)
     base = _reader(store).layer
     answer = results.repository(store, name)
     layers_used = [base, LAYER] if _present(store) else [base]
