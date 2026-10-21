@@ -63,11 +63,9 @@ UNTRUSTED = (
 )
 
 # A JSON integer, or decimal text holding one: some clients send every number as
-# text. No sign but `-`, no spaces, no fraction.
-_DECIMAL = re.compile(r"-?[0-9]+")
-
-# An argument name a refusal may quote: one plain identifier.
-_ARGUMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+# text. No sign but `-`, no spaces, no fraction. ASCII digits only: `int` would
+# read any Unicode digit (`"١"` is 1), and a number is not spelt that way.
+_DECIMAL = re.compile(r"-?\d+", re.ASCII)
 
 
 # --- The tools ----------------------------------------------------------------------
@@ -373,7 +371,9 @@ class KnowledgeStoreServer:
             on_call_tool=self._on_call_tool,
         )
 
-    async def _on_list_tools(
+    # The SDK awaits every request handler, so this one is a coroutine though it
+    # awaits nothing.
+    async def _on_list_tools(  # NOSONAR(S7503)
         self, _context: Any, _params: PaginatedRequestParams | None
     ) -> ListToolsResult:
         return ListToolsResult(tools=listed())

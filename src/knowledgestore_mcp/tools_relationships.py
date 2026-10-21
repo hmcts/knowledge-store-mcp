@@ -16,7 +16,7 @@ rather than read as "nothing depends on it". Store text - an example line, an
 
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from . import results
@@ -191,20 +191,7 @@ def dependents(
         kind = _text(kind, "kind")
     if ref_prefix_not is not None:
         ref_prefix_not = _text(ref_prefix_not, "ref_prefix_not")
-    if not isinstance(transitive, bool):
-        raise ArgumentRefused("transitive must be true or false")
-    if transitive:
-        depth = MAX_DEPTH if max_depth is None else max_depth
-        depth = _count(depth, "max_depth", f"1 to {MAX_DEPTH}", lambda n: 1 <= n <= MAX_DEPTH)
-        if ref_prefix_not is not None:
-            raise ArgumentRefused(
-                "ref_prefix_not filters a target's own consumers; it is not applied to a "
-                "transitive walk: ask without transitive"
-            )
-    else:
-        depth = 0
-        if max_depth is not None:
-            raise ArgumentRefused("max_depth applies only with transitive: true")
+    depth = _walk_depth(transitive, max_depth, ref_prefix_not)
     store, notice, base, answer, layers_used = _lookup(session, name)
     _check_kind(store, kind)
     common = {"store": store, "notice": notice, "base": base, "layers_used": layers_used}
@@ -217,13 +204,7 @@ def dependents(
             for outside in results.outside_estate(store, name)
             if kind is None or outside.kind == kind
         ]
-        # `transitive` and `ref_prefix_not` were refused together above.
-        if ref_prefix_not is not None:
-            fields["not_applied"] = {"ref_prefix_not": "targets outside the estate record no pins"}
-        elif transitive:
-            fields["not_applied"] = {
-                "transitive": "a target outside the estate has no dependency file to walk from"
-            }
+        fields.update(_not_applied_outside(ref_prefix_not, transitive))
         return _listing(
             **common,
             items=entries,
@@ -248,6 +229,39 @@ def dependents(
     if ref_prefix_not is not None:
         edges = [e for e in edges if _pins_other_than(e, ref_prefix_not)]
     return _listing(**common, items=edges, key=_edge_key, **paging, **fields)
+
+
+def _walk_depth(transitive: bool, max_depth: int | None, ref_prefix_not: str | None) -> int:
+    """The hops a `dependents` walk takes, 0 when it does not walk; refuses the
+    arguments that do not go together."""
+    if not isinstance(transitive, bool):
+        raise ArgumentRefused("transitive must be true or false")
+    if not transitive:
+        if max_depth is not None:
+            raise ArgumentRefused("max_depth applies only with transitive: true")
+        return 0
+    depth = MAX_DEPTH if max_depth is None else max_depth
+    depth = _count(depth, "max_depth", f"1 to {MAX_DEPTH}", lambda n: 1 <= n <= MAX_DEPTH)
+    if ref_prefix_not is not None:
+        raise ArgumentRefused(
+            "ref_prefix_not filters a target's own consumers; it is not applied to a "
+            "transitive walk: ask without transitive"
+        )
+    return depth
+
+
+def _not_applied_outside(ref_prefix_not: str | None, transitive: bool) -> dict[str, Any]:
+    """What a target outside the estate cannot apply. `transitive` and
+    `ref_prefix_not` were refused together by `_walk_depth`."""
+    if ref_prefix_not is not None:
+        return {"not_applied": {"ref_prefix_not": "targets outside the estate record no pins"}}
+    if transitive:
+        return {
+            "not_applied": {
+                "transitive": "a target outside the estate has no dependency file to walk from"
+            }
+        }
+    return {}
 
 
 def _walk(
@@ -279,20 +293,9 @@ def _walk(
     walked: set[tuple[str, str]] = set()
     beyond: set[str] = set()
     for depth in range(1, max_depth + 2):
-        reached: dict[str, tuple[list[str], list[Edge]]] = {}
-        for path in frontier:
-            for edge in dependents_of(path[-1]):
-                other = str(edge.get("repository"))
-                walked.add((path[-1], other))
-                if other in visited:
-                    continue
-                if depth > max_depth:
-                    beyond.add(path[-1])
-                elif other not in reached:
-                    reached[other] = ([*path, other], [edge])
-                elif reached[other][0][:-1] == path:
-                    # The same predecessor again, by another chart.
-                    reached[other][1].append(edge)
+        reached = _hop(
+            frontier, dependents_of, visited, walked, beyond if depth > max_depth else None
+        )
         for other in sorted(reached):
             path, edges = reached[other]
             items.append({"repository": other, "depth": depth, "path": path, "edges": edges})
@@ -301,55 +304,100 @@ def _walk(
     return items, _cycles(walked), sorted(beyond)
 
 
+def _hop(
+    frontier: list[list[str]],
+    dependents_of: Callable[[str], list[Edge]],
+    visited: set[str],
+    walked: set[tuple[str, str]],
+    beyond: set[str] | None,
+) -> dict[str, tuple[list[str], list[Edge]]]:
+    """One hop of `_walk` from each path in `frontier`: every repository first
+    reached, with its path and the edges from that path's end. Each edge read is
+    added to `walked`. Past `max_depth`, `beyond` is given instead and collects each
+    path end with a dependent not yet visited; nothing is reached."""
+    reached: dict[str, tuple[list[str], list[Edge]]] = {}
+    for path in frontier:
+        for edge in dependents_of(path[-1]):
+            other = str(edge.get("repository"))
+            walked.add((path[-1], other))
+            if other in visited:
+                continue
+            if beyond is not None:
+                beyond.add(path[-1])
+            elif other not in reached:
+                reached[other] = ([*path, other], [edge])
+            elif reached[other][0][:-1] == path:
+                # The same predecessor again, by another chart.
+                reached[other][1].append(edge)
+    return reached
+
+
 def _cycles(edges: set[tuple[str, str]]) -> list[list[str]]:
     """Tarjan's strongly connected components over `edges`, iteratively: each
     component of more than one repository, and each self-loop, sorted by name, in
     sorted order."""
-    graph: dict[str, list[str]] = {}
-    for source, target in edges:
-        graph.setdefault(source, []).append(target)
-        graph.setdefault(target, [])
-    order: dict[str, int] = {}
-    low: dict[str, int] = {}
-    stack: list[str] = []
-    on_stack: set[str] = set()
-    found: list[list[str]] = []
+    return _Tarjan(edges).components()
 
-    def visit(node: str) -> None:
-        order[node] = low[node] = len(order)
-        stack.append(node)
-        on_stack.add(node)
 
-    for root in sorted(graph):
-        if root in order:
-            continue
-        visit(root)
-        work = [(root, iter(sorted(graph[root])))]
-        while work:
-            node, children = work[-1]
-            for child in children:
-                if child not in order:
-                    visit(child)
-                    work.append((child, iter(sorted(graph[child]))))
-                    break
-                if child in on_stack:
-                    low[node] = min(low[node], order[child])
-            else:
-                work.pop()
-                if work:
-                    parent = work[-1][0]
-                    low[parent] = min(low[parent], low[node])
-                if low[node] == order[node]:
-                    component = []
-                    while True:
-                        member = stack.pop()
-                        on_stack.discard(member)
-                        component.append(member)
-                        if member == node:
-                            break
-                    if len(component) > 1 or (node, node) in edges:
-                        found.append(sorted(component))
-    return sorted(found)
+class _Tarjan:
+    """The state of one `_cycles` run: an explicit work stack of (node, children
+    not yet tried) in place of recursion."""
+
+    def __init__(self, edges: set[tuple[str, str]]) -> None:
+        self.edges = edges
+        self.graph: dict[str, list[str]] = {}
+        for source, target in edges:
+            self.graph.setdefault(source, []).append(target)
+            self.graph.setdefault(target, [])
+        self.order: dict[str, int] = {}
+        self.low: dict[str, int] = {}
+        self.stack: list[str] = []
+        self.on_stack: set[str] = set()
+        self.work: list[tuple[str, Iterator[str]]] = []
+        self.found: list[list[str]] = []
+
+    def components(self) -> list[list[str]]:
+        for root in sorted(self.graph):
+            if root in self.order:
+                continue
+            self._enter(root)
+            while self.work:
+                self._step()
+        return sorted(self.found)
+
+    def _enter(self, node: str) -> None:
+        self.order[node] = self.low[node] = len(self.order)
+        self.stack.append(node)
+        self.on_stack.add(node)
+        self.work.append((node, iter(sorted(self.graph[node]))))
+
+    def _step(self) -> None:
+        """Descend to the next unvisited child of the top node, or finish it."""
+        node, children = self.work[-1]
+        for child in children:
+            if child not in self.order:
+                self._enter(child)
+                return
+            if child in self.on_stack:
+                self.low[node] = min(self.low[node], self.order[child])
+        self.work.pop()
+        if self.work:
+            parent = self.work[-1][0]
+            self.low[parent] = min(self.low[parent], self.low[node])
+        if self.low[node] == self.order[node]:
+            self._close(node)
+
+    def _close(self, node: str) -> None:
+        """Pop the component rooted at `node`; keep it if it is a loop."""
+        component = []
+        while True:
+            member = self.stack.pop()
+            self.on_stack.discard(member)
+            component.append(member)
+            if member == node:
+                break
+        if len(component) > 1 or (node, node) in self.edges:
+            self.found.append(sorted(component))
 
 
 def dependencies(

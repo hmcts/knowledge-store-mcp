@@ -176,19 +176,27 @@ def _list_by_repo(store: Store) -> ByRepo:
             continue
         if not directory.is_dir():
             continue
-        files: dict[str, Path] = {}
-        for path in sorted(directory.iterdir()):
-            if path.suffix != ".json":
-                continue
-            try:
-                resolved = contained(store.root, path.relative_to(store.root))
-            except OutsideStore:
-                skipped += 1
-                continue
-            if resolved.is_file():
-                files[path.stem] = resolved
-        return ByRepo(files, skipped)
+        files, outside = _by_repo_directory(store, directory)
+        return ByRepo(files, skipped + outside)
     return ByRepo({}, skipped)
+
+
+def _by_repo_directory(store: Store, directory: Path) -> tuple[dict[str, Path], int]:
+    """The `.json` files of one `by-repo/` directory by stem, and how many entries
+    resolve outside the store."""
+    files: dict[str, Path] = {}
+    skipped = 0
+    for path in sorted(directory.iterdir()):
+        if path.suffix != ".json":
+            continue
+        try:
+            resolved = contained(store.root, path.relative_to(store.root))
+        except OutsideStore:
+            skipped += 1
+            continue
+        if resolved.is_file():
+            files[path.stem] = resolved
+    return files, skipped
 
 
 def join_names(names: list[str]) -> str:
@@ -371,6 +379,28 @@ def _outside_estate(store: Store) -> dict[str, tuple[Outside, ...]]:
     return store.memo("relationships.outside_estate", lambda: _read_outside_estate(store))
 
 
+def _outside(kind: str, target: str, detail: Any) -> Outside:
+    """One registry entry, its referrers de-duplicated and sorted."""
+    detail = detail if isinstance(detail, dict) else {}
+    referrers = detail.get("referenced_by")
+    return Outside(
+        kind,
+        target,
+        detail.get("references"),
+        tuple(sorted(set(referrers))) if isinstance(referrers, list) else (),
+    )
+
+
+def _outside_names(target: str, own: str) -> set[str]:
+    """The names a registry target answers to: its key, and `<repo>` for a key
+    `<org>/<repo>` under the store's own organisation `own` (lower-cased)."""
+    names = {target}
+    org, slash, rest = target.partition("/")
+    if own and slash and org.lower() == own and rest and "/" not in rest:
+        names.add(rest)
+    return names
+
+
 def _read_outside_estate(store: Store) -> dict[str, tuple[Outside, ...]]:
     entry = store.manifest.layers.get("relationships")
     if not isinstance(entry, dict) or entry.get("present") is not True:
@@ -387,19 +417,8 @@ def _read_outside_estate(store: Store) -> dict[str, tuple[Outside, ...]]:
     found: dict[str, list[Outside]] = {}
     for kind, targets in (by_kind if isinstance(by_kind, dict) else {}).items():
         for target, detail in (targets if isinstance(targets, dict) else {}).items():
-            detail = detail if isinstance(detail, dict) else {}
-            referrers = detail.get("referenced_by")
-            outside = Outside(
-                kind,
-                target,
-                detail.get("references"),
-                tuple(sorted(set(referrers))) if isinstance(referrers, list) else (),
-            )
-            names = {target}
-            org, slash, rest = target.partition("/")
-            if own and slash and org.lower() == own and rest and "/" not in rest:
-                names.add(rest)
-            for name in names:
+            outside = _outside(kind, target, detail)
+            for name in _outside_names(target, own):
                 found.setdefault(name, []).append(outside)
     return {
         name: tuple(sorted(entries, key=lambda o: (o.kind, o.target)))

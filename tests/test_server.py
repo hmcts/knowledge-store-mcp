@@ -161,6 +161,17 @@ class WireTypesTest(ServerTestCase):
                     "id must be a whole number from -2**63 to 2**63 - 1",
                 )
 
+    async def test_a_whole_number_in_other_digits_is_refused(self):
+        """Catches: decimal text matched with Unicode digits, which `int` reads
+        (`"١"` is 1), so a number spelt in Arabic-Indic or full-width digits is
+        accepted as one."""
+        for value in ("١", "１", "-٣"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    await self.refused("community", {"id": value}),
+                    "id must be a whole number from -2**63 to 2**63 - 1",
+                )
+
     async def test_a_cursor_that_is_not_text_is_refused(self):
         """Catches: a numeric cursor passed to the pager, whose parser expects text."""
         self.assertEqual(

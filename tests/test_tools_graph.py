@@ -272,12 +272,14 @@ class ToolTestCase(unittest.TestCase):
         self.addCleanup(lambda: session.current()[0].close())
         return session
 
-    def both(self) -> tuple[store.Session, store.Session]:
-        return self.session("gz"), self.session("none")
 
-    def modes(self) -> list[tuple[store.Session, str, str]]:
-        """Each mode as (session, the envelope's `index`, the layer that answers)."""
-        return [(self.session("gz"), INDEXED, "index"), (self.session("none"), FALLBACK, "graph")]
+def both(case: ToolTestCase) -> tuple[store.Session, store.Session]:
+    return case.session("gz"), case.session("none")
+
+
+def modes(case: ToolTestCase) -> list[tuple[store.Session, str, str]]:
+    """Each mode as (session, the envelope's `index`, the layer that answers)."""
+    return [(case.session("gz"), INDEXED, "index"), (case.session("none"), FALLBACK, "graph")]
 
 
 def envelope(index: str, layers_used: list[str]) -> dict:
@@ -460,7 +462,7 @@ class FindRepoTest(ToolTestCase):
         """Catches: find_repo substituting a near miss for a name the estate does not
         hold, missing the case-only match, or calling an out-of-estate target
         unknown (DESIGN.md 2, 5.4) - with the index or without it."""
-        for session, index, base in self.modes():
+        for session, index, base in modes(self):
             with self.subTest(index=index):
                 self.assertEqual(
                     tools_graph.find_repo(session, "payment-api"),
@@ -507,7 +509,7 @@ class SearchTest(ToolTestCase):
     def test_a_label_is_found_with_its_pinned_url(self):
         """Catches: a search that misses the one node DESIGN.md 4 says matches, or
         returns it without the pinned url (spec: corpus paths as citations)."""
-        for session, index, base in self.modes():
+        for session, index, base in modes(self):
             with self.subTest(index=index):
                 self.assertEqual(
                     tools_graph.search(session, "RefundHandler"),
@@ -524,7 +526,7 @@ class SearchTest(ToolTestCase):
     def test_a_search_ignores_case_in_both_modes(self):
         """Catches: a case-sensitive fallback, where `refundhandler` would miss the
         node the index (whose tokenizer folds case) finds."""
-        for session in self.both():
+        for session in both(self):
             self.assertEqual(
                 tools_graph.search(session, "refundhandler")["items"], [REFUND_HANDLER]
             )
@@ -548,7 +550,7 @@ class SearchTest(ToolTestCase):
         network = node(
             "infra-modules", "module:network", "network module", "modules/network/main.tf", 1, 1
         )
-        for session in self.both():
+        for session in both(self):
             self.assertEqual(
                 tools_graph.search(session, "module")["items"], [database, network, app]
             )
@@ -581,7 +583,7 @@ class SearchTest(ToolTestCase):
             "Refund*": {"payment-apis::doc:refunds-runbook", "payments-api::RefundHandler"},
             "app, service!": {"infra-modules::module:app-service"},
         }
-        indexed, fallback = self.both()
+        indexed, fallback = both(self)
         for text, ids in expected.items():
             with self.subTest(text=text):
                 with_index = tools_graph.search(indexed, text)["items"]
@@ -592,7 +594,7 @@ class SearchTest(ToolTestCase):
     def test_a_limit_cuts_the_ranking_and_says_how_many_matched(self):
         """Catches: a limit that silently hides matches (plan, No silent truncation):
         three labels match `module`, two are returned, and `matches` says three."""
-        for session in self.both():
+        for session in both(self):
             response = tools_graph.search(session, "module", limit=2)
             self.assertEqual((response["matches"], response["total"]), (3, 2))
             self.assertEqual(len(response["items"]), 2)
@@ -601,7 +603,7 @@ class SearchTest(ToolTestCase):
         """Catches: the kind filter ignored, or applied to the wrong column, or the
         fallback missing a scenario written in the legacy form (DESIGN.md 3.1,
         3.4). The two scenarios tie on rank, so the id orders them."""
-        for session in self.both():
+        for session in both(self):
             self.assertEqual(
                 tools_graph.search(session, "Pay with", kind="scenario")["items"],
                 [NEW_CARD, SAVED_CARD],
@@ -614,7 +616,7 @@ class SearchTest(ToolTestCase):
         """Catches: an unknown repo filter returning a bare empty list instead of
         "not in the estate" with its near misses (spec, Unknown names), or a
         case-only spelling filtering out every hit."""
-        for session, _, base in self.modes():
+        for session, _, base in modes(self):
             with self.subTest(base=base):
                 unknown = tools_graph.search(session, "module", repo="payment-api")
                 self.assertEqual(
@@ -664,7 +666,7 @@ class SearchTest(ToolTestCase):
         quote or `NEAR(` errors and `OR`, `NOT` or a column filter changes the
         query. Unquoted, each of these raises or matches; as quoted prefix words,
         each needs a label word that none has, so each matches nothing."""
-        for session, _, base in self.modes():
+        for session, _, base in modes(self):
             searched = searched_in(base)
             for text in (
                 'Refund"Handler',
@@ -686,7 +688,7 @@ class SearchTest(ToolTestCase):
     def test_text_that_is_not_searchable_is_refused_with_the_reason(self):
         """Catches: text with no word matching every label (an empty AND), or a NUL
         or lone surrogate crashing the SQLite bind."""
-        for session in self.both():
+        for session in both(self):
             for text in ("", "   ", '"', "*", "-", "Refund\x00Handler", "Refund\ud800"):
                 with self.subTest(text=text), self.assertRaises(ArgumentRefused):
                     tools_graph.search(session, text)
@@ -698,7 +700,7 @@ class SearchTest(ToolTestCase):
         """Catches: a search response over the cap, or pages that drop or repeat a
         hit. Twelve labels have a word beginning `p` (with "Payments glossary" and
         "Delivery retry policy", DESIGN.md 3.5)."""
-        for session in self.both():
+        for session in both(self):
             whole = tools_graph.search(session, "p", limit=100)
             self.assertIsNone(whole["next_page"])
             pages = [tools_graph.search(session, "p", limit=100, cap_bytes=2048)]
@@ -745,7 +747,7 @@ class DamagedIndexTest(ToolTestCase):
 class NodeTest(ToolTestCase):
     def test_a_node_carries_its_url(self):
         """Catches: a node returned without its pinned url or its community."""
-        for session, index, base in self.modes():
+        for session, index, base in modes(self):
             with self.subTest(index=index):
                 self.assertEqual(
                     tools_graph.node(session, "payments-api::RefundHandler"),
@@ -755,7 +757,7 @@ class NodeTest(ToolTestCase):
     def test_a_structural_node_is_tolerated(self):
         """Catches: failing on a node with no label, no source file and no url
         (DESIGN.md 3.1; library CLAUDE.md 6.4)."""
-        for session in self.both():
+        for session in both(self):
             self.assertEqual(
                 tools_graph.node(session, "ledger-service::com.example.ledger")["node"],
                 STRUCTURAL,
@@ -764,7 +766,7 @@ class NodeTest(ToolTestCase):
     def test_an_unknown_id_is_null_and_says_what_was_searched(self):
         """Catches: an unknown id raising, or answering with nothing said, or an id
         shaped like SQL reaching the query."""
-        for session, _, base in self.modes():
+        for session, _, base in modes(self):
             for missing in ("payments-api::Nope", "' OR 1=1 --"):
                 response = tools_graph.node(session, missing)
                 self.assertIsNone(response["node"])
@@ -775,7 +777,7 @@ class NeighboursTest(ToolTestCase):
     def test_depth_one_lists_each_neighbour_once_with_how_it_was_reached(self):
         """Catches: a neighbour reached both ways (the 2-cycle) listed twice, an
         incoming edge missed, or a direction reversed (DESIGN.md 3.2)."""
-        for session, index, base in self.modes():
+        for session, index, base in modes(self):
             with self.subTest(index=index):
                 self.assertEqual(
                     tools_graph.neighbours(session, "payments-api::PaymentService"),
@@ -792,7 +794,7 @@ class NeighboursTest(ToolTestCase):
     def test_depth_two_visits_the_cycle_once_and_never_the_start(self):
         """Catches: a walk that loops on the 2-cycle, or returns the start node as
         its own neighbour (DESIGN.md 3.2)."""
-        for session in self.both():
+        for session in both(self):
             response = tools_graph.neighbours(session, "payments-api::PaymentService", depth=2)
             self.assertEqual(response["items"], DEPTH_1 + DEPTH_2)
             self.assertEqual(response["total"], 12)
@@ -802,7 +804,7 @@ class NeighboursTest(ToolTestCase):
         Following `calls` alone, the second hop reaches PaymentsProxy and
         LedgerExtract; unfiltered, it would also reach JournalEntry (imports), the
         structural node (contains) and the runbook (references)."""
-        for session in self.both():
+        for session in both(self):
             response = tools_graph.neighbours(
                 session, "payments-api::PaymentService", depth=2, relation="calls"
             )
@@ -823,7 +825,7 @@ class NeighboursTest(ToolTestCase):
         from another depth-1 node is listed twice. From JournalEntry, the
         structural node is a depth-1 neighbour and also contains LedgerClient and
         LedgerController, the other two."""
-        for session in self.both():
+        for session in both(self):
             response = tools_graph.neighbours(session, "ledger-service::JournalEntry", depth=2)
             self.assertEqual(
                 [(i["depth"], i["node"]["id"]) for i in response["items"]],
@@ -849,7 +851,7 @@ class NeighboursTest(ToolTestCase):
 
     def test_an_unknown_start_or_relation_says_what_was_searched(self):
         """Catches: a bare empty list for an id or relation the store does not hold."""
-        for session in self.both():
+        for session in both(self):
             missing = tools_graph.neighbours(session, "payments-api::Nope")
             self.assertEqual((missing["node"], missing["items"]), (None, []))
             self.assertIn("searched", missing)
@@ -863,7 +865,7 @@ class CommunityTest(ToolTestCase):
         """Catches: a community without its summary, a member without its url, the
         structural node counted as a member, or a member of the other community
         (DESIGN.md 3.3: 20 members)."""
-        for session, index, base in self.modes():
+        for session, index, base in modes(self):
             with self.subTest(index=index):
                 response = tools_graph.community(session, 0)
                 self.assertEqual(
@@ -876,7 +878,7 @@ class CommunityTest(ToolTestCase):
 
     def test_an_unknown_community_is_null_and_says_what_was_searched(self):
         """Catches: inventing a community, or a bare empty list."""
-        for session in self.both():
+        for session in both(self):
             response = tools_graph.community(session, 7)
             self.assertEqual((response["community"], response["items"]), (None, []))
             self.assertIn("searched", response)
@@ -903,7 +905,7 @@ class NormalisedNodeTest(ToolTestCase):
         numeric label as a number, or keeps the first- or last-listed copy of a
         repeated id rather than the one the index keeps (DESIGN.md 3.4; library
         `store_index._node_rows` and `_fill`)."""
-        for session, index, _ in self.modes():
+        for session, index, _ in modes(self):
             with self.subTest(index=index):
                 for expected in (NEW_CARD, REPLICAS, FORM_FIELD):
                     self.assertEqual(tools_graph.node(session, expected["id"])["node"], expected)
@@ -917,7 +919,7 @@ class NormalisedNodeTest(ToolTestCase):
         keeps a community written as text as text (so it is in no community), or
         leaves a node with no repository out of the repositories the index lists
         (DESIGN.md 3.5; the index builder's staging affinity)."""
-        for session, index, base in self.modes():
+        for session, index, base in modes(self):
             with self.subTest(index=index):
                 for expected in (RETRY, SMS_TEMPLATE, GLOSSARY):
                     self.assertEqual(tools_graph.node(session, expected["id"])["node"], expected)
@@ -984,7 +986,7 @@ class NormalisedNodeTest(ToolTestCase):
         # A node with no id, which the index builder cannot store.
         held = [Parsed({"nodes": [{"repo": "r"}]})]
         watch = weakref.ref(held[0])
-        with mock.patch.object(loaded, "read", lambda name: held.pop()):
+        with mock.patch.object(loaded, "read", return_value=held.pop()):
             with self.assertRaises(graph.GraphRefused):
                 graph.read(loaded)
         gc.collect()
@@ -1076,7 +1078,7 @@ class RepositoryListTest(ToolTestCase):
             db.execute("INSERT INTO repos(name) VALUES ('')")
         older_session = store.Session(lambda: store.open_store(older, self.cache), lambda: NOW)
         self.addCleanup(lambda: older_session.current()[0].close())
-        sessions = [(s, i) for s, i, _ in self.modes()] + [(older_session, "older index")]
+        sessions = [(s, i) for s, i, _ in modes(self)] + [(older_session, "older index")]
         for session, index in sessions:
             with self.subTest(index=index):
                 self.assertEqual(results.repository_names(session.current()[0]), sorted(SHA_DIGIT))
@@ -1167,7 +1169,7 @@ class BoundsTest(ToolTestCase):
         """Catches: unbounded search text, each word of which is a prefix scan of the
         label index; or a bound counted in characters, not UTF-8 bytes, or off by
         one at either limit (ruling: 1 KiB, 32 words)."""
-        for session in self.both():
+        for session in both(self):
             tools_graph.search(session, "a" * 1024)
             tools_graph.search(session, "\u00e9" * 512)
             tools_graph.search(session, " ".join(["pay"] * 32))
@@ -1179,7 +1181,7 @@ class BoundsTest(ToolTestCase):
     def test_a_community_id_must_fit_sqlite_integer(self):
         """Catches: an id outside int64 crashing the index's bind (`OverflowError`)
         while the fallback answers null - the two modes disagreeing."""
-        for session in self.both():
+        for session in both(self):
             for outside in (2**63, -(2**63) - 1, 2**64):
                 with self.subTest(id=outside), self.assertRaises(ArgumentRefused):
                     tools_graph.community(session, outside)
@@ -1192,7 +1194,7 @@ class BothModesTest(ToolTestCase):
         """Catches: the fallback answering differently from the index in anything
         but the envelope and the layer it names (plan, Fallback without the index),
         or two calls on one store giving different bytes (plan, Deterministic)."""
-        indexed, fallback = self.both()
+        indexed, fallback = both(self)
         calls: list[tuple[str, Any]] = [
             ("find_repo payments-api", lambda s: tools_graph.find_repo(s, "payments-api")),
             ("find_repo payment-api", lambda s: tools_graph.find_repo(s, "payment-api")),

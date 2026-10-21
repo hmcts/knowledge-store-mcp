@@ -115,15 +115,22 @@ def _layer_rows(layer: Any) -> list[Row]:
         if not isinstance(paths, dict):
             continue
         for path, entry in paths.items():
-            if not isinstance(entry, dict):
-                continue
-            seen: set[str] = set()
-            for section, landed in (("tickets", True), ("proposed", False)):
-                counts = entry.get(section)
-                for ticket, count in (counts if isinstance(counts, dict) else {}).items():
-                    if ticket not in seen:
-                        seen.add(ticket)
-                        rows.append((repo, path, ticket, count, landed))
+            if isinstance(entry, dict):
+                rows.extend(_file_rows(repo, path, entry))
+    return rows
+
+
+def _file_rows(repo: str, path: str, entry: dict[str, Any]) -> list[Row]:
+    """One file's rows of the ticket layer: landed tickets first, and a ticket in
+    both sections counted once, as landed."""
+    rows: list[Row] = []
+    seen: set[str] = set()
+    for section, landed in (("tickets", True), ("proposed", False)):
+        counts = entry.get(section)
+        for ticket, count in (counts if isinstance(counts, dict) else {}).items():
+            if ticket not in seen:
+                seen.add(ticket)
+                rows.append((repo, path, ticket, count, landed))
     return rows
 
 
@@ -277,6 +284,16 @@ def _branches(records: dict[str, Any] | None, key: str) -> list[str] | None:
     return list(branches) if isinstance(branches, list) else []
 
 
+def _ticket_layers(store: Store, indexed: bool) -> list[str]:
+    """The layer `ticket` reads its files from: the index when open, else the
+    ticket layer when present, else none."""
+    if indexed:
+        return ["index"]
+    if _present(store, "intent"):
+        return ["intent"]
+    return []
+
+
 def ticket(
     session: Session,
     key: str,
@@ -292,7 +309,7 @@ def ticket(
     key = _text(key, "ticket key")
     store, notice = session.current()
     indexed = isinstance(store.index, IndexHandle)
-    layers_used = ["index"] if indexed else ["intent"] if _present(store, "intent") else []
+    layers_used = _ticket_layers(store, indexed)
     records = _descriptions(store)
     if records is not None:
         layers_used.append("ticket_descriptions")
@@ -473,26 +490,40 @@ def _library(store: Store) -> _Library:
             continue
         library.searched.append(layer)
         library.read.append(layer)
-        for entry_id, answer in document.items():
-            if entry_id == _METADATA or not isinstance(answer, dict):
-                continue
-            if not _plain_segment(entry_id):
-                library.skipped += 1
-                continue
-            title, body = answer.get("title"), answer.get("html")
-            title = title if isinstance(title, str) else ""
-            body = body if isinstance(body, str) else ""
-            plain = html.unescape(_MARKUP.sub(" ", body))
-            item = {
-                "layer": layer,
-                "id": entry_id,
-                "store": store.manifest.store_id,
-                "source": _plain_path(answer.get("source")),
-                "summary": title,
-                "text": body,
-            }
-            library.entries.append((layer, entry_id, frozenset(_words(f"{title} {plain}")), item))
+        _add_answers(library, store, layer, document)
     return library
+
+
+def _add_answers(library: _Library, store: Store, layer: str, document: dict) -> None:
+    """Each answer of one layer's document into `library`; an id that is not a
+    plain segment is counted as skipped, never listed."""
+    for entry_id, answer in document.items():
+        if entry_id == _METADATA or not isinstance(answer, dict):
+            continue
+        if not _plain_segment(entry_id):
+            library.skipped += 1
+            continue
+        library.entries.append(_entry(store, layer, entry_id, answer))
+
+
+def _entry(
+    store: Store, layer: str, entry_id: str, answer: dict[str, Any]
+) -> tuple[str, str, frozenset[str], dict[str, Any]]:
+    """One written answer as `_Library.entries` holds it: its words are those of
+    its title and its body with the markup removed."""
+    title, body = answer.get("title"), answer.get("html")
+    title = title if isinstance(title, str) else ""
+    body = body if isinstance(body, str) else ""
+    plain = html.unescape(_MARKUP.sub(" ", body))
+    item = {
+        "layer": layer,
+        "id": entry_id,
+        "store": store.manifest.store_id,
+        "source": _plain_path(answer.get("source")),
+        "summary": title,
+        "text": body,
+    }
+    return (layer, entry_id, frozenset(_words(f"{title} {plain}")), item)
 
 
 @dataclass(frozen=True)

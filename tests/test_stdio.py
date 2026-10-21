@@ -171,7 +171,8 @@ class RawProtocolTest(StdioTestCase):
         watchdog = threading.Timer(TIMEOUT, child.kill)
         watchdog.start()
         self.addCleanup(watchdog.cancel)
-        assert child.stdin is not None and child.stdout is not None
+        assert child.stdin is not None
+        assert child.stdout is not None
         lines: list[str] = []
 
         def send(message: dict) -> None:

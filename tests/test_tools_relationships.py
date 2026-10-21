@@ -237,8 +237,9 @@ class DependentsTest(RelationshipsTestCase):
     def test_an_unlisted_kind_is_refused_not_answered_empty(self):
         """Catches: a misspelt kind answered as "in the estate, zero results", which
         reads as "nothing depends on it"."""
+        session = self.session()
         with self.assertRaises(ArgumentRefused) as raised:
-            tools_relationships.dependents(self.session(), "chart-web", kind="helm")
+            tools_relationships.dependents(session, "chart-web", kind="helm")
         self.assertIn("helm_chart", str(raised.exception))
 
     def test_the_three_hop_chain_with_paths_and_the_cycle_once(self):

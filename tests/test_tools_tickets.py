@@ -316,8 +316,9 @@ class TicketsTest(TicketsTestCase):
     def test_an_empty_name_is_refused(self):
         """Catches: an empty repository name looked up, and answered with every
         repository's near misses."""
+        session = self.session()
         with self.assertRaises(ArgumentRefused):
-            tools_tickets.tickets(self.session(), "  ")
+            tools_tickets.tickets(session, "  ")
 
     def test_pages_stay_under_every_cap_and_reassemble_to_both_lists(self):
         """Catches: two lists cut from one page without allowing for their extra
@@ -589,8 +590,9 @@ class HostileTextTest(TicketsTestCase):
         def missing(document):
             document["extra_layers"]["faq"]["path"] = "knowledge/answers/gone.json"
 
+        session = self.session(edit=missing)
         with self.assertRaises(FileNotFoundError):
-            tools_tickets.answers(self.session(edit=missing), "ledger")
+            tools_tickets.answers(session, "ledger")
 
 
 class AnswersTest(TicketsTestCase):
