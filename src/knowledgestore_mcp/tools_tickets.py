@@ -34,7 +34,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from . import results
+from . import queries, results
 from .index import IndexHandle
 from .locate import contained
 from .manifest import KNOWN_LAYERS
@@ -100,21 +100,10 @@ Row = tuple[str, str, str, int, bool]
 
 # --- Reading the ticket layer ----------------------------------------------------
 
-# The index's ticket rows, by its documented queries: `tickets_for_file`, here for
-# every file of one repository or one path of it, and `files_for_ticket`. Both join
-# `repos` with `LEFT JOIN` and read `coalesce(r.name, '')`, as the index documents,
-# since a file with no repository has a NULL `files.repo`. Rows are ordered here,
-# by the tool's own key, not by SQL.
-_FOR_REPOSITORY = (
-    "SELECT coalesce(r.name, ''), f.path, t.ticket, t.count, t.landed FROM tickets t"
-    " JOIN files f ON f.k = t.file LEFT JOIN repos r ON r.k = f.repo"
-    " WHERE coalesce(r.name, '') = ?1 AND (?2 IS NULL OR f.path = ?2)"
-)
-_FOR_TICKET = (
-    "SELECT coalesce(r.name, ''), f.path, t.ticket, t.count, t.landed FROM tickets t"
-    " JOIN files f ON f.k = t.file LEFT JOIN repos r ON r.k = f.repo"
-    " WHERE t.ticket = ?1"
-)
+# The index's ticket rows come from the library's documented queries, run verbatim
+# (`queries.TICKETS_FOR_FILE` for a repository or one path of it, and
+# `queries.FILES_FOR_TICKET`). Each is reshaped to a `Row` here; the lists are
+# ordered by the tool's own key when paged, so the SQL's order is not relied on.
 
 
 def _layer_rows(layer: Any) -> list[Row]:
@@ -138,14 +127,18 @@ def _layer_rows(layer: Any) -> list[Row]:
     return rows
 
 
-def _rows(store: Store, sql: str, parameters: tuple, keep: Callable[[Row], bool]) -> list[Row]:
-    """The rows `sql` selects from the index when it is open; otherwise the ticket
-    layer's rows that `keep` accepts, read once per loaded store."""
+def _rows(
+    store: Store,
+    sql: str,
+    parameters: tuple,
+    shape: Callable[[tuple], Row],
+    keep: Callable[[Row], bool],
+) -> list[Row]:
+    """The rows `sql` selects from the index when it is open, each made a `Row` by
+    `shape`; otherwise the ticket layer's rows that `keep` accepts, read once per
+    loaded store."""
     if isinstance(store.index, IndexHandle):
-        found = store.index.connection.execute(sql, parameters)
-        return [
-            (repo, path, ticket, count, bool(landed)) for repo, path, ticket, count, landed in found
-        ]
+        return [shape(row) for row in store.index.connection.execute(sql, parameters)]
     every = store.memo("intent.rows", lambda: _layer_rows(store.read("intent")))
     return [row for row in every if keep(row)]
 
@@ -245,8 +238,10 @@ def tickets(
         found = answer.name
         rows = _rows(
             store,
-            _FOR_REPOSITORY,
+            queries.TICKETS_FOR_FILE,
             (found, path),
+            # Columns: ticket, count, landed, repo, path.
+            lambda r: (r[3], r[4], r[0], r[1], bool(r[2])),
             lambda row: row[0] == found and (path is None or row[1] == path),
         )
     landed = [{"ticket": t, "path": p, "commits": n} for _, p, t, n, done in rows if done]
@@ -302,7 +297,14 @@ def ticket(
     if records is not None:
         layers_used.append("ticket_descriptions")
     record = records.get(key) if records is not None else None
-    rows = _rows(store, _FOR_TICKET, (key,), lambda row: row[2] == key)
+    rows = _rows(
+        store,
+        queries.FILES_FOR_TICKET,
+        (key,),
+        # Columns: repo, path, count, landed.
+        lambda r: (r[0], r[1], key, r[2], bool(r[3])),
+        lambda row: row[2] == key,
+    )
     landed = [{"repository": r, "path": p, "commits": n} for r, p, _, n, done in rows if done]
     proposed = [{"repository": r, "path": p, "commits": n} for r, p, _, n, done in rows if not done]
     fields: dict[str, Any] = {"ticket": _record(key, record), **_reach(store)}

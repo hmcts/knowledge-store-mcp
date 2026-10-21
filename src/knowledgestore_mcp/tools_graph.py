@@ -21,7 +21,7 @@ from collections.abc import Callable
 from contextlib import closing
 from typing import Any
 
-from . import graph, results
+from . import graph, queries, results
 from .graph import TOKENIZER, Edge, GraphReader, as_node
 from .index import IndexHandle
 from .results import DEFAULT_MAX_RESPONSE_BYTES, Known
@@ -93,7 +93,7 @@ def _words(text: str) -> list[str]:
     """
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute(f"CREATE VIRTUAL TABLE words USING fts5(text, tokenize='{TOKENIZER}')")
-        db.execute("CREATE VIRTUAL TABLE terms USING fts5vocab(words, instance)")
+        db.execute("CREATE VIRTUAL TABLE terms USING fts5vocab(words, 'instance')")
         db.execute("INSERT INTO words(text) VALUES (?)", (text,))
         return [term for (term,) in db.execute("SELECT term FROM terms ORDER BY offset")]
 
@@ -114,7 +114,10 @@ def _search_words(value: object, what: str) -> list[str]:
 
 def _query(words: list[str]) -> str:
     """The FTS5 query for `words`: each distinct word quoted and starred, so every
-    word must begin some word of the label."""
+    word must begin some word of the label. `_query(_words(text))` is the library's
+    documented `match_argument` helper (index-helper: match_argument, at b6cbc5a),
+    split in two so the word bounds apply between; `tests/test_index_queries.py`
+    holds the two equal."""
     return " ".join('"' + word.replace('"', '""') + '"*' for word in dict.fromkeys(words))
 
 
@@ -123,9 +126,11 @@ def _query(words: list[str]) -> str:
 # One node as every tool returns it.
 Node = dict[str, Any]
 
-# The columns of `graph.Row`, in its order. `repos` is a LEFT JOIN: an index may hold
-# a file whose repository is NULL (a node with none), and that node must still be
-# found, with the repository "" as the fallback gives it.
+# A community's members: the documented `node` query's columns and joins, by
+# community. The library documents no community query, so this one is the
+# server's own; its columns are `graph.Row`'s, in order. `repos` is a LEFT JOIN:
+# an index may hold a file whose repository is NULL (a node with none), and that
+# node must still be found, with the repository "" as the fallback gives it.
 _NODE_SELECT = (
     "SELECT n.id, n.label, coalesce(r.name, ''), n.kind, f.path, n.url, n.community"
     " FROM nodes n JOIN files f ON f.k = n.file LEFT JOIN repos r ON r.k = f.repo"
@@ -141,22 +146,11 @@ class _Indexed:
         self._db = connection
 
     def node(self, node_id: str) -> Node | None:
-        row = self._db.execute(_NODE_SELECT + " WHERE n.id = ?", (node_id,)).fetchone()
+        row = self._db.execute(queries.NODE, (node_id,)).fetchone()
         return as_node(row) if row else None
 
     def edges(self, node_id: str, relation: str | None) -> list[Edge]:
-        rows = self._db.execute(
-            "SELECT 'out', rel.name, t.id FROM nodes s"
-            " JOIN edges e ON e.source = s.k JOIN relations rel ON rel.k = e.relation"
-            " JOIN nodes t ON t.k = e.target"
-            " WHERE s.id = ?1 AND (?2 IS NULL OR rel.name = ?2)"
-            " UNION ALL "
-            "SELECT 'in', rel.name, s.id FROM nodes t"
-            " JOIN edges e ON e.target = t.k JOIN relations rel ON rel.k = e.relation"
-            " JOIN nodes s ON s.k = e.source"
-            " WHERE t.id = ?1 AND (?2 IS NULL OR rel.name = ?2)",
-            (node_id, relation),
-        )
+        rows = self._db.execute(queries.NEIGHBOURS, (node_id, relation))
         return [(direction, name, other) for direction, name, other in rows]
 
     def members(self, community: int) -> list[Node]:
@@ -164,17 +158,10 @@ class _Indexed:
         return [as_node(row) for row in rows]
 
     def search(self, query: str, repo: str | None, kind: str | None) -> list[Node]:
-        # The id tiebreak is load-bearing although the fixture cannot show it: there,
-        # rowids follow id order, so SQLite's own order for a tie looks the same.
-        rows = self._db.execute(
-            "SELECT n.id, n.label, coalesce(r.name, ''), n.kind, f.path, n.url, n.community"
-            " FROM labels JOIN nodes n ON n.k = labels.rowid"
-            " JOIN files f ON f.k = n.file LEFT JOIN repos r ON r.k = f.repo"
-            " WHERE labels MATCH ?1 AND (?2 IS NULL OR r.name = ?2)"
-            " AND (?3 IS NULL OR n.kind = ?3)"
-            " ORDER BY bm25(labels), n.id",
-            (query, repo, kind),
-        )
+        # Every match (`LIMIT -1`): the tool counts them all, then keeps its own
+        # limit. `repo` is never "" here, which the query would read as "no
+        # repository": the tool refuses an empty name before it is asked.
+        rows = self._db.execute(queries.FIND, (query, repo, kind, -1))
         return [as_node(row) for row in rows]
 
 
