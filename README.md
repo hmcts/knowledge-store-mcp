@@ -145,7 +145,12 @@ Two routes are possible later.
 
 **Both routes wait on two decisions a store's owner makes:**
 
-- **Data governance.** An answer carries store content into Microsoft 365: repository paths, ticket ids and quoted commit text. The store's owner confirms that this is allowed for the store's classification, and names who approves it, before either route is enabled.
+- **Data governance, in both directions.**
+  - *Into Microsoft 365:* an answer carries store content there, including repository paths, ticket ids and quoted commit text.
+  - *Out of Microsoft 365:* in route B, the user's question leaves Microsoft 365 for the hosted agent's endpoint in another cloud. A question can carry sensitive text.
+  - *What is kept:* what the hosted agent logs of each question and answer, and for how long.
+
+  The store's owner confirms all three for the store's classification, and names who approves them, before either route is enabled.
 - **Who may ask.** The Entra group allowed to ask should match the people who can read the store's repository on GitHub. A wider group would widen access to the store.
 
 ## How the model is told to answer
