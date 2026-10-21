@@ -68,6 +68,7 @@ The server takes no credentials. The only access an asker needs is read access t
 2. **Read the manifest.**
    - A missing manifest, or an unknown **major** version, refuses to start, naming the version found and the versions supported.
    - A newer **minor** version starts, and reports the unknown layers as present but unread.
+   - **A layer that carries its own format stamp** (the relationships layer's `format` in `repository-dependencies.json`, the index's `index_schema`) is checked on first use. A missing stamp, another layer name or an unsupported major makes the layer **present but unrecognised**: it is never read, and never parsed on a best-effort basis.
 3. **Open the query index read-only,** and read other layers lazily on first use. The server never parses the whole graph into memory when the index is present. Without the index, it falls back to the graph and says so in `store_info`.
    - The store commits the index gzipped, and SQLite cannot open a compressed file. On first use the server decompresses it to `${XDG_CACHE_HOME:-~/.cache}/knowledge-store/<store.id>/<sha256 of the .gz>.sqlite`, then opens that file read-only.
    - The key is the archive's hash, so a rebuilt store gets a new cache entry rather than a stale one. The server removes its other entries for that store id.
@@ -103,6 +104,8 @@ It never returns a bare empty list. A call such as `dependents("<a name the esta
 **Freshness.** On each call the server compares the manifest's `digest` on disk with the one it loaded. The digest is computed from the layers' content, not from file times, so it changes when a rebuild or a pull changes the store, and not when a clone or an identical rebuild touches the files. When it differs, the server reloads before answering, and the result says so. A server never serves an older store than the one on disk. `store_info` reports the manifest's `sources_as_of`, the newest source commit the store reflects.
 
 **Absence semantics.** An empty result never stands alone. It always says something like "searched N repositories in the graph layer; the relationships layer is absent". The counts are the store's own.
+
+An **unrecognised** layer is served as absent, never as empty. Every tool that needs it answers with the reason in place of a result, for example "relationships layer present but format unrecognised (found none, supports 1.x); not read", and `store_info` lists it with that state. A tool never falls back to an empty result for a layer it could not read.
 
 ### Security
 
