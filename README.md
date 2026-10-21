@@ -132,7 +132,7 @@ Copilot Studio is not a front door in version 1: it reaches MCP servers over Str
 
 **The rules travel with the server, not with each front door.** The server is to send its answering guidance in the `instructions` field of its MCP `initialize` result. A client that honours the field hands it to the model, so no copy is kept in a skill, in `.github/copilot-instructions.md` or in a system prompt, and no copy drifts.
 
-**Not yet implemented.** The server does not send `instructions` today. The SDK's low-level `Server` takes an `instructions` argument, and `server.py` does not pass one.
+The server sends them as `instructions` in its initialize result: the constant `server.INSTRUCTIONS`, kept under Claude Code's 4,096-character limit (#13).
 
 The rules it states:
 
@@ -159,7 +159,7 @@ The MCP specification leaves `instructions` optional for clients. A client that 
 
 ### Where a client drops them
 
-**`knowledge-store-mcp --print-instructions` prints the exact text the server sends (to be implemented).** Paste its output into `.github/copilot-instructions.md`, or into a hosted agent's system prompt. The copy is generated from the server's own source, never written by hand, so regenerating it after an upgrade is the whole update.
+**`knowledge-store-mcp --print-instructions` prints the exact text the server sends.** It needs no store. Paste its output into `.github/copilot-instructions.md`, or into a hosted agent's system prompt. The copy is generated from the server's own source, never written by hand, so regenerating it after an upgrade is the whole update.
 
 **The behaviours that matter most do not depend on that prose.** They are in the tool results themselves, which every front door receives:
 
