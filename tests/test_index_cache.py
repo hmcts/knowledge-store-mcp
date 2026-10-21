@@ -51,6 +51,11 @@ def sha256_of(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def pair(name: str) -> list[str]:
+    """A cache entry's listing: the entry and its digest."""
+    return [name, name + ".sha256"]
+
+
 def snapshot(root: Path) -> dict[str, tuple]:
     """Every file and directory under `root`, with its bytes' hash, mode and mtime."""
     state: dict[str, tuple] = {}
@@ -131,7 +136,7 @@ class ArchiveTest(CacheTestCase):
         handle = self.open_handle(root)
         name = sha256_of(archive) + ".sqlite"
         self.assertEqual(handle.path, self.entries / name)
-        self.assertEqual(self.listing(self.entries), [name])
+        self.assertEqual(self.listing(self.entries), pair(name))
         self.assertEqual(handle.path.read_bytes(), gzip.decompress(archive.read_bytes()))
         self.assertEqual(repo_names(handle), REPOS)
 
@@ -161,7 +166,7 @@ class ArchiveTest(CacheTestCase):
         self.assertNotEqual(new, old)
         handle = self.open_handle(root)
         self.assertEqual(handle.path.name, new)
-        self.assertEqual(self.listing(self.entries), [new])
+        self.assertEqual(self.listing(self.entries), pair(new))
         self.assertEqual(repo_names(handle), REPOS)
 
     def test_an_archive_replaced_after_hashing_is_named_by_what_was_decompressed(self):
@@ -182,7 +187,7 @@ class ArchiveTest(CacheTestCase):
             handle = self.open_handle(root)
         name = sha256_of(archive) + ".sqlite"
         self.assertEqual(handle.path, self.entries / name)
-        self.assertEqual(self.listing(self.entries), [name])
+        self.assertEqual(self.listing(self.entries), pair(name))
 
     def test_other_store_ids_and_in_flight_temp_files_survive_the_cleanup(self):
         """Catches: a cleanup that removes more than this store id's other entries -
@@ -203,7 +208,7 @@ class ArchiveTest(CacheTestCase):
         self.assertEqual(self.listing(other), ["0123.sqlite"])
         self.assertEqual((other / "0123.sqlite").read_bytes(), b"other")
         self.assertEqual(
-            self.listing(self.entries), sorted(["README", "abc.sqlite.tmp-1-xyz", name])
+            self.listing(self.entries), sorted(["README", "abc.sqlite.tmp-1-xyz", *pair(name)])
         )
 
     def test_an_emptied_entry_is_replaced_on_the_next_open(self):
@@ -218,6 +223,83 @@ class ArchiveTest(CacheTestCase):
         self.assertEqual(repo_names(handle), REPOS)
         expected = gzip.decompress((root / INDEX_ARCHIVE).read_bytes())
         self.assertEqual(handle.path.read_bytes(), expected)
+
+    def test_the_digest_is_the_sha256_of_the_decompressed_bytes(self):
+        """Catches: a digest of the archive, or of nothing, written beside the entry,
+        which every later start would find mismatched and decompress again."""
+        root = build(self.tmp / "s")
+        handle = self.open_handle(root)
+        expected = hashlib.sha256(gzip.decompress((root / INDEX_ARCHIVE).read_bytes()))
+        digest = handle.path.with_name(handle.path.name + ".sha256")
+        self.assertEqual(digest.read_text(encoding="ascii"), expected.hexdigest() + "\n")
+
+    def test_an_entry_with_one_byte_flipped_is_rebuilt_on_the_next_start(self):
+        """Catches: serving a damaged entry because its name still matches the
+        archive. Damage SQLite would not notice reads as wrong answers, so the
+        bytes are checked against the digest on the first open in a process."""
+        root = build(self.tmp / "s")
+        first = self.open_handle(root)
+        first.close()
+        damaged = bytearray(first.path.read_bytes())
+        damaged[len(damaged) // 2] ^= 0xFF
+        first.path.write_bytes(bytes(damaged))
+        # The next start: a new process has checked nothing.
+        with mock.patch.object(index, "_VERIFIED", set()):
+            handle = self.open_handle(root)
+        self.assertEqual(handle.path, first.path)
+        expected = gzip.decompress((root / INDEX_ARCHIVE).read_bytes())
+        self.assertEqual(handle.path.read_bytes(), expected)
+        self.assertEqual(repo_names(handle), REPOS)
+        self.assertEqual(self.listing(self.entries), pair(first.path.name))
+
+    def test_an_entry_without_its_digest_is_rebuilt(self):
+        """Catches: trusting an entry nothing can check - one written before digests
+        existed, or whose digest was lost - instead of decompressing it again."""
+        root = build(self.tmp / "s")
+        first = self.open_handle(root)
+        first.close()
+        before = first.path.stat().st_ino
+        first.path.with_name(first.path.name + ".sha256").unlink()
+        with mock.patch.object(index, "_VERIFIED", set()):
+            handle = self.open_handle(root)
+        self.assertNotEqual(handle.path.stat().st_ino, before)
+        self.assertEqual(self.listing(self.entries), pair(first.path.name))
+        self.assertEqual(repo_names(handle), REPOS)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root ignores file modes")
+    def test_a_damaged_entry_that_cannot_be_replaced_falls_back_naming_no_path(self):
+        """Catches: a damaged entry served because it could not be removed, or the
+        fallback's reason carrying the cache path an `OSError` names."""
+        root = build(self.tmp / "s")
+        first = self.open_handle(root)
+        first.close()
+        first.path.write_bytes(b"damaged")
+        self.entries.chmod(0o500)
+        self.addCleanup(self.entries.chmod, 0o700)
+        with mock.patch.object(index, "_VERIFIED", set()):
+            result = self.open(root)
+        assert isinstance(result, Fallback), result
+        self.assertIn("could not be written", result.reason)
+        self.assertNotIn(str(self.tmp), result.reason)
+        self.assertNotIn(first.path.name, result.reason)
+
+    def test_the_cleanup_removes_and_keeps_digests_with_their_entries(self):
+        """Catches: another archive's digest, or a digest whose entry is gone, left
+        behind for ever; a crashed writer's old digest temp file never swept; or
+        the current entry's digest removed, so every start decompresses again."""
+        self.entries.mkdir(parents=True)
+        (self.entries / "stale.sqlite").write_bytes(b"stale")
+        (self.entries / "stale.sqlite.sha256").write_bytes(b"0" * 64)
+        (self.entries / "orphan.sqlite.sha256").write_bytes(b"0" * 64)
+        old = self.entries / "aaa.sqlite.sha256.tmp-1-old"
+        young = self.entries / "bbb.sqlite.sha256.tmp-2-young"
+        for path, hours in ((old, 25), (young, 23)):
+            path.write_bytes(b"partial")
+            then = time.time() - hours * 3600
+            os.utime(path, (then, then))
+        root = build(self.tmp / "s")
+        name = self.open_handle(root).path.name
+        self.assertEqual(self.listing(self.entries), sorted([*pair(name), young.name]))
 
     def test_an_entry_a_peer_deletes_before_it_opens_is_decompressed_again(self):
         """Catches: falling back when a server for the same store id, holding another
@@ -300,12 +382,12 @@ class ArchiveTest(CacheTestCase):
             os.utime(path, (then, then))
         root = build(self.tmp / "s")
         name = self.open_handle(root).path.name
-        self.assertEqual(self.listing(self.entries), sorted([name, young.name]))
+        self.assertEqual(self.listing(self.entries), sorted([*pair(name), young.name]))
         # The sweep runs when an existing entry is reused, too.
         then = time.time() - 25 * 3600
         os.utime(young, (then, then))
         self.open_handle(root)
-        self.assertEqual(self.listing(self.entries), [name])
+        self.assertEqual(self.listing(self.entries), pair(name))
 
     @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root ignores file modes")
     def test_a_read_only_cache_directory_falls_back_and_leaves_nothing(self):
@@ -358,7 +440,7 @@ class ArchiveTest(CacheTestCase):
                 self.assertEqual(child.exitcode, 0)
             self.assertEqual(got, [REPOS, REPOS])
             name = sha256_of(root / INDEX_ARCHIVE) + ".sqlite"
-            self.assertEqual(self.listing(self.entries), [name])
+            self.assertEqual(self.listing(self.entries), pair(name))
             self.assertEqual((self.entries / name).read_bytes(), expected)
 
     def test_two_threads_decompressing_at_once_leave_one_whole_entry(self):
@@ -386,7 +468,7 @@ class ArchiveTest(CacheTestCase):
                 thread.join(timeout=60)
             self.assertEqual(got, [REPOS] * 4)
             name = sha256_of(root / INDEX_ARCHIVE) + ".sqlite"
-            self.assertEqual(self.listing(self.entries), [name])
+            self.assertEqual(self.listing(self.entries), pair(name))
             self.assertEqual((self.entries / name).read_bytes(), expected)
 
 
@@ -490,9 +572,10 @@ class SchemaTest(CacheTestCase):
         real = index._copy_capped
         decompressed: list[int] = []
 
-        def copy_and_count(source, out, max_bytes: int) -> None:
-            real(source, out, max_bytes)
+        def copy_and_count(source, out, max_bytes: int) -> str:
+            content = real(source, out, max_bytes)
             decompressed.append(out.tell())
+            return content
 
         with mock.patch.object(index, "_copy_capped", copy_and_count):
             first = self.open(root)
@@ -503,7 +586,9 @@ class SchemaTest(CacheTestCase):
             self.assertIn("index schema '2.0'", result.reason)
         # One decompress over two opens: the entry is kept and reused, unchanged.
         self.assertEqual(len(decompressed), 1)
-        self.assertEqual(self.listing(self.entries), [sha256_of(root / INDEX_ARCHIVE) + ".sqlite"])
+        self.assertEqual(
+            self.listing(self.entries), pair(sha256_of(root / INDEX_ARCHIVE) + ".sqlite")
+        )
 
     def test_a_newer_schema_minor_is_read(self):
         """Catches: refusing an index only because a newer library added to it."""
