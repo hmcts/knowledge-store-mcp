@@ -143,14 +143,14 @@ Two routes are possible later.
 
 **Choosing.** Take route B to keep Claude's reasoning and the answer quality the store was measured on. Take route A only if answers reasoned by Microsoft's model are acceptable for your store.
 
-**Both routes wait on two decisions a store's owner makes:**
+**Building a route does not wait on these decisions; enabling it for a store does.** Whether Microsoft 365 Copilot may be used at all is the organisation's platform decision. Once a route exists, each store and each deployment that switches it on works through two decisions for that store:
 
 - **Data governance, in both directions.**
   - *Into Microsoft 365:* an answer carries store content there, including repository paths, ticket ids and quoted commit text.
   - *Out of Microsoft 365:* in route B, the user's question leaves Microsoft 365 for the hosted agent's endpoint in another cloud. A question can carry sensitive text.
   - *What is kept:* what the hosted agent logs of each question and answer, and for how long.
 
-  The store's owner confirms all three for the store's classification, and names who approves them, before either route is enabled.
+  The store's owner confirms all three for the store's classification, and names who approves them, before the route is enabled for that store.
 - **Who may ask.** The Entra group allowed to ask should match the people who can read the store's repository on GitHub. A wider group would widen access to the store.
 
 ## How the model is told to answer
