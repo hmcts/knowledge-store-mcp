@@ -721,14 +721,18 @@ class DamagedIndexTest(ToolTestCase):
     def test_a_damaged_full_text_table_falls_back_to_the_graph_and_says_why(self):
         """Catches: a search that fails outright, or answers wrongly without saying
         so, when the index's FTS5 data is damaged (ruling 3). The index's other
-        tables still answer `node`."""
+        tables still answer `node`.
+
+        The damage is an emptied shadow table, which SQLite 3.53 and 3.54 both
+        report as corruption when it is searched. Zeroed blocks are not: 3.53 reads
+        them as no matches, without an error."""
         session = self.session("plain")
         root = session.current()[0].root
         session.current()[0].close()
         with closing(sqlite3.connect(root / INDEX_PLAIN)) as db:
             # FTS5's shadow tables are guarded against writes; lift the guard to damage one.
             db.setconfig(sqlite3.SQLITE_DBCONFIG_DEFENSIVE, False)
-            db.execute("UPDATE labels_data SET block = zeroblob(length(block)) WHERE id > 10")
+            db.execute("DELETE FROM labels_data")
             db.commit()
         session = store.Session(lambda: store.open_store(root, self.cache), lambda: NOW)
         self.addCleanup(lambda: session.current()[0].close())
