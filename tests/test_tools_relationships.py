@@ -172,10 +172,12 @@ class RelationshipsTestCase(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def session(self, index: str = "gz", edit=None, **options) -> store.Session:
+    def session(self, index: str = "gz", edit=None, prepare=None, **options) -> store.Session:
         root = build(
             self.tmp / f"s-{index}-{len(list(self.tmp.iterdir()))}", index=index, **options
         )
+        if prepare is not None:
+            prepare(root)
         if edit is not None:
             path = root / MANIFEST
             document = json.loads(path.read_text(encoding="utf-8"))
@@ -535,6 +537,94 @@ class EscapingLinkTest(RelationshipsTestCase):
         self.assertNotIn(str(self.tmp), json.dumps(found))
         clean = tools_relationships.dependents(self.session(), "ledger-service")
         self.assertNotIn("by_repo_links_skipped", clean)
+
+
+# knowledge-store-builder 0.18.0's manifest names the layer by its directory.
+LAYER_DIRECTORY = "knowledge/relationships/"
+# Spec, Absence semantics: a layer the server could not read is never answered as
+# an empty one. Fixed text: no store path is quoted.
+NO_BY_REPO = (
+    "relationships layer present but holds no per-repository files (by-repo/<repo>.json); not read"
+)
+TWELVE = sorted(
+    (
+        "accounts-web audit-service chart-web gateway-service infra-modules ledger-service "
+        "notifications-service payment-apis payments-api reporting-worker shared-lib-java "
+        "ui-components"
+    ).split()
+)
+
+
+def _by_repo_at(path: str):
+    def edit(document):
+        document["layers"]["relationships"]["paths"] = [path]
+
+    return edit
+
+
+def _empty_by_repo(root: Path) -> None:
+    for path in sorted((root / BY_REPO).iterdir()):
+        path.unlink()
+
+
+def _no_by_repo(root: Path) -> None:
+    _empty_by_repo(root)
+    (root / BY_REPO).rmdir()
+
+
+class LayerDirectoryTest(RelationshipsTestCase):
+    """The per-repository files are `by-repo/` inside the directory the manifest
+    names for the layer, found by that name, never by guessing which path is a
+    directory."""
+
+    def assertAnswersFromByRepo(self, session: store.Session) -> None:
+        self.assertEqual(sorted(results.by_repo_files(session.current()[0])), TWELVE)
+        found = tools_relationships.dependents(session, "ledger-service")
+        self.assertEqual(found["items"], [PAYMENTS_ON_LEDGER, WORKER_ON_LEDGER])
+        depends = tools_relationships.dependencies(session, "payments-api")
+        self.assertEqual(depends["totals"], {"depends_on": 3, "outside_estate": 2})
+        walk = tools_relationships.dependents(session, "ledger-service", transitive=True)
+        self.assertEqual(walk["total"], 5)
+        answer = tools_relationships.repo_answer(session, "ledger-service")
+        # DESIGN.md 5.1: infra-modules and shared-lib-java; payments-api and reporting-worker.
+        self.assertEqual(answer["totals"], {"depends_on": 2, "depended_on_by": 2})
+        self.assertEqual(tools_graph.find_repo(session, "kinds")["answer"], "not in the estate")
+
+    def test_a_manifest_naming_the_layer_directory_reads_its_by_repo(self):
+        """Catches: the by-repo directory taken as the first manifest path ending in
+        `/`, so a 0.18.0 manifest lists `kinds` and `repository-dependencies` as the
+        layer's repositories, no repository matches, and every dependency answer is
+        an empty list "in the estate"."""
+        session = self.session()
+        manifest = json.loads((session.current()[0].root / MANIFEST).read_text("utf-8"))
+        self.assertEqual(manifest["layers"]["relationships"]["paths"], [LAYER_DIRECTORY])
+        self.assertAnswersFromByRepo(session)
+
+    def test_a_manifest_naming_by_repo_itself_is_still_read(self):
+        """Catches: only `<layer>/by-repo/` tried, so a manifest whose path already
+        names `by-repo/` - the workaround applied to stores built before this fix -
+        reads `by-repo/by-repo/`, finds nothing and stops answering."""
+        for path in ("knowledge/relationships/by-repo/", "knowledge/relationships/by-repo"):
+            with self.subTest(path=path):
+                self.assertAnswersFromByRepo(self.session(edit=_by_repo_at(path)))
+
+    def test_no_per_repository_files_is_a_layer_problem_not_an_empty_answer(self):
+        """Catches: a present, stamped layer whose `by-repo/` is empty or missing
+        answered "in the estate" with an empty list and a `searched` naming the
+        relationships layer as searched - the silent false negative a mislaid
+        directory produces (spec, Absence semantics)."""
+        for prepare in (_empty_by_repo, _no_by_repo):
+            with self.subTest(prepare=prepare.__name__):
+                session = self.session(prepare=prepare)
+                for tool in TOOLS:
+                    with self.subTest(tool=tool.__name__):
+                        with self.assertRaises(results.LayerUnrecognised) as raised:
+                            tool(session, "ledger-service")
+                        self.assertEqual(str(raised.exception), NO_BY_REPO)
+                info = tools_graph.store_info(session)
+                self.assertEqual(
+                    info["layers"]["relationships"], {"present": True, "unrecognised": NO_BY_REPO}
+                )
 
 
 class AbsentLayerTest(RelationshipsTestCase):

@@ -445,6 +445,15 @@ Present: `graph`, `labels`, `provenance`, `intent`, `ticket_descriptions`,
 `repository_manifest`, `semantic` and `ticket_tracker`. Their `present` is
 `false` (`null` for deployments) and their files do not exist.
 
+### 9.5 The relationships layer's path
+
+`layers.relationships.paths` is `["knowledge/relationships/"]`: the layer is the
+whole directory, as the released writer (knowledge-store-builder 0.18.0) names it,
+and its digest is taken over every file under it. The per-repository files are in
+its `by-repo/`. The fixture once named `by-repo/` itself, a layout no library
+release wrote, which hid a reader that listed the layer directory as repositories.
+`tests/library_store/` holds the writer's own output, so the two are compared.
+
 ## 10. Where the fixture follows a plan, not a merged writer
 
 - **Manifest (#454):** `feat/store-manifest` at `b0a7841`, the review fix that
