@@ -301,10 +301,10 @@ class ByRepo:
 
 def by_repo_listing(store: Store) -> ByRepo:
     """The `by-repo/` directory inside the one the manifest names for the
-    relationships layer, listed once per loaded store and never parsed here. An entry - or the directory
-    itself - that resolves outside the store is skipped and counted, never followed
-    and never quoted: one hostile link must not fail every lookup. Empty when the
-    layer is absent."""
+    relationships layer, listed once per loaded store and never parsed here. An
+    entry - or the directory itself - that resolves outside the store is skipped
+    and counted, never followed and never quoted: one hostile link must not fail
+    every lookup. Empty when the layer is absent."""
     return store.memo("relationships.by_repo", lambda: _list_by_repo(store))
 
 
