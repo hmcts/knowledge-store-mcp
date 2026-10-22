@@ -19,6 +19,7 @@ from typing import Any
 from unittest import mock
 
 from fixture_store.build import (
+    BRIEFS,
     BRIEFS_DATA,
     DIVES_DATA,
     FAQ,
@@ -72,6 +73,10 @@ NOT_HELD = {
     "referenced_by": ["ledger-service", "payments-api"],
 }
 
+# DESIGN.md 9.2: the store's `sources_as_of`, which dates the library's written
+# layers (DESIGN.md 7.1).
+SOURCES_AS_OF = "2026-10-15T23:30:00-02:00"
+
 # The written answers of DESIGN.md 7, as `answers` returns each match.
 FAQ_MATCH = {
     "layer": "faq",
@@ -83,6 +88,8 @@ FAQ_MATCH = {
         "<p>RefundHandler in payments-api calls LedgerClient, which posts a "
         "reversing journal entry in ledger-service.</p>"
     ),
+    "as_of": "2026-09-28",
+    "commit": "5ca1ab1e" * 5,
 }
 PAYMENTS_BRIEF = {
     "layer": "topics",
@@ -94,6 +101,8 @@ PAYMENTS_BRIEF = {
         "<p>A card payment enters through gateway-service, is taken by "
         "payments-api, and is posted to ledger-service as a journal entry.</p>"
     ),
+    "as_of": SOURCES_AS_OF,
+    "commit": None,
 }
 PAYMENTS_DIVE = {
     "layer": "deep_dives",
@@ -105,6 +114,8 @@ PAYMENTS_DIVE = {
         "<p>payments-api at 99999999 takes card payments and hands refunds to "
         "RefundHandler, which retries a timed-out refund.</p>"
     ),
+    "as_of": SOURCES_AS_OF,
+    "commit": None,
 }
 ANSWER_LAYERS = ["deep_dives", "faq", "topics"]
 
@@ -133,7 +144,7 @@ def envelope(index: str, layers_used: list[str]) -> dict:
             "id": "example-store",
             "format": {"major": 1, "minor": 0},
             "library_version": "0.0.0+fixture",
-            "sources_as_of": "2026-10-15T23:30:00-02:00",
+            "sources_as_of": SOURCES_AS_OF,
             "index": index,
             "layers_used": layers_used,
             "notice": None,
@@ -777,6 +788,116 @@ class AnswersTest(TicketsTestCase):
         self.assertIn("only common words", str(raised.exception))
         with self.assertRaises(ArgumentRefused):
             tools_tickets.answers(session, "ledger", limit=0)
+
+
+class DatedAnswersTest(TicketsTestCase):
+    """Written analysis is dated (#19): an entry's own `as_of` and `commit`; the
+    library's briefs and deep dives, which record no date, by the store's
+    `sources_as_of` (DESIGN.md 7.1); anything else undated, as null."""
+
+    def match(self, found: dict, layer: str, entry_id: str) -> dict:
+        return next(i for i in found["items"] if (i["layer"], i["id"]) == (layer, entry_id))
+
+    def test_a_dated_entry_returns_its_as_of_and_commit(self):
+        """Catches: an answers entry's `as_of` or `commit` dropped, so an assistant
+        presents analysis written on 2026-09-28 as current (DESIGN.md 7.1)."""
+        found = self.match(
+            tools_tickets.answers(self.session(), "ledger reach"),
+            "faq",
+            "how-refunds-reach-the-ledger",
+        )
+        self.assertEqual((found["as_of"], found["commit"]), ("2026-09-28", "5ca1ab1e" * 5))
+
+    def test_an_undated_entry_returns_null(self):
+        """Catches: an entry of a declared answers layer with no `as_of` given a
+        date it does not have - the store's, or today's - so undated analysis
+        reads as dated."""
+        faq = {
+            "undated": {"title": "Ledger", "html": "<p>ledger</p>", "source": "a.md"},
+            "commit-only": {
+                "title": "Ledger",
+                "html": "<p>ledger</p>",
+                "source": "b.md",
+                "commit": "5ca1ab1e" * 5,
+            },
+        }
+        session = self.session(files={FAQ: json.dumps(faq).encode("utf-8")})
+        found = tools_tickets.answers(session, "ledger")
+        self.assertEqual(
+            {i["id"]: (i["as_of"], i["commit"]) for i in found["items"] if i["layer"] == "faq"},
+            {"commit-only": (None, "5ca1ab1e" * 5), "undated": (None, None)},
+        )
+
+    def test_briefs_and_dives_are_dated_by_the_stores_sources_as_of(self):
+        """Catches: a topic brief or deep dive, which records no date of its own,
+        returned undated although the manifest dates the build that holds it; or
+        dated from anything but the manifest's `sources_as_of`. A changed
+        manifest date moves theirs, and an unrecorded one leaves them null."""
+        for recorded in (SOURCES_AS_OF, "2026-07-01T00:00:00+00:00", None):
+            with self.subTest(sources_as_of=recorded):
+
+                def edit(document, recorded=recorded):
+                    document["sources_as_of"] = recorded
+
+                found = tools_tickets.answers(self.session(edit=edit), "card payment")
+                self.assertEqual(
+                    {
+                        (i["layer"], i["id"]): (i["as_of"], i["commit"])
+                        for i in found["items"]
+                        if i["layer"] != "faq"
+                    },
+                    {
+                        ("topics", "payments"): (recorded, None),
+                        ("deep_dives", "payments-api"): (recorded, None),
+                    },
+                )
+
+    def test_a_briefs_own_date_wins_over_the_stores(self):
+        """Catches: a library layer's entry that does carry its own `as_of`
+        overwritten by the store's `sources_as_of`, a later and less exact date."""
+        briefs = {"payments": {**BRIEFS_DATA["payments"], "as_of": "2026-08-02"}}
+        session = self.session(files={BRIEFS: json.dumps(briefs).encode("utf-8")})
+        found = self.match(tools_tickets.answers(session, "card"), "topics", "payments")
+        self.assertEqual((found["as_of"], found["commit"]), ("2026-08-02", None))
+
+    def test_a_date_or_commit_that_is_not_one_is_null_and_never_returned(self):
+        """Catches: an `as_of` or `commit` holding prose returned as structure,
+        outside a text field: they are written by hand, so only a date and a hex
+        commit id are passed."""
+        faq = {
+            "prose": {
+                "title": "Ledger",
+                "html": "<p>ledger</p>",
+                "source": "a.md",
+                "as_of": HOSTILE,
+                "commit": HOSTILE,
+            },
+            "typed": {
+                "title": "Ledger",
+                "html": "<p>ledger</p>",
+                "source": "b.md",
+                "as_of": 20260928,
+                "commit": ["5ca1ab1e"],
+            },
+            "timestamp": {
+                "title": "Ledger",
+                "html": "<p>ledger</p>",
+                "source": "c.md",
+                "as_of": "2026-09-28T10:15:00+01:00",
+                "commit": "5ca1ab1e on main",
+            },
+        }
+        session = self.session(files={FAQ: json.dumps(faq).encode("utf-8")})
+        found = tools_tickets.answers(session, "ledger")
+        self.assertEqual([p for p, t in leaves(found) if HOSTILE in t], [])
+        self.assertEqual(
+            {i["id"]: (i["as_of"], i["commit"]) for i in found["items"] if i["layer"] == "faq"},
+            {
+                "prose": (None, None),
+                "timestamp": ("2026-09-28T10:15:00+01:00", None),
+                "typed": (None, None),
+            },
+        )
 
 
 if __name__ == "__main__":

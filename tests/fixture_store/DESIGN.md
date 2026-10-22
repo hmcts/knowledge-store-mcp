@@ -397,6 +397,17 @@ The briefs and deep-dives files carry the library's `_metadata` block, which
 is not an entry. `faq.json` carries none: the library writes no extra layer's
 file, so nothing adds one.
 
+### 7.1 When each answer was written
+
+The FAQ entry is dated: `as_of` `2026-09-28`, `commit` `5ca1ab1e` repeated five
+times (40 hex digits). The briefs and the deep dive carry no date of their own,
+and nothing in the store records the build that wrote them: their `_metadata`
+holds digests only, and the manifest records no per-layer build. So a reader
+dates them, and the community summaries, by the store's `sources_as_of`
+(section 9.2), `2026-10-15T23:30:00-02:00`. **The trap:** that is the newest
+source the store reflects, not the day the prose was written, which may be
+earlier.
+
 ## 8. Hostile text
 
 Ticket `EX-103`'s description (`d`) is:
@@ -480,4 +491,6 @@ release wrote, which hid a reader that listed the layer directory as repositorie
   also carries `content_digest` and `coverage`, which no reader of this store
   uses.
 - **Extra answers layer:** the library declares the layer but not its file's
-  shape; this one uses the topic briefs' entry shape (`title`, `html`, `source`).
+  shape; this one uses the topic briefs' entry shape (`title`, `html`, `source`),
+  plus `as_of` and `commit` as hmcts/knowledge-store-builder#476 plans them: the
+  date the entry was written and the store commit that last touched its file.

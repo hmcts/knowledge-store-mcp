@@ -469,7 +469,10 @@ def community(
     cap_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
 ) -> dict[str, Any]:
     """One community: its label and summary, and its member nodes by id, paged. The
-    summary is store text, returned as data."""
+    summary is store text, returned as data. It is written analysis, so it is
+    dated: `summary_as_of` is the manifest's `sources_as_of`, because neither the
+    summary nor the manifest records the build that wrote it; null with no
+    summary."""
     community_id = _count(
         id, "community id", "a whole number from -2**63 to 2**63 - 1", lambda n: n in INT64
     )
@@ -482,7 +485,16 @@ def community(
         name for name in ("labels", "summaries") if store.layer(name) is not None
     ]
     held = members or label is not None or summary is not None
-    header = {"id": community_id, "label": label, "summary": summary} if held else None
+    header = (
+        {
+            "id": community_id,
+            "label": label,
+            "summary": summary,
+            "summary_as_of": store.manifest.sources_as_of if summary is not None else None,
+        }
+        if held
+        else None
+    )
     return _paged(
         store,
         notice,

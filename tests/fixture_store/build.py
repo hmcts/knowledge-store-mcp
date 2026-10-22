@@ -455,6 +455,9 @@ EXTRA_LAYERS_DECLARED = {
     },
 }
 
+FAQ_AS_OF = "2026-09-28"
+FAQ_COMMIT = "5ca1ab1e" * 5
+
 FAQ_DATA = {
     "how-refunds-reach-the-ledger": {
         "title": "How does a refund reach the ledger?",
@@ -463,6 +466,10 @@ FAQ_DATA = {
             "reversing journal entry in ledger-service.</p>"
         ),
         "source": "docs/answers/how-refunds-reach-the-ledger.md",
+        # When it was written and the store commit that last touched it, as
+        # knowledge-store-builder#476 plans to date each entry (DESIGN.md 7).
+        "as_of": FAQ_AS_OF,
+        "commit": FAQ_COMMIT,
     },
 }
 

@@ -19,6 +19,15 @@ server composes, and never bound into SQL other than as a parameter. What is
 structure - ticket keys, paths, repository names, branch names (which git forbids
 spaces in) - is returned in its own field.
 
+**Written answers are dated.** Each carries `as_of`, when it was written, and
+`commit`, the store commit that last touched it, where its entry records them.
+The library's briefs and deep dives record neither, and nothing in the store
+records the build that wrote them, so they are dated by the manifest's
+`sources_as_of`: the newest source of the build that holds them, which the prose
+may predate. Anything else undated is null, and is presented as undated. Both
+fields are written by hand in an answers layer, so only a date and a hex commit
+id are passed; anything else is null.
+
 **Answers cite a store-relative path.** A written answer is cited by its layer,
 its id and the `source` path its entry declares, with the manifest's `store.id`.
 The server reads files and never runs git, and the manifest carries no URL for
@@ -32,6 +41,7 @@ import re
 import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any
 
 from . import queries, results
@@ -90,6 +100,9 @@ _SPLIT_MARGIN = len(results.encode({"landed": [], "proposed": []})) - len(
 # have its shape: an id is one plain segment, a source a relative path of plain
 # segments (`_plain_segment`). Prose has spaces, so it cannot pass for either.
 _MARKUP = re.compile(r"<[^>]*>")
+
+# A commit id as git writes one: lowercase hex, abbreviated to seven or more.
+_COMMIT = re.compile(r"[0-9a-f]{7,64}", re.ASCII)
 
 # The library's metadata block in the briefs and deep-dives files: not an entry.
 _METADATA = "_metadata"
@@ -522,8 +535,36 @@ def _entry(
         "source": _plain_path(answer.get("source")),
         "summary": title,
         "text": body,
+        **_dated(store, layer, answer),
     }
     return (layer, entry_id, frozenset(_words(f"{title} {plain}")), item)
+
+
+def _dated(store: Store, layer: str, answer: dict[str, Any]) -> dict[str, Any]:
+    """An answer's `as_of` and `commit`: its own, where it records them; for the
+    library's briefs and deep dives, which record no date, the store's
+    `sources_as_of`; otherwise null."""
+    as_of = _date(answer.get("as_of"))
+    if as_of is None and layer in ANSWER_LAYERS:
+        as_of = store.manifest.sources_as_of
+    commit = answer.get("commit")
+    return {
+        "as_of": as_of,
+        "commit": commit if isinstance(commit, str) and _COMMIT.fullmatch(commit) else None,
+    }
+
+
+def _date(value: Any) -> str | None:
+    """`value` when it is an ISO date or date and time, as written; else None."""
+    if not isinstance(value, str):
+        return None
+    for parse in (date.fromisoformat, datetime.fromisoformat):
+        try:
+            parse(value)
+        except ValueError:
+            continue
+        return value
+    return None
 
 
 @dataclass(frozen=True)

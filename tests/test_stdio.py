@@ -374,6 +374,24 @@ class InstructionsTest(StdioTestCase):
         self.assertEqual(result.stdout, server.INSTRUCTIONS.encode("utf-8"))
         self.assertEqual(result.stderr, b"")
 
+    def test_the_instructions_date_written_analysis_and_rank_it_below_mechanical_layers(self):
+        """Catches: the dating and precedence rule (#19) dropped or reversed, so an
+        assistant presents a summary, brief or written answer as current, presents
+        an undated one as dated, or lets it overrule the graph. The wording follows
+        knowledge-store-builder's grounding contract: written prose goes stale
+        silently, and the graph wins."""
+        text = " ".join(server.INSTRUCTIONS.split())
+        for fragment in (
+            "Prefer the mechanical layers (the graph, the index, relationships, tickets)",
+            "goes stale silently",
+            "present it as dated, by its `as_of`",
+            "an entry whose `as_of` is null as undated",
+            "When a mechanical layer contradicts written analysis, say so: the mechanical "
+            "layer wins and the analysis is stale.",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, text)
+
     def test_the_instructions_fit_where_claude_code_cuts_them(self):
         """Catches: guidance grown past 4,096 characters, where Claude Code cuts
         server instructions, so the rules at the end never reach the model."""

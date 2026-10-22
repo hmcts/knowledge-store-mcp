@@ -239,6 +239,8 @@ COMMUNITY_0 = {
         "Card payments enter through the gateway, are taken by payments-api and "
         "posted to the ledger as journal entries; refunds follow the same path back."
     ),
+    # DESIGN.md 7.1: a summary records no date, so the store's `sources_as_of`.
+    "summary_as_of": "2026-10-15T23:30:00-02:00",
 }
 
 
@@ -899,6 +901,30 @@ class CommunityTest(ToolTestCase):
                 self.assertEqual([m["id"] for m in response["items"]], COMMUNITY_0_IDS)
                 self.assertEqual(response["total"], 20)
                 self.assertIn(REFUND_HANDLER, response["items"])
+
+    def test_a_summary_is_dated_by_the_stores_sources_as_of_and_none_is_undated(self):
+        """Catches: a written summary returned undated, so an assistant presents it
+        as current; dated from anything but the manifest's `sources_as_of`; or a
+        community with no summary given a date, as though written analysis were
+        there (#19, DESIGN.md 7.1)."""
+
+        def moved(document):
+            document["sources_as_of"] = "2026-07-01T00:00:00+00:00"
+
+        def unrecorded(document):
+            document["sources_as_of"] = None
+
+        def no_summaries(document):
+            document["layers"]["summaries"]["present"] = False
+
+        for edit, expected in (
+            (moved, ("2026-07-01T00:00:00+00:00", True)),
+            (unrecorded, (None, True)),
+            (no_summaries, (None, False)),
+        ):
+            with self.subTest(edit=edit.__name__):
+                header = tools_graph.community(self.session(edit=edit), 0)["community"]
+                self.assertEqual((header["summary_as_of"], header["summary"] is not None), expected)
 
     def test_an_unknown_community_is_null_and_says_what_was_searched(self):
         """Catches: inventing a community, or a bare empty list."""

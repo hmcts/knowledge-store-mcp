@@ -108,9 +108,9 @@ Every result carries `store`, which holds the format, library version, build dat
 | `repo_answer(repo)` | the repository's relationships file (knowledge-store-builder#455), whole, or "layer absent" | reading a large file whole and truncating it |
 | `dependents(target, kind?, ref_prefix_not?, page?)` / `dependencies(repo, kind?, page?)` | items, each with `references`, `kinds`, `refs_pinned` and example lines with pinned URLs, plus `total` and `next_page`; never cut without saying so. `ref_prefix_not` keeps only consumers that pin something other than a given ref prefix (for example a tag other than `4.`, or a branch) | an incomplete list read as complete; pin questions not answerable through the tools |
 | `search(text, repo?, kind?, limit)` | ranked nodes: id, label, repo, kind, `url` | corpus paths as citations |
-| `node(id)`, `neighbours(id, depth≤2, relation?)`, `community(id)` | graph access; each node carries its `url` and each community its summary | the same |
+| `node(id)`, `neighbours(id, depth≤2, relation?)`, `community(id)` | graph access; each node carries its `url` and each community its summary, dated by the store's `sources_as_of` as `summary_as_of` | the same; written prose presented as current |
 | `tickets(repo, path?)` | `tickets` (landed) and `proposed` (with branches) as separate lists, plus the store's `reach` flag | unmerged work treated as landed |
-| `answers(query, limit)` | written answers: the library's topic briefs and deep dives, plus any `extra_layers` declared with `"kind": "answers"`. Each match is returned with its pinned URL | an agent rebuilding from raw evidence an answer the store has already written |
+| `answers(query, limit)` | written answers: the library's topic briefs and deep dives, plus any `extra_layers` declared with `"kind": "answers"`. Each match is returned with its pinned URL, and dated: `as_of` and `commit` where the entry records them, a brief or deep dive by the store's `sources_as_of`, otherwise null (undated) | an agent rebuilding from raw evidence an answer the store has already written; written analysis presented as current |
 | `ticket(key)` | descriptions, branch-only text (`ps`/`pb`), and `proposed`/`branches` | the same |
 
 **Unknown names, in every tool that takes a repository.** Every such tool returns one of three answers:
