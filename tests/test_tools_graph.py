@@ -917,14 +917,15 @@ class CommunityTest(ToolTestCase):
         def no_summaries(document):
             document["layers"]["summaries"]["present"] = False
 
-        for edit, expected in (
-            (moved, ("2026-07-01T00:00:00+00:00", True)),
-            (unrecorded, (None, True)),
-            (no_summaries, (None, False)),
+        for edit, as_of, summarised in (
+            (moved, "2026-07-01T00:00:00+00:00", True),
+            (unrecorded, None, True),
+            (no_summaries, None, False),
         ):
             with self.subTest(edit=edit.__name__):
                 header = tools_graph.community(self.session(edit=edit), 0)["community"]
-                self.assertEqual((header["summary_as_of"], header["summary"] is not None), expected)
+                self.assertEqual(header["summary_as_of"], as_of)
+                self.assertIs(header["summary"] is not None, summarised)
 
     def test_an_unknown_community_is_null_and_says_what_was_searched(self):
         """Catches: inventing a community, or a bare empty list."""

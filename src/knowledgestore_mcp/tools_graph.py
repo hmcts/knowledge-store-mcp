@@ -485,13 +485,9 @@ def community(
         name for name in ("labels", "summaries") if store.layer(name) is not None
     ]
     held = members or label is not None or summary is not None
+    summary_as_of = store.manifest.sources_as_of if summary is not None else None
     header = (
-        {
-            "id": community_id,
-            "label": label,
-            "summary": summary,
-            "summary_as_of": store.manifest.sources_as_of if summary is not None else None,
-        }
+        {"id": community_id, "label": label, "summary": summary, "summary_as_of": summary_as_of}
         if held
         else None
     )
