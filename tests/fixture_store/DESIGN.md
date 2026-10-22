@@ -391,8 +391,9 @@ the shape `fetch_tickets.py` caches it: one record per ticket key, fields sorted
 empty fields dropped. The default store does not write it, so there the layer is
 absent (section 9.4).
 
-- `EX-101`: fetched and resolved, so it carries no `checked` and a reader dates
-  it null. Title "Take card payments through the new provider", status and
+- `EX-101`: fetched and resolved (`resolved` `2026-10-16`). A resolved record is
+  final and never re-checked, so it carries no `checked`, and a reader dates it
+  by `resolved`: `2026-10-16`. Title "Take card payments through the new provider", status and
   resolution `Done`, the description "Move card payments from the old
   provider to the new one." and one comment.
 - `EX-201`: fetched and open, so it carries `checked` `2026-10-15`. Title

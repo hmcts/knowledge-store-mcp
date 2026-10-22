@@ -798,8 +798,8 @@ class AnswersTest(TicketsTestCase):
 EX_101_TRACKER = {
     "key": "EX-101",
     "state": "fetched",
-    # Resolved, so the stage stores no `checked`: undated (DESIGN.md 6.5).
-    "as_of": None,
+    # Resolved, so the stage stores no `checked`: dated when resolved (DESIGN.md 6.5).
+    "as_of": "2026-10-16",
     "text": {
         "title": "Take card payments through the new provider",
         "status": "Done",
@@ -948,6 +948,30 @@ class TrackerTest(TicketsTestCase):
                     unknown["searched"],
                     "searched 12 repositories in the index, intent and ticket_descriptions layers",
                 )
+
+    def test_a_record_is_dated_when_checked_else_when_resolved(self):
+        """Catches: a resolved record, which the stage never re-checks and so
+        stores without `checked`, returned undated; `resolved` preferred over a
+        later `checked`; or a date that is not one passed on."""
+        layer = {
+            "EX-101": {"summary": "Resolved", "resolved": "2026-10-16"},
+            "EX-102": {"summary": "Both", "checked": "2026-10-18", "resolved": "2026-10-16"},
+            "EX-103": {"summary": "Neither"},
+            "EX-104": {"summary": "Bad check", "checked": "2026-W42-3", "resolved": "2026-10-16"},
+            "EX-201": {"summary": "Bad resolve", "resolved": "16/10/2026"},
+        }
+        written = gzip.compress(json.dumps(layer).encode("utf-8"))
+        session = self.session(tracker=True, files={TICKET_TRACKER: written})
+        self.assertEqual(
+            {key: tools_tickets.ticket(session, key)["tracker"]["as_of"] for key in layer},
+            {
+                "EX-101": "2026-10-16",
+                "EX-102": "2026-10-18",
+                "EX-103": None,
+                "EX-104": "2026-10-16",
+                "EX-201": None,
+            },
+        )
 
     def test_a_tracker_declared_at_a_directory_is_named_not_read(self):
         """Catches: a tracker layer declared at a directory - with or without the

@@ -15,8 +15,9 @@ the answer says so.
 **The tracker's record is kept apart.** When the manifest's `ticket_tracker`
 layer is present, `ticket` returns the tracker's own record of the key - title,
 status, resolution, description and comments, as knowledge-store-builder's
-`fetch-tickets` stage caches them, dated by `as_of`, the day the stage last asked
-the tracker (null on a resolved record, which the stage never re-asks) - under
+`fetch-tickets` stage caches them, dated by `as_of`: the day the stage last asked
+the tracker, or for a resolved record, which is final and never asked again, the
+day it resolved; null with neither - under
 `tracker`, beside the commit-mined record under
 `ticket` and never merged into it, so an answer can say which source it quotes.
 A layer that is absent, a directory, or not a JSON object of records, gives
@@ -495,8 +496,8 @@ def _tracker_record(
         "key": key,
         "state": state,
         # When the stage last asked the tracker about it; a resolved record is
-        # final and carries none.
-        "as_of": _date(record.get("checked")),
+        # final, never asked again and carries no `checked`, so when it resolved.
+        "as_of": _date(record.get("checked")) or _date(record.get("resolved")),
         "text": _tracker_text(record) if state == "fetched" else {},
         "comments_truncated": record.get("comments_truncated") is True,
     }, None
