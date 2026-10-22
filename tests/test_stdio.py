@@ -382,15 +382,21 @@ class InstructionsTest(StdioTestCase):
         silently, and the graph wins."""
         text = " ".join(server.INSTRUCTIONS.split())
         for fragment in (
-            "Prefer the mechanical layers (the graph, the index, relationships, tickets)",
+            "Prefer the mechanical layers (the graph, the index, relationships, and "
+            "which commits and files carry a ticket)",
+            "Written analysis (summaries, briefs, deep dives, written answers, and the "
+            "tracker's text)",
             "goes stale silently",
             "present it as dated, by its `as_of`",
+            "a tracker record's `as_of` is when it was last checked",
             "an entry whose `as_of` is null as undated",
             "When a mechanical layer contradicts written analysis, say so: the mechanical "
             "layer wins and the analysis is stale.",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, text)
+        # Tracker text is written prose: it must never be listed as mechanical.
+        self.assertNotIn("relationships, tickets)", text)
 
     def test_the_instructions_fit_where_claude_code_cuts_them(self):
         """Catches: guidance grown past 4,096 characters, where Claude Code cuts

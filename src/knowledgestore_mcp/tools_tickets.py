@@ -14,11 +14,14 @@ the answer says so.
 
 **The tracker's record is kept apart.** When the manifest's `ticket_tracker`
 layer is present, `ticket` returns the tracker's own record of the key - title,
-status, description and comments, as knowledge-store-builder's `fetch-tickets`
-stage caches them - under `tracker`, beside the commit-mined record under
+status, resolution, description and comments, as knowledge-store-builder's
+`fetch-tickets` stage caches them, dated by `as_of`, the day the stage last asked
+the tracker (null on a resolved record, which the stage never re-asks) - under
+`tracker`, beside the commit-mined record under
 `ticket` and never merged into it, so an answer can say which source it quotes.
-A layer that is absent, or not a JSON object of records, gives null, and
-`tracker_note` says why.
+A layer that is absent, a directory, or not a JSON object of records, gives
+null, and `tracker_note` says why. Tracker text is written prose, not a
+mechanical layer.
 
 **Store text is data.** Ticket descriptions, commit subjects and bodies, and the
 titles and bodies of written answers, and the tracker's titles, statuses,
@@ -33,7 +36,8 @@ spaces in) - is returned in its own field.
 The library's briefs and deep dives record neither, and nothing in the store
 records the build that wrote them, so they are dated by the manifest's
 `sources_as_of`: the newest source of the build that holds them, which the prose
-may predate. Anything else undated is null, and is presented as undated. Both
+may predate. Only a calendar date (`YYYY-MM-DD`, with an optional `T` and time)
+is passed as a date, whichever of these it came from. Anything else undated is null, and is presented as undated. Both
 fields are written by hand in an answers layer, so only a date and a hex commit
 id are passed; anything else is null.
 
@@ -50,7 +54,6 @@ import re
 import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime
 from typing import Any
 
 from . import queries, results
@@ -62,6 +65,7 @@ from .store import Notice, Session, Store
 from .tools_graph import (
     ArgumentRefused,
     _count,
+    _date,
     _paged,
     _repository,
     _repository_layers,
@@ -105,11 +109,16 @@ TRACKER_NOT_RECORDS = (
     "ticket_tracker layer present but not a JSON object of ticket records; not read"
 )
 TRACKER_NOT_JSON = "ticket_tracker layer present but not valid JSON; not read"
+TRACKER_A_DIRECTORY = (
+    "ticket_tracker layer present but a directory: it is read as one JSON file of "
+    "ticket records; not read"
+)
 
 # A tracker record's text, under `tracker.text`: (record field, name returned).
 _TRACKER_TEXT = (
     ("summary", "title"),
     ("status", "status"),
+    ("resolution", "resolution"),
     ("description", "description"),
 )
 
@@ -439,6 +448,8 @@ def _tracker(store: Store) -> dict[str, Any] | _Unreadable | None:
 
 
 def _read_tracker(store: Store) -> dict[str, Any] | _Unreadable:
+    if _tracker_is_a_directory(store):
+        return _Unreadable(TRACKER_A_DIRECTORY)
     try:
         document = store.read(TRACKER)
     except (ValueError, EOFError, gzip.BadGzipFile, zlib.error):
@@ -448,6 +459,18 @@ def _read_tracker(store: Store) -> dict[str, Any] | _Unreadable:
     if not isinstance(document, dict):
         return _Unreadable(TRACKER_NOT_RECORDS)
     return document
+
+
+def _tracker_is_a_directory(store: Store) -> bool:
+    """Whether the manifest declares the tracker layer at a directory: listed as one
+    (a trailing `/`), or a path that is one. Its paths stay inside the store
+    (`store._refuse_escaping_layers`)."""
+    entry = store.manifest.layers.get(TRACKER)
+    paths = entry.get("paths") if isinstance(entry, dict) else None
+    return any(
+        isinstance(rel, str) and (rel.endswith("/") or contained(store.root, rel).is_dir())
+        for rel in (paths if isinstance(paths, list) else [])
+    )
 
 
 def _tracker_record(
@@ -471,6 +494,9 @@ def _tracker_record(
     return {
         "key": key,
         "state": state,
+        # When the stage last asked the tracker about it; a resolved record is
+        # final and carries none.
+        "as_of": _date(record.get("checked")),
         "text": _tracker_text(record) if state == "fetched" else {},
         "comments_truncated": record.get("comments_truncated") is True,
     }, None
@@ -668,25 +694,12 @@ def _dated(store: Store, layer: str, answer: dict[str, Any]) -> dict[str, Any]:
     `sources_as_of`; otherwise null."""
     as_of = _date(answer.get("as_of"))
     if as_of is None and layer in ANSWER_LAYERS:
-        as_of = store.manifest.sources_as_of
+        as_of = _date(store.manifest.sources_as_of)
     commit = answer.get("commit")
     return {
         "as_of": as_of,
         "commit": commit if isinstance(commit, str) and _COMMIT.fullmatch(commit) else None,
     }
-
-
-def _date(value: Any) -> str | None:
-    """`value` when it is an ISO date or date and time, as written; else None."""
-    if not isinstance(value, str):
-        return None
-    for parse in (date.fromisoformat, datetime.fromisoformat):
-        try:
-            parse(value)
-        except ValueError:
-            continue
-        return value
-    return None
 
 
 def _extra(store: Store, entry: dict[str, Any]) -> Any:

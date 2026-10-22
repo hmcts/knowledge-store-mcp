@@ -391,14 +391,15 @@ the shape `fetch_tickets.py` caches it: one record per ticket key, fields sorted
 empty fields dropped. The default store does not write it, so there the layer is
 absent (section 9.4).
 
-- `EX-101`: fetched and resolved. Title "Take card payments through the new
-  provider", status `Done`, the description "Move card payments from the old
+- `EX-101`: fetched and resolved, so it carries no `checked` and a reader dates
+  it null. Title "Take card payments through the new provider", status and
+  resolution `Done`, the description "Move card payments from the old
   provider to the new one." and one comment.
 - `EX-201`: fetched and open, so it carries `checked` `2026-10-15`. Title
   "Partial refunds for split payments", status `In Progress`, two comments of a
   thread of three, so `comments_truncated` is `true`.
-- `EX-102`: `denied`: the build's token could not read it.
-- `EX-104`: `absent`: the tracker has no such ticket.
+- `EX-102`: `denied`: the build's token could not read it. `checked` `2026-10-15`.
+- `EX-104`: `absent`: the tracker has no such ticket. `checked` `2026-10-15`.
 - `EX-103`: no record.
 
 **The trap:** `EX-101` has both a commit-mined description (section 6) and a

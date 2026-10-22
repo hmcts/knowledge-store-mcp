@@ -31,7 +31,7 @@ from fixture_store.build import (
     TICKET_TRACKER,
     build,
 )
-from knowledgestore_mcp import results, store, tools_tickets
+from knowledgestore_mcp import results, store, tools_graph, tools_tickets
 from knowledgestore_mcp.tools_graph import ArgumentRefused
 
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
@@ -798,9 +798,12 @@ class AnswersTest(TicketsTestCase):
 EX_101_TRACKER = {
     "key": "EX-101",
     "state": "fetched",
+    # Resolved, so the stage stores no `checked`: undated (DESIGN.md 6.5).
+    "as_of": None,
     "text": {
         "title": "Take card payments through the new provider",
         "status": "Done",
+        "resolution": "Done",
         "description": "Move card payments from the old provider to the new one.",
         "comments": ["Live for every card scheme since the August release."],
     },
@@ -809,6 +812,7 @@ EX_101_TRACKER = {
 EX_201_TRACKER = {
     "key": "EX-201",
     "state": "fetched",
+    "as_of": "2026-10-15",
     "text": {
         "title": "Partial refunds for split payments",
         "status": "In Progress",
@@ -864,7 +868,13 @@ class TrackerTest(TicketsTestCase):
                 found = tools_tickets.ticket(session, key)
                 self.assertEqual(
                     found["tracker"],
-                    {"key": key, "state": state, "text": {}, "comments_truncated": False},
+                    {
+                        "key": key,
+                        "state": state,
+                        "as_of": "2026-10-15",
+                        "text": {},
+                        "comments_truncated": False,
+                    },
                 )
                 self.assertIsNone(found["tracker_note"])
 
@@ -939,6 +949,38 @@ class TrackerTest(TicketsTestCase):
                     "searched 12 repositories in the index, intent and ticket_descriptions layers",
                 )
 
+    def test_a_tracker_declared_at_a_directory_is_named_not_read(self):
+        """Catches: a tracker layer declared at a directory - with or without the
+        trailing slash a directory layer is listed with - reported as invalid
+        JSON, a reason that sends its reader to the wrong fault."""
+        for declared in ("knowledge/intent/", "knowledge/intent"):
+            with self.subTest(declared=declared):
+
+                def directory(document, declared=declared):
+                    document["layers"]["ticket_tracker"]["paths"] = [declared]
+
+                found = tools_tickets.ticket(self.session(tracker=True, edit=directory), "EX-101")
+                self.assertIsNone(found["tracker"])
+                self.assertEqual(found["tracker_note"], tools_tickets.TRACKER_A_DIRECTORY)
+                self.assertNotIn("ticket_tracker", found["store"]["layers_used"])
+
+    def test_the_tracker_is_parsed_once_per_store_load(self):
+        """Catches: the whole tracker file - every ticket's comments - read and
+        parsed again on every `ticket` call rather than once per loaded store."""
+        session = self.session(tracker=True)
+        real = store.Store.read
+        names: list[str] = []
+
+        def counted(self_: store.Store, name: str) -> Any:
+            names.append(name)
+            return real(self_, name)
+
+        with mock.patch.object(store.Store, "read", counted):
+            first = tools_tickets.ticket(session, "EX-101")
+            second = tools_tickets.ticket(session, "EX-201")
+        self.assertEqual((first["tracker"], second["tracker"]), (EX_101_TRACKER, EX_201_TRACKER))
+        self.assertEqual(names.count("ticket_tracker"), 1)
+
     def test_a_record_in_a_shape_this_server_does_not_read_is_null_and_says_so(self):
         """Catches: one record of another shape - a string, an object with none of
         the stage's outcomes - returned as a record, or failing the call."""
@@ -966,6 +1008,7 @@ class TrackerTest(TicketsTestCase):
                 "type": HOSTILE,
                 "resolution": HOSTILE,
                 "comments_truncated": HOSTILE,
+                "checked": HOSTILE,
             },
             "EX-201": {"summary": "Partial", "status": 3, "comments": HOSTILE},
         }
@@ -977,12 +1020,14 @@ class TrackerTest(TicketsTestCase):
             [
                 ("tracker", "text", "comments", 0),
                 ("tracker", "text", "description"),
+                ("tracker", "text", "resolution"),
                 ("tracker", "text", "status"),
                 ("tracker", "text", "title"),
             ],
         )
         self.assertEqual(hostile["tracker"]["text"]["comments"], [HOSTILE])
         self.assertFalse(hostile["tracker"]["comments_truncated"])
+        self.assertIsNone(hostile["tracker"]["as_of"])
         typed = tools_tickets.ticket(session, "EX-201")
         self.assertEqual(typed["tracker"]["text"], {"title": "Partial"})
 
@@ -1048,6 +1093,57 @@ class DatedAnswersTest(TicketsTestCase):
                         ("deep_dives", "payments-api"): (recorded, None),
                     },
                 )
+
+    def test_a_sources_as_of_that_is_not_a_date_dates_nothing(self):
+        """Catches: the manifest's `sources_as_of` passed to a brief, a deep dive or
+        a summary unchecked, so a value that is not a date is presented as when
+        the analysis was written."""
+        for recorded in (HOSTILE, 20261015, "20261015", "2026-W42-3"):
+            with self.subTest(sources_as_of=recorded):
+
+                def edit(document, recorded=recorded):
+                    document["sources_as_of"] = recorded
+
+                session = self.session(edit=edit)
+                found = tools_tickets.answers(session, "card payment")
+                self.assertEqual(
+                    [i["as_of"] for i in found["items"] if i["layer"] != "faq"], [None, None]
+                )
+                community = tools_graph.community(session, 0)["community"]
+                self.assertIsNone(community["summary_as_of"])
+
+    def test_only_a_calendar_date_in_extended_form_is_a_date(self):
+        """Catches: an ISO form a reader does not take for a date - the basic
+        `20261020`, the week date `2026-W42-3`, a space for the `T` - or a
+        date-shaped value that is no date, such as `2026-02-30`, passed as
+        written, so an assistant quotes `as_of: 2026-W42-3` as a date."""
+        forms = {
+            "basic": "20261020",
+            "week": "2026-W42-3",
+            "ordinal": "2026-293",
+            "space": "2026-10-20 10:15:00",
+            "impossible": "2026-02-30",
+            "untimed": "2026-10-20Tnoon",
+            "day": "2026-10-20",
+            "instant": "2026-10-20T10:15:00+01:00",
+        }
+        entry = {"title": "Ledger", "html": "<p>ledger</p>", "source": "a.md"}
+        faq = {name: {**entry, "as_of": value} for name, value in forms.items()}
+        session = self.session(files={FAQ: json.dumps(faq).encode("utf-8")})
+        found = tools_tickets.answers(session, "ledger")
+        self.assertEqual(
+            {i["id"]: i["as_of"] for i in found["items"] if i["layer"] == "faq"},
+            {
+                "basic": None,
+                "week": None,
+                "ordinal": None,
+                "space": None,
+                "impossible": None,
+                "untimed": None,
+                "day": "2026-10-20",
+                "instant": "2026-10-20T10:15:00+01:00",
+            },
+        )
 
     def test_a_briefs_own_date_wins_over_the_stores(self):
         """Catches: a library layer's entry that does carry its own `as_of`
