@@ -29,7 +29,7 @@ import json
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from . import graph
@@ -43,9 +43,15 @@ from .store import Notice, Store
 # by `--max-response-bytes`.
 DEFAULT_MAX_RESPONSE_BYTES = 512 * 1024
 
-# The relationships registry, at the library's fixed layout. The manifest names the
-# layer by its `by-repo/` directory, so the registry beside it is read from here.
+# The relationships registry, at the library's fixed layout, read from here rather
+# than from the manifest.
 REGISTRY = Path("knowledge") / "relationships" / "repository-dependencies.json"
+
+# The per-repository files' directory, inside the layer's. knowledge-store-builder
+# 0.18.0 names the layer by its directory (`knowledge/relationships/`), which also
+# holds the registry, `kinds.json` and any extra layer a store keeps there; a
+# manifest edited to name `by-repo/` itself is read as naming this directory.
+BY_REPO_DIR = "by-repo"
 
 # A layer name a sentence may carry: one plain identifier.
 _LAYER_NAME = re.compile(r"[A-Za-z0-9_-]+")
@@ -153,18 +159,34 @@ def _present(store: Store, name: str) -> bool:
     return isinstance(entry, dict) and entry.get("present") is True
 
 
+# Why a present, stamped layer with no per-repository file is not read. Fixed text:
+# no store path is quoted.
+NO_BY_REPO_FILES = (
+    f"{RELATIONSHIPS} layer present but holds no per-repository files "
+    f"({BY_REPO_DIR}/<repo>.json); not read"
+)
+
+
 def relationships_unrecognised(store: Store) -> str | None:
     """Why the relationships layer is present but not read, or None when it is
-    absent or its registry carries a stamp this server reads. Checked once per
-    loaded store, on first use, before anything else in the layer is read."""
+    absent or readable. Checked once per loaded store, on first use: the registry's
+    stamp before anything else in the layer is read, then that the layer holds a
+    per-repository file at all. A layer with none would otherwise answer every
+    repository as "in the estate" with nothing depending on it."""
     if not _present(store, RELATIONSHIPS):
         return None
-    return store.memo("relationships.unrecognised", lambda: _check_relationships_stamp(store))
+    return store.memo("relationships.unrecognised", lambda: _check_relationships(store))
 
 
-def _check_relationships_stamp(store: Store) -> str | None:
-    found = _relationships_stamp_found(store)
-    return None if found is None else unrecognised(RELATIONSHIPS, found, RELATIONSHIPS_MAJORS)
+def _check_relationships(store: Store) -> str | None:
+    found = _stamp_found(store)
+    if found is not None:
+        return unrecognised(RELATIONSHIPS, found, RELATIONSHIPS_MAJORS)
+    return None if by_repo_files(store) else NO_BY_REPO_FILES
+
+
+def _stamp_found(store: Store) -> str | None:
+    return store.memo("relationships.stamp", lambda: _relationships_stamp_found(store))
 
 
 def _relationships_stamp_found(store: Store) -> str | None:
@@ -278,8 +300,8 @@ class ByRepo:
 
 
 def by_repo_listing(store: Store) -> ByRepo:
-    """The `by-repo/` directory the manifest names for the relationships layer,
-    listed once per loaded store and never parsed here. An entry - or the directory
+    """The `by-repo/` directory inside the one the manifest names for the
+    relationships layer, listed once per loaded store and never parsed here. An entry - or the directory
     itself - that resolves outside the store is skipped and counted, never followed
     and never quoted: one hostile link must not fail every lookup. Empty when the
     layer is absent."""
@@ -293,16 +315,18 @@ def by_repo_files(store: Store) -> dict[str, Path]:
 
 
 def _list_by_repo(store: Store) -> ByRepo:
-    if not relationships_readable(store):
+    # The stamp, not `relationships_readable`: that asks whether this listing is
+    # empty, and an unstamped layer is never listed.
+    if not _present(store, RELATIONSHIPS) or _stamp_found(store) is not None:
         return ByRepo({}, 0)
-    entry = store.manifest.layers["relationships"]
+    entry = store.manifest.layers[RELATIONSHIPS]
     paths = entry.get("paths")
     skipped = 0
     for rel in paths if isinstance(paths, list) else []:
-        if not isinstance(rel, str) or not rel.endswith("/"):
+        if not isinstance(rel, str) or not rel.strip("/"):
             continue
         try:
-            directory = contained(store.root, rel)
+            directory = contained(store.root, _by_repo_path(rel))
         except OutsideStore:
             skipped += 1
             continue
@@ -311,6 +335,13 @@ def _list_by_repo(store: Store) -> ByRepo:
         files, outside = _by_repo_directory(store, directory)
         return ByRepo(files, skipped + outside)
     return ByRepo({}, skipped)
+
+
+def _by_repo_path(layer_path: str) -> str:
+    """The store-relative `by-repo/` directory for a path the manifest names the
+    layer by: the layer's directory, or `by-repo/` itself."""
+    named = PurePosixPath(layer_path.rstrip("/"))
+    return (named if named.name == BY_REPO_DIR else named / BY_REPO_DIR).as_posix()
 
 
 def _by_repo_directory(store: Store, directory: Path) -> tuple[dict[str, Path], int]:

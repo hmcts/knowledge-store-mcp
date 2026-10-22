@@ -4,13 +4,15 @@
 
 Each is a plain function of `(Session, ...) -> dict`, as the graph tools are, and
 the server registers them. A repository name is looked up (`results.repository`),
-never joined into a path: a `by-repo/` file is found by listing the directory the
-manifest names (`results.by_repo_files`) and matching file stems against the name
-the lookup returned.
+never joined into a path: a `by-repo/` file is found by listing the `by-repo/`
+directory inside the one the manifest names for the layer (`results.by_repo_files`)
+and matching file stems against the name the lookup returned.
 
 A layer whose registry carries no format stamp, or one this server does not read,
 is present but unrecognised: each tool refuses with the reason
-(`results.LayerUnrecognised`) and reads nothing in the layer.
+(`results.LayerUnrecognised`) and reads nothing in the layer. So is a layer with no
+per-repository file, which would otherwise answer every repository as one nothing
+depends on.
 
 Every list is complete and paged under the cap (`results.page`), with `total` and
 `next_page`. An empty answer says what was searched, and an absent layer is named

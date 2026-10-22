@@ -1,0 +1,153 @@
+{
+ "digest": "8d6fd04ff41fe156",
+ "extra_layers": {
+  "ownership_notes": {
+   "description": "Which team owns each shared library",
+   "digest": "cd64f41bda64b001",
+   "kind": "answers",
+   "path": "knowledge/relationships/ownership-notes.json",
+   "present": true
+  }
+ },
+ "format": {
+  "major": 1,
+  "minor": 1
+ },
+ "layers": {
+  "content_files": {
+   "digest": null,
+   "paths": [
+    "knowledge/corpus/content-files.txt"
+   ],
+   "present": false
+  },
+  "context": {
+   "digest": null,
+   "paths": [
+    "knowledge_context.md"
+   ],
+   "present": false
+  },
+  "deep_dives": {
+   "digest": null,
+   "paths": [
+    "knowledge/deep-dives/dives.json"
+   ],
+   "present": false
+  },
+  "deployments": {
+   "digest": null,
+   "paths": [],
+   "present": null
+  },
+  "explorer": {
+   "digest": null,
+   "paths": [
+    "graphify-out/explorer.html"
+   ],
+   "present": false
+  },
+  "graph": {
+   "digest": null,
+   "paths": [
+    "graphify-out/graph.json.gz",
+    "graphify-out/graph.json"
+   ],
+   "present": false,
+   "source_urls": null
+  },
+  "history": {
+   "digest": null,
+   "paths": [
+    "knowledge/git-history/"
+   ],
+   "present": false
+  },
+  "index": {
+   "digest": null,
+   "paths": [
+    "knowledge/index/store.sqlite.gz",
+    "knowledge/index/store.sqlite"
+   ],
+   "present": false
+  },
+  "intent": {
+   "digest": null,
+   "paths": [
+    "knowledge/intent/file-tickets.json.gz"
+   ],
+   "present": false,
+   "reach": null
+  },
+  "labels": {
+   "digest": null,
+   "paths": [
+    "graphify-out/.graphify_labels.json"
+   ],
+   "present": false
+  },
+  "provenance": {
+   "digest": null,
+   "paths": [
+    "knowledge/provenance.json"
+   ],
+   "present": false
+  },
+  "relationships": {
+   "digest": "32d0b045bdfa56e9",
+   "paths": [
+    "knowledge/relationships/"
+   ],
+   "present": true,
+   "recognised": true
+  },
+  "repository_manifest": {
+   "digest": null,
+   "paths": [
+    "knowledge/repository-manifest.md"
+   ],
+   "present": false
+  },
+  "semantic": {
+   "digest": null,
+   "paths": [
+    "knowledge/semantic/token-neighbours.json.gz"
+   ],
+   "present": false
+  },
+  "summaries": {
+   "digest": null,
+   "paths": [
+    "knowledge/summaries/communities.json"
+   ],
+   "present": false
+  },
+  "ticket_descriptions": {
+   "digest": null,
+   "paths": [
+    "knowledge/intent/ticket-descriptions.json.gz"
+   ],
+   "present": false
+  },
+  "ticket_tracker": {
+   "digest": null,
+   "paths": [
+    "knowledge/intent/ticket-tracker.json.gz"
+   ],
+   "present": false
+  },
+  "topics": {
+   "digest": null,
+   "paths": [
+    "knowledge/topics/briefs.json"
+   ],
+   "present": false
+  }
+ },
+ "library_version": "0.18.0",
+ "sources_as_of": null,
+ "store": {
+  "github_org": "example-org",
+  "id": "library-contract-store"
+ }
+}

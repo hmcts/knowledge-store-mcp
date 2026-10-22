@@ -150,8 +150,14 @@ class ManifestTest(FixtureStoreCase):
             entry = self.manifest["layers"][name]
             data = (self.root / entry["paths"][0]).read_bytes()
             self.assertEqual(entry["digest"], _sha16(data), name)
-        by_repo = self.root / "knowledge/relationships/by-repo"
-        lines = sorted(f"{path.name}\0{_sha16(path.read_bytes())}" for path in by_repo.iterdir())
+        # The layer is the whole directory (#454 as released in 0.18.0): every file
+        # under it, by its path relative to the directory.
+        layer = self.root / "knowledge/relationships"
+        lines = sorted(
+            f"{path.relative_to(layer).as_posix()}\0{_sha16(path.read_bytes())}"
+            for path in layer.rglob("*")
+            if path.is_file()
+        )
         self.assertEqual(
             self.manifest["layers"]["relationships"]["digest"],
             _sha16("\n".join(lines).encode("utf-8")),

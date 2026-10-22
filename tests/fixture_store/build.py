@@ -843,7 +843,9 @@ LAYERS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("deep_dives", (DIVES,), "file"),
     ("semantic", ("knowledge/semantic/token-neighbours.json.gz",), "file"),
     ("explorer", ("graphify-out/explorer.html",), "file"),
-    ("relationships", (BY_REPO,), "dir"),
+    # The layer is the whole directory, as knowledge-store-builder 0.18.0 names it:
+    # the per-repository files are in its `by-repo/`, beside the registry.
+    ("relationships", (RELATIONSHIPS,), "dir"),
     ("index", (INDEX_ARCHIVE, INDEX_PLAIN), "file"),
 )
 
