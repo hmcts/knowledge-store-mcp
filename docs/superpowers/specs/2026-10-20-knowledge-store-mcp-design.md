@@ -54,7 +54,7 @@ If none resolves, the server refuses to start and names each place it checked. A
 ```json
 { "mcpServers": { "knowledge-store": {
     "command": "uvx",
-    "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@vX.Y.Z",
+    "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0",
              "knowledge-store-mcp", "--store-id", "example-store"] } } }
 ```
 
@@ -62,14 +62,14 @@ The server takes no credentials. The only access an asker needs is read access t
 
 ## Installation
 
-**Status: proposed, awaiting the owner's confirmation.** The open alternative is publishing the package to a package index and launching it from there.
+**Status: decided, 2026-10-22.** `uvx` at a pinned release tag is the install route, as best practice. Publishing the package to a package index and launching it from there was the alternative and is not taken.
 
 Installing a plugin puts no command on the asker's machine, so the client configuration launches the server itself, pinned to a release tag of this repository:
 
 ```json
 "knowledge-store": {
   "command": "uvx",
-  "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@vX.Y.Z",
+  "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0",
            "knowledge-store-mcp", "--store-id", "<id>"]
 }
 ```

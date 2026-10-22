@@ -1,0 +1,7 @@
+front-doors
+claude-code-and-claude-desktop
+github-copilot-in-vs-code
+github-copilot-cli
+the-copilot-coding-agent
+a-hosted-agent
+microsoft-365-copilot

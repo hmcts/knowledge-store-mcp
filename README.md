@@ -9,7 +9,7 @@ An MCP server that answers questions from a knowledge store on local disk.
 
 One server, one set of tools, wherever the question is asked. Each front door below launches the same stdio server against a local clone of the store, so an answer in Copilot and an answer in Claude Code come from the same twelve read-only tools.
 
-Every example launches the server with `uvx` at a release tag. That route is **proposed and awaits the owner's confirmation**; the spec's [Installation](docs/superpowers/specs/2026-10-20-knowledge-store-mcp-design.md#installation) section says what it needs and why it pins a tag. Replace `vX.Y.Z` with a release tag and `<id>` with the store's `store.id`.
+Every example launches the server with `uvx` at the `v0.1.0` release tag. That route is **confirmed**, decided on 2026-10-22; the spec's [Installation](docs/superpowers/specs/2026-10-20-knowledge-store-mcp-design.md#installation) section says what it needs and why it pins a tag. Replace `<id>` with the store's `store.id`. Askers need [`uv`](https://docs.astral.sh/uv/) installed; nothing else.
 
 `--store-id` finds the asker's clone through `~/.config/knowledge-store/locations`, which holds one absolute clone path per line. The `knowledge-store` skill writes that entry on first clone; anyone else adds the line by hand.
 
@@ -22,7 +22,7 @@ The store's plugin declares the server, in `.mcp.json` at the plugin root:
   "mcpServers": {
     "knowledge-store": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@vX.Y.Z",
+      "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0",
                "knowledge-store-mcp", "--store-id", "<id>"]
     }
   }
@@ -41,7 +41,7 @@ Commit `.vscode/mcp.json` to the repository askers work in. VS Code's own format
     "knowledge-store": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@vX.Y.Z",
+      "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0",
                "knowledge-store-mcp", "--store-id", "<id>"]
     }
   }
@@ -55,7 +55,7 @@ On a Copilot Business or Copilot Enterprise plan, an organisation or enterprise 
 Add the server to your user configuration, `~/.copilot/mcp-config.json`:
 
 ```bash
-copilot mcp add knowledge-store -- uvx --from git+https://github.com/hmcts/knowledge-store-mcp@vX.Y.Z knowledge-store-mcp --store-id <id>
+copilot mcp add knowledge-store -- uvx --from git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0 knowledge-store-mcp --store-id <id>
 ```
 
 To share it with everyone working in a repository, commit `.github/mcp.json` instead. The CLI does not read `.vscode/mcp.json`, and it loads a repository's configuration only once you have trusted the folder:
@@ -66,7 +66,7 @@ To share it with everyone working in a repository, commit `.github/mcp.json` ins
     "knowledge-store": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@vX.Y.Z",
+      "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0",
                "knowledge-store-mcp", "--store-id", "<id>"],
       "tools": ["*"]
     }
@@ -100,7 +100,7 @@ The coding agent works on a fresh runner, so setup steps clone the store and ins
            uses: astral-sh/setup-uv@v10.3.0
          # Builds the server into uv's cache now, so a failure shows in this step's log.
          - name: Fetch the server
-           run: uvx --from git+https://github.com/hmcts/knowledge-store-mcp@vX.Y.Z knowledge-store-mcp --version
+           run: uvx --from git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0 knowledge-store-mcp --version
    ```
 
 3. **The MCP configuration**, in the repository's settings (Settings → Copilot → MCP servers). `KNOWLEDGE_STORE_PATH` names the clone, so no locations file is needed:
@@ -111,7 +111,7 @@ The coding agent works on a fresh runner, so setup steps clone the store and ins
        "knowledge-store": {
          "type": "stdio",
          "command": "uvx",
-         "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@vX.Y.Z",
+         "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0",
                   "knowledge-store-mcp"],
          "env": { "KNOWLEDGE_STORE_PATH": "/home/runner/knowledge-store" },
          "tools": ["*"]
