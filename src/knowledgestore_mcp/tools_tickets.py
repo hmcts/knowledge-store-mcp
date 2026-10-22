@@ -12,8 +12,17 @@ separation can be trusted is the manifest's `intent.reach` flag, returned as
 recorded: when it is not `true`, some history could not tell the two apart, and
 the answer says so.
 
+**The tracker's record is kept apart.** When the manifest's `ticket_tracker`
+layer is present, `ticket` returns the tracker's own record of the key - title,
+status, description and comments, as knowledge-store-builder's `fetch-tickets`
+stage caches them - under `tracker`, beside the commit-mined record under
+`ticket` and never merged into it, so an answer can say which source it quotes.
+A layer that is absent, or not a JSON object of records, gives null, and
+`tracker_note` says why.
+
 **Store text is data.** Ticket descriptions, commit subjects and bodies, and the
-titles and bodies of written answers were written by people. They are returned
+titles and bodies of written answers, and the tracker's titles, statuses,
+descriptions and comments, were written by people. They are returned
 only in fields named `text`, `summary` or `description`, never in a sentence the
 server composes, and never bound into SQL other than as a parameter. What is
 structure - ticket keys, paths, repository names, branch names (which git forbids
@@ -84,6 +93,26 @@ STOPWORDS = frozenset(
 # match most of the store.
 PREFIX_MIN = 3
 
+# Why `ticket` returns no tracker record. Fixed text: no store text is quoted.
+TRACKER = "ticket_tracker"
+TRACKER_ABSENT = "the ticket_tracker layer is absent"
+TRACKER_UNRECORDED = "the ticket_tracker layer is not recorded"
+TRACKER_NO_RECORD = "the ticket_tracker layer holds no record of this ticket"
+TRACKER_RECORD_UNREAD = (
+    "the ticket_tracker layer's record of this ticket is in a shape this server does not read"
+)
+TRACKER_NOT_RECORDS = (
+    "ticket_tracker layer present but not a JSON object of ticket records; not read"
+)
+TRACKER_NOT_JSON = "ticket_tracker layer present but not valid JSON; not read"
+
+# A tracker record's text, under `tracker.text`: (record field, name returned).
+_TRACKER_TEXT = (
+    ("summary", "title"),
+    ("status", "status"),
+    ("description", "description"),
+)
+
 # Why an answers layer was not searched.
 A_DIRECTORY = "a directory: an answers layer is read as one JSON file of entries"
 NOT_ENTRIES = "not a JSON object of entries"
@@ -109,6 +138,14 @@ _METADATA = "_metadata"
 
 # (repository, path, ticket, commits, landed)
 Row = tuple[str, str, str, int, bool]
+
+
+@dataclass(frozen=True)
+class _Unreadable:
+    """Why a layer cannot be read - as answers, or as tracker records: one of this
+    module's own reasons, never text from the store."""
+
+    reason: str
 
 
 # --- Reading the ticket layer ----------------------------------------------------
@@ -337,9 +374,20 @@ def ticket(
     )
     landed = [{"repository": r, "path": p, "commits": n} for r, p, _, n, done in rows if done]
     proposed = [{"repository": r, "path": p, "commits": n} for r, p, _, n, done in rows if not done]
-    fields: dict[str, Any] = {"ticket": _record(key, record), **_reach(store)}
-    if not rows and fields["ticket"] is None:
-        fields["searched"] = _searched(store, layers_used, "intent", "ticket_descriptions")
+    tracker = _tracker(store)
+    if isinstance(tracker, dict):
+        layers_used.append(TRACKER)
+    found, note = _tracker_record(store, tracker, key)
+    fields: dict[str, Any] = {
+        "ticket": _record(key, record),
+        "tracker": found,
+        "tracker_note": note,
+        **_reach(store),
+    }
+    if not rows and fields["ticket"] is None and found is None:
+        # An unrecognised tracker layer was not searched: its reason is the note.
+        also = [] if isinstance(tracker, _Unreadable) else [TRACKER]
+        fields["searched"] = _searched(store, layers_used, "intent", "ticket_descriptions", *also)
     return _two_lists(
         store,
         notice,
@@ -380,6 +428,80 @@ def _record(key: str, record: Any) -> dict[str, Any] | None:
         "repos": record.get("repos"),
         "commits": record.get("n"),
     }
+
+
+def _tracker(store: Store) -> dict[str, Any] | _Unreadable | None:
+    """The tracker layer's records by key; why the layer is not read; or None when
+    the manifest does not record it as present. Read once per loaded store."""
+    if not _present(store, TRACKER):
+        return None
+    return store.memo("tracker.records", lambda: _read_tracker(store))
+
+
+def _read_tracker(store: Store) -> dict[str, Any] | _Unreadable:
+    try:
+        document = store.read(TRACKER)
+    except (ValueError, EOFError, gzip.BadGzipFile, zlib.error):
+        # Text that is not UTF-8 is a `ValueError` too.
+        return _Unreadable(TRACKER_NOT_JSON)
+    # A declared file that is missing reads as None here, and so is not records.
+    if not isinstance(document, dict):
+        return _Unreadable(TRACKER_NOT_RECORDS)
+    return document
+
+
+def _tracker_record(
+    store: Store, tracker: dict[str, Any] | _Unreadable | None, key: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    """The tracker's record of `key` as `ticket` returns it, and the note that says
+    why there is none. A layer whose presence the manifest did not record is said
+    to be not recorded, never absent."""
+    if isinstance(tracker, _Unreadable):
+        return None, tracker.reason
+    if tracker is None:
+        entry = store.manifest.layers.get(TRACKER)
+        unrecorded = isinstance(entry, dict) and entry.get("present") is None
+        return None, TRACKER_UNRECORDED if unrecorded else TRACKER_ABSENT
+    if key not in tracker:
+        return None, TRACKER_NO_RECORD
+    record = tracker[key]
+    state = _tracker_state(record)
+    if state is None:
+        return None, TRACKER_RECORD_UNREAD
+    return {
+        "key": key,
+        "state": state,
+        "text": _tracker_text(record) if state == "fetched" else {},
+        "comments_truncated": record.get("comments_truncated") is True,
+    }, None
+
+
+def _tracker_text(record: dict[str, Any]) -> dict[str, Any]:
+    """A fetched record's text as the layer holds it. A field the record omits, or
+    holds as another type, is omitted: the stage drops empty fields, so absence
+    here means the tracker gave none."""
+    text: dict[str, Any] = {
+        name: record[field] for field, name in _TRACKER_TEXT if isinstance(record.get(field), str)
+    }
+    comments = record.get("comments")
+    if isinstance(comments, list):
+        text["comments"] = [comment for comment in comments if isinstance(comment, str)]
+    return text
+
+
+def _tracker_state(record: Any) -> str | None:
+    """Which of `fetch-tickets`' cached outcomes a record is: `fetched` (it holds
+    the tracker's `summary`), `absent` (the tracker has no such ticket) or
+    `denied` (the build could not read it); None for any other shape."""
+    if not isinstance(record, dict):
+        return None
+    if isinstance(record.get("summary"), str):
+        return "fetched"
+    if record.get("absent") is True:
+        return "absent"
+    if record.get("denied") is True:
+        return "denied"
+    return None
 
 
 # --- Written answers ------------------------------------------------------------
@@ -565,14 +687,6 @@ def _date(value: Any) -> str | None:
             continue
         return value
     return None
-
-
-@dataclass(frozen=True)
-class _Unreadable:
-    """Why a layer cannot be read as answers: one of this module's own reasons,
-    never text from the store."""
-
-    reason: str
 
 
 def _extra(store: Store, entry: dict[str, Any]) -> Any:

@@ -384,6 +384,27 @@ as well as nodes, so its `repos` lists `retired-batch`, and a reader without the
 index must list it too: the estate is then thirteen, in both modes. The default
 store does not write it, and keeps its twelve.
 
+### 6.5 The tracker's own record (opt-in)
+
+`build(root, tracker=True)` writes `knowledge/intent/ticket-tracker.json.gz` in
+the shape `fetch_tickets.py` caches it: one record per ticket key, fields sorted,
+empty fields dropped. The default store does not write it, so there the layer is
+absent (section 9.4).
+
+- `EX-101`: fetched and resolved. Title "Take card payments through the new
+  provider", status `Done`, the description "Move card payments from the old
+  provider to the new one." and one comment.
+- `EX-201`: fetched and open, so it carries `checked` `2026-10-15`. Title
+  "Partial refunds for split payments", status `In Progress`, two comments of a
+  thread of three, so `comments_truncated` is `true`.
+- `EX-102`: `denied`: the build's token could not read it.
+- `EX-104`: `absent`: the tracker has no such ticket.
+- `EX-103`: no record.
+
+**The trap:** `EX-101` has both a commit-mined description (section 6) and a
+tracker description, and they differ. A reader keeps them in separate fields, so
+an answer can say which source it quotes.
+
 ## 7. Answers
 
 - Topic briefs (`knowledge/topics/briefs.json`): `payments` ("How a card payment
@@ -453,8 +474,9 @@ gets the wrong one.
 Present: `graph`, `labels`, `provenance`, `intent`, `ticket_descriptions`,
 `summaries`, `topics`, `deep_dives`, `relationships`, and `index` unless
 `index="none"`. Absent: `context`, `deployments`, `explorer`, `history`,
-`repository_manifest`, `semantic` and `ticket_tracker`. Their `present` is
-`false` (`null` for deployments) and their files do not exist.
+`repository_manifest`, `semantic` and `ticket_tracker` (unless `tracker=True`,
+section 6.5). Their `present` is `false` (`null` for deployments) and their files
+do not exist.
 
 ### 9.5 The relationships layer's path
 
@@ -483,8 +505,9 @@ release wrote, which hid a reader that listed the layer directory as repositorie
   plain file is byte-identical to the library's.
 - **Archive bytes:** the library writes every `.gz` through `io.gzip_text`, whose
   text wrapper flushes a zlib sync point on close; the fixture compresses in one
-  pass. So the index archive and both intent files
-  (`file-tickets.json.gz`, `ticket-descriptions.json.gz`) differ in bytes from the
+  pass. So the index archive and the intent files
+  (`file-tickets.json.gz`, `ticket-descriptions.json.gz`, and
+  `ticket-tracker.json.gz` when written) differ in bytes from the
   library's, while decompressing to the same bytes. Never compare a fixture
   archive's sha256 with a library archive's.
 - **Summaries:** the `_metadata` block carries `prose_digests` only. The library's

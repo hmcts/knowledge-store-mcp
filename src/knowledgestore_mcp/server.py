@@ -252,7 +252,9 @@ TOOLS: tuple[ToolSpec, ...] = (
         "ticket",
         tools_tickets.ticket,
         "One ticket: whether it never landed, its branches, its descriptions and commit "
-        "text, and the files it touched as `landed` and `proposed` lists.",
+        "text, and the files it touched as `landed` and `proposed` lists; and, under "
+        "`tracker`, the issue tracker's own record (title, status, description, "
+        "comments), kept apart from the commit-mined text, or null with `tracker_note`.",
         (Param("key", "string", "The ticket key.", required=True), CURSOR),
     ),
     ToolSpec(

@@ -28,6 +28,7 @@ from fixture_store.build import (
     HOSTILE,
     MANIFEST,
     TICKET_DESCRIPTIONS_DATA,
+    TICKET_TRACKER,
     build,
 )
 from knowledgestore_mcp import results, store, tools_tickets
@@ -436,6 +437,8 @@ class TicketTest(TicketsTestCase):
                             "repos": ["payments-api"],
                             "commits": 2,
                         },
+                        "tracker": None,
+                        "tracker_note": tools_tickets.TRACKER_ABSENT,
                         "reach": True,
                         "reach_note": None,
                         "totals": {"landed": 0, "proposed": 1},
@@ -487,7 +490,8 @@ class TicketTest(TicketsTestCase):
                 self.assertEqual((found["landed"], found["proposed"]), ([], []))
                 self.assertEqual(
                     found["searched"],
-                    "searched 12 repositories in the index, intent and ticket_descriptions layers",
+                    "searched 12 repositories in the index, intent and ticket_descriptions "
+                    "layers; the ticket_tracker layer is absent",
                 )
 
 
@@ -788,6 +792,199 @@ class AnswersTest(TicketsTestCase):
         self.assertIn("only common words", str(raised.exception))
         with self.assertRaises(ArgumentRefused):
             tools_tickets.answers(session, "ledger", limit=0)
+
+
+# DESIGN.md 6.5: the tracker's own records, as `ticket` returns them.
+EX_101_TRACKER = {
+    "key": "EX-101",
+    "state": "fetched",
+    "text": {
+        "title": "Take card payments through the new provider",
+        "status": "Done",
+        "description": "Move card payments from the old provider to the new one.",
+        "comments": ["Live for every card scheme since the August release."],
+    },
+    "comments_truncated": False,
+}
+EX_201_TRACKER = {
+    "key": "EX-201",
+    "state": "fetched",
+    "text": {
+        "title": "Partial refunds for split payments",
+        "status": "In Progress",
+        "comments": [
+            "Split payments need a refund per part.",
+            "Blocked on the ledger's partial reversal.",
+        ],
+    },
+    "comments_truncated": True,
+}
+
+
+def without_tracker(response: dict) -> dict:
+    """A `ticket` response less what the tracker layer adds: its two fields, and
+    its name in `layers_used`."""
+    rest = {k: v for k, v in response.items() if k not in ("tracker", "tracker_note")}
+    layers = [name for name in rest["store"]["layers_used"] if name != "ticket_tracker"]
+    return {**rest, "store": {**rest["store"], "layers_used": layers}}
+
+
+class TrackerTest(TicketsTestCase):
+    """The tracker's own record of a ticket (#17, DESIGN.md 6.5): returned under
+    `tracker`, apart from the commit-mined record under `ticket`."""
+
+    def test_a_store_with_a_tracker_returns_the_record_under_its_own_key(self):
+        """Catches: the tracker layer never read; its record merged into the
+        commit-mined one, so an answer cannot say which source it quotes; or the
+        title, status, description or comments dropped."""
+        for index, _ in MODES:
+            with self.subTest(index=index):
+                found = tools_tickets.ticket(self.session(index, tracker=True), "EX-101")
+                self.assertEqual(found["tracker"], EX_101_TRACKER)
+                self.assertIsNone(found["tracker_note"])
+                self.assertIn("ticket_tracker", found["store"]["layers_used"])
+                self.assertEqual(
+                    found["ticket"]["description"],
+                    ["Take card payments through the new provider"],
+                )
+
+    def test_a_partial_thread_says_so_and_an_open_ticket_has_its_status(self):
+        """Catches: two comments of a thread of three returned as the whole
+        conversation, or an open ticket's status lost."""
+        found = tools_tickets.ticket(self.session(tracker=True), "EX-201")
+        self.assertEqual(found["tracker"], EX_201_TRACKER)
+
+    def test_a_denied_or_absent_record_says_which(self):
+        """Catches: a ticket the build's token could not read, or one the tracker
+        said does not exist, returned as null - "no record" - when the tracker
+        answered, and the two answers are different."""
+        session = self.session(tracker=True)
+        for key, state in (("EX-102", "denied"), ("EX-104", "absent")):
+            with self.subTest(key=key):
+                found = tools_tickets.ticket(session, key)
+                self.assertEqual(
+                    found["tracker"],
+                    {"key": key, "state": state, "text": {}, "comments_truncated": False},
+                )
+                self.assertIsNone(found["tracker_note"])
+
+    def test_without_a_tracker_the_field_is_null_and_the_rest_unchanged(self):
+        """Catches: an absent tracker layer answered as "no record", or its
+        absence unsaid; or reading the tracker changing anything else `ticket`
+        returns."""
+        for index, _ in MODES:
+            for key in ("EX-101", "EX-102", "EX-201"):
+                with self.subTest(index=index, key=key):
+                    absent = tools_tickets.ticket(self.session(index), key)
+                    self.assertIsNone(absent["tracker"])
+                    self.assertEqual(absent["tracker_note"], "the ticket_tracker layer is absent")
+                    self.assertNotIn("ticket_tracker", absent["store"]["layers_used"])
+                    present = tools_tickets.ticket(self.session(index, tracker=True), key)
+                    self.assertEqual(without_tracker(present), without_tracker(absent))
+
+    def test_a_ticket_the_tracker_holds_no_record_of_is_null_and_says_so(self):
+        """Catches: a key the layer does not hold answered as though the layer were
+        absent, or not said at all."""
+        found = tools_tickets.ticket(self.session(tracker=True), "EX-103")
+        self.assertIsNone(found["tracker"])
+        self.assertEqual(found["tracker_note"], tools_tickets.TRACKER_NO_RECORD)
+        self.assertIn("ticket_tracker", found["store"]["layers_used"])
+
+    def test_an_unrecorded_tracker_layer_is_not_called_absent(self):
+        """Catches: a tracker layer whose presence the manifest did not record
+        (`present: null`) called absent, which says the store was measured and
+        lacks it."""
+
+        def unrecorded(document):
+            document["layers"]["ticket_tracker"]["present"] = None
+
+        found = tools_tickets.ticket(self.session(edit=unrecorded), "EX-101")
+        self.assertIsNone(found["tracker"])
+        self.assertEqual(found["tracker_note"], "the ticket_tracker layer is not recorded")
+
+    def test_an_unknown_key_says_the_tracker_was_searched(self):
+        """Catches: the sentence for a key no layer holds leaving out the tracker
+        layer `ticket` now reads."""
+        found = tools_tickets.ticket(self.session(tracker=True), "EX-999")
+        self.assertEqual(
+            found["searched"],
+            "searched 12 repositories in the index, intent, ticket_descriptions and "
+            "ticket_tracker layers",
+        )
+
+    def test_an_unrecognised_tracker_layer_reads_as_absent(self):
+        """Catches: a tracker file in a shape this server does not read - not an
+        object of records, not JSON, not gzip - failing the call, guessed at, or
+        listed in `layers_used` as though it answered; the reason is given in
+        place of a record, and the rest of the answer is as without the layer."""
+        records = json.dumps(["EX-101"]).encode("utf-8")
+        for name, written, reason in (
+            ("a list", gzip.compress(records), tools_tickets.TRACKER_NOT_RECORDS),
+            ("not json", gzip.compress(b'{"EX-101": '), tools_tickets.TRACKER_NOT_JSON),
+            ("not gzip", b"not gzip at all", tools_tickets.TRACKER_NOT_JSON),
+        ):
+            with self.subTest(name):
+                session = self.session(tracker=True, files={TICKET_TRACKER: written})
+                found = tools_tickets.ticket(session, "EX-101")
+                self.assertIsNone(found["tracker"])
+                self.assertEqual(found["tracker_note"], reason)
+                self.assertNotIn("ticket_tracker", found["store"]["layers_used"])
+                self.assertEqual(
+                    without_tracker(found),
+                    without_tracker(tools_tickets.ticket(self.session(), "EX-101")),
+                )
+                unknown = tools_tickets.ticket(session, "EX-999")
+                self.assertEqual(
+                    unknown["searched"],
+                    "searched 12 repositories in the index, intent and ticket_descriptions layers",
+                )
+
+    def test_a_record_in_a_shape_this_server_does_not_read_is_null_and_says_so(self):
+        """Catches: one record of another shape - a string, an object with none of
+        the stage's outcomes - returned as a record, or failing the call."""
+        layer = {"EX-101": "Done", "EX-201": {"status": "Done"}}
+        written = gzip.compress(json.dumps(layer).encode("utf-8"))
+        session = self.session(tracker=True, files={TICKET_TRACKER: written})
+        for key in ("EX-101", "EX-201"):
+            with self.subTest(key=key):
+                found = tools_tickets.ticket(session, key)
+                self.assertIsNone(found["tracker"])
+                self.assertEqual(found["tracker_note"], tools_tickets.TRACKER_RECORD_UNREAD)
+                self.assertIn("ticket_tracker", found["store"]["layers_used"])
+
+    def test_tracker_text_is_only_in_text_and_mistyped_fields_are_dropped(self):
+        """Catches: tracker text - written by people, and untrusted as all store
+        text is - returned outside `text`, such as a title as `title` beside
+        `key`; or a field of the wrong type passed on as the record's."""
+        layer = {
+            "EX-101": {
+                "summary": HOSTILE,
+                "status": HOSTILE,
+                "description": HOSTILE,
+                "comments": [HOSTILE, 7, None],
+                "parent": HOSTILE,
+                "type": HOSTILE,
+                "resolution": HOSTILE,
+                "comments_truncated": HOSTILE,
+            },
+            "EX-201": {"summary": "Partial", "status": 3, "comments": HOSTILE},
+        }
+        written = gzip.compress(json.dumps(layer).encode("utf-8"))
+        session = self.session(tracker=True, files={TICKET_TRACKER: written})
+        hostile = tools_tickets.ticket(session, "EX-101")
+        self.assertEqual(
+            sorted(p for p, t in leaves(hostile) if HOSTILE in t),
+            [
+                ("tracker", "text", "comments", 0),
+                ("tracker", "text", "description"),
+                ("tracker", "text", "status"),
+                ("tracker", "text", "title"),
+            ],
+        )
+        self.assertEqual(hostile["tracker"]["text"]["comments"], [HOSTILE])
+        self.assertFalse(hostile["tracker"]["comments_truncated"])
+        typed = tools_tickets.ticket(session, "EX-201")
+        self.assertEqual(typed["tracker"]["text"], {"title": "Partial"})
 
 
 class DatedAnswersTest(TicketsTestCase):

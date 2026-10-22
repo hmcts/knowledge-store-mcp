@@ -40,6 +40,7 @@ PROVENANCE = "knowledge/provenance.json"
 TELEMETRY = "knowledge/telemetry.json"
 FILE_TICKETS = "knowledge/intent/file-tickets.json.gz"
 TICKET_DESCRIPTIONS = "knowledge/intent/ticket-descriptions.json.gz"
+TICKET_TRACKER = "knowledge/intent/ticket-tracker.json.gz"
 SUMMARIES = "knowledge/summaries/communities.json"
 BRIEFS = "knowledge/topics/briefs.json"
 DIVES = "knowledge/deep-dives/dives.json"
@@ -338,6 +339,41 @@ TICKET_DESCRIPTIONS_DATA: dict[str, dict] = {
         "last": "2026-10-14",
         "repos": ["payments-api"],
         "n": 2,
+    },
+}
+
+# The tracker's own records, as `fetch_tickets` caches them: one per key, fields
+# sorted, empty fields dropped, `summary` always kept on a fetched record. Written
+# only by `build(..., tracker=True)` (DESIGN.md 6.5). Each of the stage's three
+# cached outcomes is here: fetched (resolved, and open with `checked`), `absent`
+# and `denied`. EX-103 has no record.
+TICKET_TRACKER_DATA: dict[str, dict] = {
+    "EX-101": {
+        "comments": ["Live for every card scheme since the August release."],
+        "comments_total": 1,
+        "created": "2026-08-01",
+        "description": "Move card payments from the old provider to the new one.",
+        "resolution": "Done",
+        "resolved": "2026-10-16",
+        "status": "Done",
+        "summary": "Take card payments through the new provider",
+        "type": "Story",
+    },
+    "EX-102": {"checked": "2026-10-15", "denied": True},
+    "EX-104": {"absent": True, "checked": "2026-10-15"},
+    "EX-201": {
+        "checked": "2026-10-15",
+        "comments": [
+            "Split payments need a refund per part.",
+            "Blocked on the ledger's partial reversal.",
+        ],
+        "comments_total": 3,
+        "comments_truncated": True,
+        "created": "2026-10-10",
+        "parent": "EX-200",
+        "status": "In Progress",
+        "summary": "Partial refunds for split payments",
+        "type": "Story",
     },
 }
 
@@ -844,7 +880,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("history", ("knowledge/git-history",), "dir"),
     ("intent", (FILE_TICKETS,), "file"),
     ("ticket_descriptions", (TICKET_DESCRIPTIONS,), "file"),
-    ("ticket_tracker", ("knowledge/intent/ticket-tracker.json.gz",), "file"),
+    ("ticket_tracker", (TICKET_TRACKER,), "file"),
     ("summaries", (SUMMARIES,), "file"),
     ("topics", (BRIEFS,), "file"),
     ("deep_dives", (DIVES,), "file"),
@@ -968,6 +1004,7 @@ def build(
     by_repo_only: bool = False,
     provenance_only: bool = False,
     relationships_format: dict | None = RELATIONSHIPS_FORMAT,
+    tracker: bool = False,
 ) -> Path:
     """Write the complete synthetic store at `root` and return it.
 
@@ -981,7 +1018,8 @@ def build(
     (DESIGN.md 5.6), and `provenance_only` one that only provenance records
     (DESIGN.md 1.1). `relationships_format` is the registry's format stamp; None
     writes a registry without one, as a library before the stamp did (DESIGN.md
-    5.7). The manifest is written last, so its digests describe
+    5.7). `tracker` writes the ticket tracker layer (DESIGN.md 6.5), which the
+    default store does not hold. The manifest is written last, so its digests describe
     the files as they finally are.
     """
     if index not in INDEX_MODES:
@@ -1005,6 +1043,8 @@ def build(
     file_tickets = {**FILE_TICKETS_DATA, **(TICKET_ONLY_DATA if ticket_only else {})}
     _write(root, FILE_TICKETS, _gzip_json(file_tickets))
     _write(root, TICKET_DESCRIPTIONS, _gzip_json(TICKET_DESCRIPTIONS_DATA))
+    if tracker:
+        _write(root, TICKET_TRACKER, _gzip_json(dict(sorted(TICKET_TRACKER_DATA.items()))))
     _write(
         root,
         SUMMARIES,
