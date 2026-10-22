@@ -19,6 +19,7 @@ from typing import Any
 from unittest import mock
 
 from fixture_store.build import (
+    BRIEFS,
     BRIEFS_DATA,
     DIVES_DATA,
     FAQ,
@@ -27,9 +28,10 @@ from fixture_store.build import (
     HOSTILE,
     MANIFEST,
     TICKET_DESCRIPTIONS_DATA,
+    TICKET_TRACKER,
     build,
 )
-from knowledgestore_mcp import results, store, tools_tickets
+from knowledgestore_mcp import results, store, tools_graph, tools_tickets
 from knowledgestore_mcp.tools_graph import ArgumentRefused
 
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
@@ -72,6 +74,10 @@ NOT_HELD = {
     "referenced_by": ["ledger-service", "payments-api"],
 }
 
+# DESIGN.md 9.2: the store's `sources_as_of`, which dates the library's written
+# layers (DESIGN.md 7.1).
+SOURCES_AS_OF = "2026-10-15T23:30:00-02:00"
+
 # The written answers of DESIGN.md 7, as `answers` returns each match.
 FAQ_MATCH = {
     "layer": "faq",
@@ -83,6 +89,8 @@ FAQ_MATCH = {
         "<p>RefundHandler in payments-api calls LedgerClient, which posts a "
         "reversing journal entry in ledger-service.</p>"
     ),
+    "as_of": "2026-09-28",
+    "commit": "5ca1ab1e" * 5,
 }
 PAYMENTS_BRIEF = {
     "layer": "topics",
@@ -94,6 +102,8 @@ PAYMENTS_BRIEF = {
         "<p>A card payment enters through gateway-service, is taken by "
         "payments-api, and is posted to ledger-service as a journal entry.</p>"
     ),
+    "as_of": SOURCES_AS_OF,
+    "commit": None,
 }
 PAYMENTS_DIVE = {
     "layer": "deep_dives",
@@ -105,6 +115,8 @@ PAYMENTS_DIVE = {
         "<p>payments-api at 99999999 takes card payments and hands refunds to "
         "RefundHandler, which retries a timed-out refund.</p>"
     ),
+    "as_of": SOURCES_AS_OF,
+    "commit": None,
 }
 ANSWER_LAYERS = ["deep_dives", "faq", "topics"]
 
@@ -133,7 +145,7 @@ def envelope(index: str, layers_used: list[str]) -> dict:
             "id": "example-store",
             "format": {"major": 1, "minor": 0},
             "library_version": "0.0.0+fixture",
-            "sources_as_of": "2026-10-15T23:30:00-02:00",
+            "sources_as_of": SOURCES_AS_OF,
             "index": index,
             "layers_used": layers_used,
             "notice": None,
@@ -425,6 +437,8 @@ class TicketTest(TicketsTestCase):
                             "repos": ["payments-api"],
                             "commits": 2,
                         },
+                        "tracker": None,
+                        "tracker_note": tools_tickets.TRACKER_ABSENT,
                         "reach": True,
                         "reach_note": None,
                         "totals": {"landed": 0, "proposed": 1},
@@ -476,7 +490,8 @@ class TicketTest(TicketsTestCase):
                 self.assertEqual((found["landed"], found["proposed"]), ([], []))
                 self.assertEqual(
                     found["searched"],
-                    "searched 12 repositories in the index, intent and ticket_descriptions layers",
+                    "searched 12 repositories in the index, intent and ticket_descriptions "
+                    "layers; the ticket_tracker layer is absent",
                 )
 
 
@@ -777,6 +792,429 @@ class AnswersTest(TicketsTestCase):
         self.assertIn("only common words", str(raised.exception))
         with self.assertRaises(ArgumentRefused):
             tools_tickets.answers(session, "ledger", limit=0)
+
+
+# DESIGN.md 6.5: the tracker's own records, as `ticket` returns them.
+EX_101_TRACKER = {
+    "key": "EX-101",
+    "state": "fetched",
+    # Resolved, so the stage stores no `checked`: dated when resolved (DESIGN.md 6.5).
+    "as_of": "2026-10-16",
+    "text": {
+        "title": "Take card payments through the new provider",
+        "status": "Done",
+        "resolution": "Done",
+        "description": "Move card payments from the old provider to the new one.",
+        "comments": ["Live for every card scheme since the August release."],
+    },
+    "comments_truncated": False,
+}
+EX_201_TRACKER = {
+    "key": "EX-201",
+    "state": "fetched",
+    "as_of": "2026-10-15",
+    "text": {
+        "title": "Partial refunds for split payments",
+        "status": "In Progress",
+        "comments": [
+            "Split payments need a refund per part.",
+            "Blocked on the ledger's partial reversal.",
+        ],
+    },
+    "comments_truncated": True,
+}
+
+
+def without_tracker(response: dict) -> dict:
+    """A `ticket` response less what the tracker layer adds: its two fields, and
+    its name in `layers_used`."""
+    rest = {k: v for k, v in response.items() if k not in ("tracker", "tracker_note")}
+    layers = [name for name in rest["store"]["layers_used"] if name != "ticket_tracker"]
+    return {**rest, "store": {**rest["store"], "layers_used": layers}}
+
+
+class TrackerTest(TicketsTestCase):
+    """The tracker's own record of a ticket (#17, DESIGN.md 6.5): returned under
+    `tracker`, apart from the commit-mined record under `ticket`."""
+
+    def test_a_store_with_a_tracker_returns_the_record_under_its_own_key(self):
+        """Catches: the tracker layer never read; its record merged into the
+        commit-mined one, so an answer cannot say which source it quotes; or the
+        title, status, description or comments dropped."""
+        for index, _ in MODES:
+            with self.subTest(index=index):
+                found = tools_tickets.ticket(self.session(index, tracker=True), "EX-101")
+                self.assertEqual(found["tracker"], EX_101_TRACKER)
+                self.assertIsNone(found["tracker_note"])
+                self.assertIn("ticket_tracker", found["store"]["layers_used"])
+                self.assertEqual(
+                    found["ticket"]["description"],
+                    ["Take card payments through the new provider"],
+                )
+
+    def test_a_partial_thread_says_so_and_an_open_ticket_has_its_status(self):
+        """Catches: two comments of a thread of three returned as the whole
+        conversation, or an open ticket's status lost."""
+        found = tools_tickets.ticket(self.session(tracker=True), "EX-201")
+        self.assertEqual(found["tracker"], EX_201_TRACKER)
+
+    def test_a_denied_or_absent_record_says_which(self):
+        """Catches: a ticket the build's token could not read, or one the tracker
+        said does not exist, returned as null - "no record" - when the tracker
+        answered, and the two answers are different."""
+        session = self.session(tracker=True)
+        for key, state in (("EX-102", "denied"), ("EX-104", "absent")):
+            with self.subTest(key=key):
+                found = tools_tickets.ticket(session, key)
+                self.assertEqual(
+                    found["tracker"],
+                    {
+                        "key": key,
+                        "state": state,
+                        "as_of": "2026-10-15",
+                        "text": {},
+                        "comments_truncated": False,
+                    },
+                )
+                self.assertIsNone(found["tracker_note"])
+
+    def test_without_a_tracker_the_field_is_null_and_the_rest_unchanged(self):
+        """Catches: an absent tracker layer answered as "no record", or its
+        absence unsaid; or reading the tracker changing anything else `ticket`
+        returns."""
+        for index, _ in MODES:
+            for key in ("EX-101", "EX-102", "EX-201"):
+                with self.subTest(index=index, key=key):
+                    absent = tools_tickets.ticket(self.session(index), key)
+                    self.assertIsNone(absent["tracker"])
+                    self.assertEqual(absent["tracker_note"], "the ticket_tracker layer is absent")
+                    self.assertNotIn("ticket_tracker", absent["store"]["layers_used"])
+                    present = tools_tickets.ticket(self.session(index, tracker=True), key)
+                    self.assertEqual(without_tracker(present), without_tracker(absent))
+
+    def test_a_ticket_the_tracker_holds_no_record_of_is_null_and_says_so(self):
+        """Catches: a key the layer does not hold answered as though the layer were
+        absent, or not said at all."""
+        found = tools_tickets.ticket(self.session(tracker=True), "EX-103")
+        self.assertIsNone(found["tracker"])
+        self.assertEqual(found["tracker_note"], tools_tickets.TRACKER_NO_RECORD)
+        self.assertIn("ticket_tracker", found["store"]["layers_used"])
+
+    def test_an_unrecorded_tracker_layer_is_not_called_absent(self):
+        """Catches: a tracker layer whose presence the manifest did not record
+        (`present: null`) called absent, which says the store was measured and
+        lacks it."""
+
+        def unrecorded(document):
+            document["layers"]["ticket_tracker"]["present"] = None
+
+        found = tools_tickets.ticket(self.session(edit=unrecorded), "EX-101")
+        self.assertIsNone(found["tracker"])
+        self.assertEqual(found["tracker_note"], "the ticket_tracker layer is not recorded")
+
+    def test_an_unknown_key_says_the_tracker_was_searched(self):
+        """Catches: the sentence for a key no layer holds leaving out the tracker
+        layer `ticket` now reads."""
+        found = tools_tickets.ticket(self.session(tracker=True), "EX-999")
+        self.assertEqual(
+            found["searched"],
+            "searched 12 repositories in the index, intent, ticket_descriptions and "
+            "ticket_tracker layers",
+        )
+
+    def test_an_unrecognised_tracker_layer_reads_as_absent(self):
+        """Catches: a tracker file in a shape this server does not read - not an
+        object of records, not JSON, not gzip - failing the call, guessed at, or
+        listed in `layers_used` as though it answered; the reason is given in
+        place of a record, and the rest of the answer is as without the layer."""
+        records = json.dumps(["EX-101"]).encode("utf-8")
+        for name, written, reason in (
+            ("a list", gzip.compress(records), tools_tickets.TRACKER_NOT_RECORDS),
+            ("not json", gzip.compress(b'{"EX-101": '), tools_tickets.TRACKER_NOT_JSON),
+            ("not gzip", b"not gzip at all", tools_tickets.TRACKER_NOT_JSON),
+        ):
+            with self.subTest(name):
+                session = self.session(tracker=True, files={TICKET_TRACKER: written})
+                found = tools_tickets.ticket(session, "EX-101")
+                self.assertIsNone(found["tracker"])
+                self.assertEqual(found["tracker_note"], reason)
+                self.assertNotIn("ticket_tracker", found["store"]["layers_used"])
+                self.assertEqual(
+                    without_tracker(found),
+                    without_tracker(tools_tickets.ticket(self.session(), "EX-101")),
+                )
+                unknown = tools_tickets.ticket(session, "EX-999")
+                self.assertEqual(
+                    unknown["searched"],
+                    "searched 12 repositories in the index, intent and ticket_descriptions layers",
+                )
+
+    def test_a_record_is_dated_when_checked_else_when_resolved(self):
+        """Catches: a resolved record, which the stage never re-checks and so
+        stores without `checked`, returned undated; `resolved` preferred over a
+        later `checked`; or a date that is not one passed on."""
+        layer = {
+            "EX-101": {"summary": "Resolved", "resolved": "2026-10-16"},
+            "EX-102": {"summary": "Both", "checked": "2026-10-18", "resolved": "2026-10-16"},
+            "EX-103": {"summary": "Neither"},
+            "EX-104": {"summary": "Bad check", "checked": "2026-W42-3", "resolved": "2026-10-16"},
+            "EX-201": {"summary": "Bad resolve", "resolved": "16/10/2026"},
+        }
+        written = gzip.compress(json.dumps(layer).encode("utf-8"))
+        session = self.session(tracker=True, files={TICKET_TRACKER: written})
+        self.assertEqual(
+            {key: tools_tickets.ticket(session, key)["tracker"]["as_of"] for key in layer},
+            {
+                "EX-101": "2026-10-16",
+                "EX-102": "2026-10-18",
+                "EX-103": None,
+                "EX-104": "2026-10-16",
+                "EX-201": None,
+            },
+        )
+
+    def test_a_tracker_declared_at_a_directory_is_named_not_read(self):
+        """Catches: a tracker layer declared at a directory - with or without the
+        trailing slash a directory layer is listed with - reported as invalid
+        JSON, a reason that sends its reader to the wrong fault."""
+        for declared in ("knowledge/intent/", "knowledge/intent"):
+            with self.subTest(declared=declared):
+
+                def directory(document, declared=declared):
+                    document["layers"]["ticket_tracker"]["paths"] = [declared]
+
+                found = tools_tickets.ticket(self.session(tracker=True, edit=directory), "EX-101")
+                self.assertIsNone(found["tracker"])
+                self.assertEqual(found["tracker_note"], tools_tickets.TRACKER_A_DIRECTORY)
+                self.assertNotIn("ticket_tracker", found["store"]["layers_used"])
+
+    def test_the_tracker_is_parsed_once_per_store_load(self):
+        """Catches: the whole tracker file - every ticket's comments - read and
+        parsed again on every `ticket` call rather than once per loaded store."""
+        session = self.session(tracker=True)
+        real = store.Store.read
+        names: list[str] = []
+
+        def counted(self_: store.Store, name: str) -> Any:
+            names.append(name)
+            return real(self_, name)
+
+        with mock.patch.object(store.Store, "read", counted):
+            first = tools_tickets.ticket(session, "EX-101")
+            second = tools_tickets.ticket(session, "EX-201")
+        self.assertEqual((first["tracker"], second["tracker"]), (EX_101_TRACKER, EX_201_TRACKER))
+        self.assertEqual(names.count("ticket_tracker"), 1)
+
+    def test_a_record_in_a_shape_this_server_does_not_read_is_null_and_says_so(self):
+        """Catches: one record of another shape - a string, an object with none of
+        the stage's outcomes - returned as a record, or failing the call."""
+        layer = {"EX-101": "Done", "EX-201": {"status": "Done"}}
+        written = gzip.compress(json.dumps(layer).encode("utf-8"))
+        session = self.session(tracker=True, files={TICKET_TRACKER: written})
+        for key in ("EX-101", "EX-201"):
+            with self.subTest(key=key):
+                found = tools_tickets.ticket(session, key)
+                self.assertIsNone(found["tracker"])
+                self.assertEqual(found["tracker_note"], tools_tickets.TRACKER_RECORD_UNREAD)
+                self.assertIn("ticket_tracker", found["store"]["layers_used"])
+
+    def test_tracker_text_is_only_in_text_and_mistyped_fields_are_dropped(self):
+        """Catches: tracker text - written by people, and untrusted as all store
+        text is - returned outside `text`, such as a title as `title` beside
+        `key`; or a field of the wrong type passed on as the record's."""
+        layer = {
+            "EX-101": {
+                "summary": HOSTILE,
+                "status": HOSTILE,
+                "description": HOSTILE,
+                "comments": [HOSTILE, 7, None],
+                "parent": HOSTILE,
+                "type": HOSTILE,
+                "resolution": HOSTILE,
+                "comments_truncated": HOSTILE,
+                "checked": HOSTILE,
+            },
+            "EX-201": {"summary": "Partial", "status": 3, "comments": HOSTILE},
+        }
+        written = gzip.compress(json.dumps(layer).encode("utf-8"))
+        session = self.session(tracker=True, files={TICKET_TRACKER: written})
+        hostile = tools_tickets.ticket(session, "EX-101")
+        self.assertEqual(
+            sorted(p for p, t in leaves(hostile) if HOSTILE in t),
+            [
+                ("tracker", "text", "comments", 0),
+                ("tracker", "text", "description"),
+                ("tracker", "text", "resolution"),
+                ("tracker", "text", "status"),
+                ("tracker", "text", "title"),
+            ],
+        )
+        self.assertEqual(hostile["tracker"]["text"]["comments"], [HOSTILE])
+        self.assertFalse(hostile["tracker"]["comments_truncated"])
+        self.assertIsNone(hostile["tracker"]["as_of"])
+        typed = tools_tickets.ticket(session, "EX-201")
+        self.assertEqual(typed["tracker"]["text"], {"title": "Partial"})
+
+
+class DatedAnswersTest(TicketsTestCase):
+    """Written analysis is dated (#19): an entry's own `as_of` and `commit`; the
+    library's briefs and deep dives, which record no date, by the store's
+    `sources_as_of` (DESIGN.md 7.1); anything else undated, as null."""
+
+    def match(self, found: dict, layer: str, entry_id: str) -> dict:
+        return next(i for i in found["items"] if (i["layer"], i["id"]) == (layer, entry_id))
+
+    def test_a_dated_entry_returns_its_as_of_and_commit(self):
+        """Catches: an answers entry's `as_of` or `commit` dropped, so an assistant
+        presents analysis written on 2026-09-28 as current (DESIGN.md 7.1)."""
+        found = self.match(
+            tools_tickets.answers(self.session(), "ledger reach"),
+            "faq",
+            "how-refunds-reach-the-ledger",
+        )
+        self.assertEqual((found["as_of"], found["commit"]), ("2026-09-28", "5ca1ab1e" * 5))
+
+    def test_an_undated_entry_returns_null(self):
+        """Catches: an entry of a declared answers layer with no `as_of` given a
+        date it does not have - the store's, or today's - so undated analysis
+        reads as dated."""
+        faq = {
+            "undated": {"title": "Ledger", "html": "<p>ledger</p>", "source": "a.md"},
+            "commit-only": {
+                "title": "Ledger",
+                "html": "<p>ledger</p>",
+                "source": "b.md",
+                "commit": "5ca1ab1e" * 5,
+            },
+        }
+        session = self.session(files={FAQ: json.dumps(faq).encode("utf-8")})
+        found = tools_tickets.answers(session, "ledger")
+        self.assertEqual(
+            {i["id"]: (i["as_of"], i["commit"]) for i in found["items"] if i["layer"] == "faq"},
+            {"commit-only": (None, "5ca1ab1e" * 5), "undated": (None, None)},
+        )
+
+    def test_briefs_and_dives_are_dated_by_the_stores_sources_as_of(self):
+        """Catches: a topic brief or deep dive, which records no date of its own,
+        returned undated although the manifest dates the build that holds it; or
+        dated from anything but the manifest's `sources_as_of`. A changed
+        manifest date moves theirs, and an unrecorded one leaves them null."""
+        for recorded in (SOURCES_AS_OF, "2026-07-01T00:00:00+00:00", None):
+            with self.subTest(sources_as_of=recorded):
+
+                def edit(document, recorded=recorded):
+                    document["sources_as_of"] = recorded
+
+                found = tools_tickets.answers(self.session(edit=edit), "card payment")
+                self.assertEqual(
+                    {
+                        (i["layer"], i["id"]): (i["as_of"], i["commit"])
+                        for i in found["items"]
+                        if i["layer"] != "faq"
+                    },
+                    {
+                        ("topics", "payments"): (recorded, None),
+                        ("deep_dives", "payments-api"): (recorded, None),
+                    },
+                )
+
+    def test_a_sources_as_of_that_is_not_a_date_dates_nothing(self):
+        """Catches: the manifest's `sources_as_of` passed to a brief, a deep dive or
+        a summary unchecked, so a value that is not a date is presented as when
+        the analysis was written."""
+        for recorded in (HOSTILE, 20261015, "20261015", "2026-W42-3"):
+            with self.subTest(sources_as_of=recorded):
+
+                def edit(document, recorded=recorded):
+                    document["sources_as_of"] = recorded
+
+                session = self.session(edit=edit)
+                found = tools_tickets.answers(session, "card payment")
+                self.assertEqual(
+                    [i["as_of"] for i in found["items"] if i["layer"] != "faq"], [None, None]
+                )
+                community = tools_graph.community(session, 0)["community"]
+                self.assertIsNone(community["summary_as_of"])
+
+    def test_only_a_calendar_date_in_extended_form_is_a_date(self):
+        """Catches: an ISO form a reader does not take for a date - the basic
+        `20261020`, the week date `2026-W42-3`, a space for the `T` - or a
+        date-shaped value that is no date, such as `2026-02-30`, passed as
+        written, so an assistant quotes `as_of: 2026-W42-3` as a date."""
+        forms = {
+            "basic": "20261020",
+            "week": "2026-W42-3",
+            "ordinal": "2026-293",
+            "space": "2026-10-20 10:15:00",
+            "impossible": "2026-02-30",
+            "untimed": "2026-10-20Tnoon",
+            "day": "2026-10-20",
+            "instant": "2026-10-20T10:15:00+01:00",
+        }
+        entry = {"title": "Ledger", "html": "<p>ledger</p>", "source": "a.md"}
+        faq = {name: {**entry, "as_of": value} for name, value in forms.items()}
+        session = self.session(files={FAQ: json.dumps(faq).encode("utf-8")})
+        found = tools_tickets.answers(session, "ledger")
+        self.assertEqual(
+            {i["id"]: i["as_of"] for i in found["items"] if i["layer"] == "faq"},
+            {
+                "basic": None,
+                "week": None,
+                "ordinal": None,
+                "space": None,
+                "impossible": None,
+                "untimed": None,
+                "day": "2026-10-20",
+                "instant": "2026-10-20T10:15:00+01:00",
+            },
+        )
+
+    def test_a_briefs_own_date_wins_over_the_stores(self):
+        """Catches: a library layer's entry that does carry its own `as_of`
+        overwritten by the store's `sources_as_of`, a later and less exact date."""
+        briefs = {"payments": {**BRIEFS_DATA["payments"], "as_of": "2026-08-02"}}
+        session = self.session(files={BRIEFS: json.dumps(briefs).encode("utf-8")})
+        found = self.match(tools_tickets.answers(session, "card"), "topics", "payments")
+        self.assertEqual((found["as_of"], found["commit"]), ("2026-08-02", None))
+
+    def test_a_date_or_commit_that_is_not_one_is_null_and_never_returned(self):
+        """Catches: an `as_of` or `commit` holding prose returned as structure,
+        outside a text field: they are written by hand, so only a date and a hex
+        commit id are passed."""
+        faq = {
+            "prose": {
+                "title": "Ledger",
+                "html": "<p>ledger</p>",
+                "source": "a.md",
+                "as_of": HOSTILE,
+                "commit": HOSTILE,
+            },
+            "typed": {
+                "title": "Ledger",
+                "html": "<p>ledger</p>",
+                "source": "b.md",
+                "as_of": 20260928,
+                "commit": ["5ca1ab1e"],
+            },
+            "timestamp": {
+                "title": "Ledger",
+                "html": "<p>ledger</p>",
+                "source": "c.md",
+                "as_of": "2026-09-28T10:15:00+01:00",
+                "commit": "5ca1ab1e on main",
+            },
+        }
+        session = self.session(files={FAQ: json.dumps(faq).encode("utf-8")})
+        found = tools_tickets.answers(session, "ledger")
+        self.assertEqual([p for p, t in leaves(found) if HOSTILE in t], [])
+        self.assertEqual(
+            {i["id"]: (i["as_of"], i["commit"]) for i in found["items"] if i["layer"] == "faq"},
+            {
+                "prose": (None, None),
+                "timestamp": ("2026-09-28T10:15:00+01:00", None),
+                "typed": (None, None),
+            },
+        )
 
 
 if __name__ == "__main__":
