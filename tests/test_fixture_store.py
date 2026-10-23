@@ -642,7 +642,7 @@ class TrapTest(FixtureStoreCase):
         worker = _json(root, f"{layer}/by-repo/reporting-worker.json")
         self.assertIsNone(worker["settings_read_at"])
         for rel in files:
-            self.assertNotIn(b"Zq8vPLm3Rt7xKw2N", (root / layer / rel).read_bytes())
+            self.assertNotIn(b"fixture-not-a-secret", (root / layer / rel).read_bytes())
 
     def test_three_hop_chain_and_cycle(self):
         """Catches: a broken link in the chain or the cycle, which would let a

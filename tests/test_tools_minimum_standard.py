@@ -397,7 +397,7 @@ class EvidenceNotVerdictTest(MinimumStandardTestCase):
     def test_a_secret_finding_is_a_rule_a_path_and_a_line_and_never_a_value(self):
         """Catches: a value, a line of the file or any other field of a finding
         passed through, so a secret reaches the answer (DESIGN.md 11)."""
-        value = "Zq8vPLm3Rt7xKw2N"
+        value = "fixture-not-a-secret"
 
         def leak(root: Path) -> None:
             def add(document: dict) -> None:

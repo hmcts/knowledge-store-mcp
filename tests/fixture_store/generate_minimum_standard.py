@@ -39,7 +39,7 @@ CLONES: dict[str, tuple[dict[str, str], list[str]]] = {
             ".github/CODEOWNERS": "* @example-org/payments-team\n",
             "SECURITY.md": "# Security\n\nReport a vulnerability to security@example.org.\n",
             "config/application.yml": (
-                "server:\n  port: 8080\ndatabase:\n  password: Zq8vPLm3Rt7xKw2N\n"
+                "server:\n  port: 8080\ndatabase:\n  password: fixture-not-a-secret\n"
             ),
             "docs/threat-model.md": "# Threat model\n",
             ".github/workflows/codeql.yml": "steps:\n  - uses: github/codeql-action/init@v3\n",
