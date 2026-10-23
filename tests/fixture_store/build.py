@@ -510,6 +510,360 @@ FAQ_DATA = {
 }
 
 
+# --- The minimum-standard layer -----------------------------------------------------
+#
+# Transcribed from knowledge-store-builder's own writer: `build_minimum_standard.
+# evidence_for` run over three synthetic clones, the script DESIGN.md 11 names. Only
+# the stamp is left out of each record; `build` writes it, so a variant can change it.
+
+MINIMUM_STANDARD = "knowledge/minimum-standard"
+MINIMUM_STANDARD_FORMAT = {"layer": "minimum_standard", "major": 1, "minor": 0}
+MINIMUM_STANDARD_NOTES = ["archived repositories are not in the store"]
+MINIMUM_STANDARD_PRODUCTS = {"payments": ["ledger-service", "payments-api"]}
+
+MINIMUM_STANDARD_RECORDS: dict[str, dict] = {
+    "ledger-service": {
+        "as_of": {
+            "commit": "6666666666666666666666666666666666666666",
+            "date": "2026-10-16T01:00:00+00:00",
+        },
+        "points": {
+            "hygiene": {
+                "evidence": [
+                    {
+                        "item": "branch_protection",
+                        "reason": "no access",
+                        "setting": "branch_protection",
+                        "state": "not_determinable",
+                    },
+                    {
+                        "checked": [".github/workflows/"],
+                        "item": "code_scanning_workflow",
+                        "paths": [],
+                        "reason": "no code-scanning workflow; default setup is not visible",
+                        "state": "not_determinable",
+                    },
+                    {
+                        "checked": [
+                            ".github/dependabot.yaml",
+                            ".github/dependabot.yml",
+                            ".github/renovate.json",
+                            ".renovaterc*",
+                            "renovate.json",
+                        ],
+                        "item": "dependency_updates",
+                        "paths": [],
+                        "reason": "no dependency update config",
+                        "state": "absent",
+                    },
+                    {
+                        "item": "secret_scanning_setting",
+                        "reason": "no access",
+                        "setting": "secret_scanning",
+                        "state": "not_determinable",
+                    },
+                    {
+                        "checked": [".github/workflows/"],
+                        "item": "secret_scanning_workflow",
+                        "paths": [],
+                        "reason": "no secret-scanning workflow",
+                        "state": "absent",
+                    },
+                    {
+                        "item": "vulnerability_alerts",
+                        "reason": "no access",
+                        "setting": "dependabot_alerts",
+                        "state": "not_determinable",
+                    },
+                ],
+                "state": "absent",
+            },
+            "no_secrets": {
+                "evidence": [],
+                "reason": "pattern scan found nothing; a scan cannot show absence",
+                "state": "not_determinable",
+            },
+            "owner": {
+                "evidence": [
+                    {
+                        "path": "CODEOWNERS",
+                        "reason": "no rule names an owner for the repository root",
+                    }
+                ],
+                "reason": "no rule names an owner for the repository root",
+                "state": "absent",
+            },
+            "patching": {
+                "evidence": [],
+                "reason": "patching timelines are not recorded in a repository",
+                "state": "not_determinable",
+            },
+            "secure_by_design": {
+                "evidence": [],
+                "reason": "no threat model found; secure-by-design is not judged from code",
+                "state": "not_determinable",
+            },
+            "security_contact": {
+                "evidence": [
+                    {"path": ".github/SECURITY.md", "reason": "not found"},
+                    {"path": "SECURITY.md", "reason": "not found"},
+                    {"path": "docs/SECURITY.md", "reason": "not found"},
+                ],
+                "reason": "no SECURITY.md",
+                "state": "absent",
+            },
+            "unmaintained": {
+                "evidence": [
+                    {
+                        "commit": "6666666666666666666666666666666666666666",
+                        "date": "2026-10-16T01:00:00+00:00",
+                        "reason": "last commit",
+                    }
+                ],
+                "reason": "no access",
+                "state": "not_determinable",
+            },
+        },
+        "repository": "ledger-service",
+        "settings_read_at": "2026-10-15T20:00:00+00:00",
+    },
+    "payments-api": {
+        "as_of": {
+            "commit": "9999999999999999999999999999999999999999",
+            "date": "2026-10-15T17:45:00+01:00",
+        },
+        "points": {
+            "hygiene": {
+                "evidence": [
+                    {
+                        "item": "branch_protection",
+                        "reason": "the default branch is protected",
+                        "setting": "branch_protection",
+                        "state": "present",
+                    },
+                    {
+                        "checked": [".github/workflows/"],
+                        "item": "code_scanning_workflow",
+                        "paths": [".github/workflows/codeql.yml"],
+                        "reason": "code-scanning workflow found",
+                        "state": "present",
+                    },
+                    {
+                        "checked": [
+                            ".github/dependabot.yaml",
+                            ".github/dependabot.yml",
+                            ".github/renovate.json",
+                            ".renovaterc*",
+                            "renovate.json",
+                        ],
+                        "item": "dependency_updates",
+                        "paths": [".github/dependabot.yml"],
+                        "reason": "dependency update config found",
+                        "state": "present",
+                    },
+                    {
+                        "item": "secret_scanning_setting",
+                        "reason": "secret scanning is enabled",
+                        "setting": "secret_scanning",
+                        "state": "present",
+                    },
+                    {
+                        "checked": [".github/workflows/"],
+                        "item": "secret_scanning_workflow",
+                        "paths": [".github/workflows/secrets.yml"],
+                        "reason": "secret-scanning workflow found",
+                        "state": "present",
+                    },
+                    {
+                        "item": "vulnerability_alerts",
+                        "reason": "Dependabot alerts are enabled",
+                        "setting": "dependabot_alerts",
+                        "state": "present",
+                    },
+                ],
+                "state": "present",
+            },
+            "no_secrets": {
+                "evidence": [{"line": 4, "path": "config/application.yml", "rule": "key-name"}],
+                "reason": "pattern scan of the current tree found these; values are not recorded and history is not scanned",
+                "state": "absent",
+            },
+            "owner": {
+                "evidence": [
+                    {
+                        "path": ".github/CODEOWNERS",
+                        "reason": "names an owner for the repository root",
+                    }
+                ],
+                "state": "present",
+            },
+            "patching": {
+                "evidence": [],
+                "reason": "patching timelines are not recorded in a repository",
+                "state": "not_determinable",
+            },
+            "secure_by_design": {
+                "evidence": [{"path": "docs/threat-model.md", "reason": "threat model"}],
+                "state": "present",
+            },
+            "security_contact": {
+                "evidence": [
+                    {
+                        "path": "SECURITY.md",
+                        "reason": "carries a contact; whether it is monitored is not recorded",
+                    }
+                ],
+                "state": "present",
+            },
+            "unmaintained": {
+                "evidence": [
+                    {
+                        "commit": "9999999999999999999999999999999999999999",
+                        "date": "2026-10-15T17:45:00+01:00",
+                        "reason": "last commit",
+                    },
+                    {"reason": "not archived", "setting": "archived"},
+                ],
+                "reason": "not archived; maintenance and a patching route are not judged from the repository",
+                "state": "not_determinable",
+            },
+        },
+        "repository": "payments-api",
+        "settings_read_at": "2026-10-15T20:00:00+00:00",
+    },
+    "reporting-worker": {
+        "as_of": {
+            "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "date": "2026-10-15T23:30:00-02:00",
+        },
+        "points": {
+            "hygiene": {
+                "evidence": [
+                    {
+                        "item": "branch_protection",
+                        "reason": "no settings snapshot",
+                        "setting": "branch_protection",
+                        "state": "not_determinable",
+                    },
+                    {
+                        "checked": [".github/workflows/"],
+                        "item": "code_scanning_workflow",
+                        "paths": [".github/workflows/build.yml"],
+                        "reason": "code-scanning workflow found",
+                        "state": "present",
+                    },
+                    {
+                        "checked": [
+                            ".github/dependabot.yaml",
+                            ".github/dependabot.yml",
+                            ".github/renovate.json",
+                            ".renovaterc*",
+                            "renovate.json",
+                        ],
+                        "item": "dependency_updates",
+                        "paths": ["renovate.json"],
+                        "reason": "dependency update config found",
+                        "state": "present",
+                    },
+                    {
+                        "item": "secret_scanning_setting",
+                        "reason": "no settings snapshot",
+                        "setting": "secret_scanning",
+                        "state": "not_determinable",
+                    },
+                    {
+                        "checked": [".github/workflows/"],
+                        "item": "secret_scanning_workflow",
+                        "paths": [".github/workflows/build.yml"],
+                        "reason": "secret-scanning workflow found",
+                        "state": "present",
+                    },
+                    {
+                        "item": "vulnerability_alerts",
+                        "reason": "no settings snapshot",
+                        "setting": "dependabot_alerts",
+                        "state": "not_determinable",
+                    },
+                ],
+                "reason": "a requirement could not be determined",
+                "state": "not_determinable",
+            },
+            "no_secrets": {
+                "evidence": [],
+                "reason": "no files in the content set",
+                "state": "not_determinable",
+            },
+            "owner": {
+                "evidence": [
+                    {
+                        "path": ".github/CODEOWNERS",
+                        "reason": "no rule names an owner for the repository root",
+                    }
+                ],
+                "reason": "no rule names an owner for the repository root",
+                "state": "absent",
+            },
+            "patching": {
+                "evidence": [],
+                "reason": "patching timelines are not recorded in a repository",
+                "state": "not_determinable",
+            },
+            "secure_by_design": {
+                "evidence": [],
+                "reason": "no threat model found; secure-by-design is not judged from code",
+                "state": "not_determinable",
+            },
+            "security_contact": {
+                "evidence": [{"path": "SECURITY.md", "reason": "no contact"}],
+                "reason": "no contact in SECURITY.md",
+                "state": "absent",
+            },
+            "unmaintained": {
+                "evidence": [
+                    {
+                        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "date": "2026-10-15T23:30:00-02:00",
+                        "reason": "last commit",
+                    }
+                ],
+                "reason": "no settings snapshot",
+                "state": "not_determinable",
+            },
+        },
+        "repository": "reporting-worker",
+        "settings_read_at": None,
+    },
+}
+
+MINIMUM_STANDARD_SETTINGS: dict = {
+    "read_at": "2026-10-15T20:00:00+00:00",
+    "repositories": {
+        "ledger-service": {
+            "archived": None,
+            "branch_protection": None,
+            "default_branch": None,
+            "dependabot_alerts": None,
+            "secret_scanning": None,
+            "unreadable": [
+                "archived",
+                "branch_protection",
+                "default_branch",
+                "dependabot_alerts",
+                "secret_scanning",
+            ],
+        },
+        "payments-api": {
+            "archived": False,
+            "branch_protection": "present",
+            "default_branch": "main",
+            "dependabot_alerts": "enabled",
+            "secret_scanning": "enabled",
+            "unreadable": [],
+        },
+    },
+}
+
+
 # --- Writers ------------------------------------------------------------------
 
 
@@ -689,6 +1043,39 @@ def _write_relationships(
             f"{BY_REPO}/{BY_REPO_ONLY_REPOSITORY}.json",
             _sorted_json(_by_repo_only_document()),
         )
+
+
+def _minimum_standard_json(data: object) -> bytes:
+    """`build_minimum_standard._dump`: indented by two, sorted, with a newline."""
+    return (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def minimum_standard_summary() -> dict:
+    """`summary.json` without its stamp, composed as `build_minimum_standard.main`
+    composes it from the records."""
+    return {
+        "notes": MINIMUM_STANDARD_NOTES,
+        "products": MINIMUM_STANDARD_PRODUCTS,
+        "repositories": {
+            name: {
+                "as_of": record["as_of"],
+                "points": {key: value["state"] for key, value in record["points"].items()},
+            }
+            for name, record in sorted(MINIMUM_STANDARD_RECORDS.items())
+        },
+        "settings_read_at": MINIMUM_STANDARD_SETTINGS["read_at"],
+    }
+
+
+def _write_minimum_standard(root: Path, stamp: dict | None) -> None:
+    """Every file of the layer, each carrying `stamp` (none when it is None)."""
+    stamped = {} if stamp is None else {"format": stamp}
+    for rel, body in (
+        ("github-settings.json", MINIMUM_STANDARD_SETTINGS),
+        ("summary.json", minimum_standard_summary()),
+        *((f"by-repo/{name}.json", record) for name, record in MINIMUM_STANDARD_RECORDS.items()),
+    ):
+        _write(root, f"{MINIMUM_STANDARD}/{rel}", _minimum_standard_json({**body, **stamped}))
 
 
 # --- The query index (#457) -------------------------------------------------------
@@ -889,6 +1276,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     # The layer is the whole directory, as knowledge-store-builder 0.18.0 names it:
     # the per-repository files are in its `by-repo/`, beside the registry.
     ("relationships", (RELATIONSHIPS,), "dir"),
+    ("minimum_standard", (MINIMUM_STANDARD,), "dir"),
     ("index", (INDEX_ARCHIVE, INDEX_PLAIN), "file"),
 )
 
@@ -1005,6 +1393,8 @@ def build(
     provenance_only: bool = False,
     relationships_format: dict | None = RELATIONSHIPS_FORMAT,
     tracker: bool = False,
+    minimum_standard: bool = False,
+    minimum_standard_format: dict | None = MINIMUM_STANDARD_FORMAT,
 ) -> Path:
     """Write the complete synthetic store at `root` and return it.
 
@@ -1019,7 +1409,9 @@ def build(
     (DESIGN.md 1.1). `relationships_format` is the registry's format stamp; None
     writes a registry without one, as a library before the stamp did (DESIGN.md
     5.7). `tracker` writes the ticket tracker layer (DESIGN.md 6.5), which the
-    default store does not hold. The manifest is written last, so its digests describe
+    default store does not hold. `minimum_standard` writes the minimum-standard layer
+    (DESIGN.md 11), which the default store does not hold either, with every file
+    stamped `minimum_standard_format`; None writes no stamp. The manifest is written last, so its digests describe
     the files as they finally are.
     """
     if index not in INDEX_MODES:
@@ -1058,6 +1450,8 @@ def build(
     _write(root, EXTRA_LAYERS_CONFIG, _library_json(EXTRA_LAYERS_DECLARED))
     _write(root, FAQ, _library_json(FAQ_DATA))
     _write_relationships(root, by_repo_only, relationships_format)
+    if minimum_standard:
+        _write_minimum_standard(root, minimum_standard_format)
     _write_index(root, graph, file_tickets, index)
 
     _write(root, MANIFEST, _sorted_json(manifest_document(root, manifest_minor, extra or {})))
