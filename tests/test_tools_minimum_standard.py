@@ -157,6 +157,56 @@ class ScopeTest(MinimumStandardTestCase):
         self.assertEqual(found["repositories"], [known("reporting-worker"), known("payments-api")])
         self.assertEqual(found["items"], [served("payments-api"), served("reporting-worker")])
 
+    def test_a_list_of_names_answers_as_the_same_names_comma_separated(self):
+        """Catches: a list read as one name, only its first element read, or its
+        names looked up in another order or form than the comma-separated text
+        that callers on v0.2.1 send."""
+        session = self.session()
+        names = ["reporting-worker", "payments-api", "payment-api"]
+        self.assertEqual(
+            tools_minimum_standard.minimum_standard(session, repos=names),
+            tools_minimum_standard.minimum_standard(session, repos=", ".join(names)),
+        )
+
+    def test_a_list_element_holding_a_comma_is_one_unknown_name_not_two(self):
+        """Catches: list elements split on commas as the text is, so a name that is
+        not a repository's is quietly read as two that are."""
+        found = tools_minimum_standard.minimum_standard(
+            self.session(), repos=["payments-api,ledger-service"]
+        )
+        self.assertEqual(len(found["repositories"]), 1)
+        self.assertNotEqual(found["repositories"][0].get("exact"), "payments-api")
+        self.assertEqual(found["items"], [])
+
+    def test_at_most_a_hundred_names_in_either_form(self):
+        """Catches: the name limit applied to the text and not the list (or the
+        reverse), or moved off by one for either."""
+        session = self.session()
+        allowed = [f"repo-{n}" for n in range(tools_minimum_standard.MAX_REPOS)]
+        too_many = [*allowed, "one-more"]
+        for repos in (allowed, ",".join(allowed)):
+            with self.subTest(allowed=type(repos)):
+                found = tools_minimum_standard.minimum_standard(session, repos=repos)
+                self.assertEqual(len(found["repositories"]), 100)
+        for repos in (too_many, ",".join(too_many)):
+            with self.subTest(too_many=type(repos)):
+                with self.assertRaisesRegex(ArgumentRefused, "at most 100 repositories"):
+                    tools_minimum_standard.minimum_standard(session, repos=repos)
+
+    def test_a_list_that_is_not_all_text_is_refused_naming_the_forms(self):
+        """Catches: a non-string element looked up as its text or dropped, or a
+        refusal that does not say what `repos` accepts."""
+        session = self.session()
+        cases: list[Any] = [["payments-api", 5], [None], [["payments-api"]], 5, {"a": 1}]
+        for repos in cases:
+            with self.subTest(repos=repos):
+                with self.assertRaisesRegex(
+                    ArgumentRefused,
+                    "^repos must be a list of repository names"
+                    r" \(a comma-separated string is also accepted\)$",
+                ):
+                    tools_minimum_standard.minimum_standard(session, repos=repos)
+
     def test_a_repository_in_the_estate_without_a_record_is_named_not_dropped(self):
         """Catches: a repository the layer holds no record for answered as an empty
         list with nothing to say why, which reads as "nothing to report"."""

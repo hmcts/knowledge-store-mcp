@@ -124,9 +124,27 @@ _DECIMAL = re.compile(r"-?\d+", re.ASCII)
 @dataclass(frozen=True)
 class Param:
     name: str
-    type: str  # "string", "integer" or "boolean"
+    type: str  # "string", "integer", "boolean" or "string_or_list"
     description: str
     required: bool = False
+
+    def schema(self) -> dict[str, Any]:
+        if self.type == "string_or_list":
+            # The array is the documented form; the string stays for callers on
+            # v0.2.1, which took comma-separated text only.
+            forms = [
+                {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "a list of repository names",
+                },
+                {
+                    "type": "string",
+                    "description": "a comma-separated string, accepted for compatibility",
+                },
+            ]
+            return {"anyOf": forms, "description": self.description}
+        return {"type": self.type, "description": self.description}
 
 
 @dataclass(frozen=True)
@@ -141,9 +159,7 @@ class ToolSpec:
     def schema(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "properties": {
-                p.name: {"type": p.type, "description": p.description} for p in self.params
-            },
+            "properties": {p.name: p.schema() for p in self.params},
             "required": [p.name for p in self.params if p.required],
             "additionalProperties": False,
         }
@@ -291,10 +307,15 @@ TOOLS: tuple[ToolSpec, ...] = (
         "Evidence against the GOV.UK minimum standard for publicly accessible systems: per "
         "repository, each point's state (present, absent, or not_determinable, which is "
         "not absent) with its cited evidence, `as_of` and `settings_read_at`. Scoped by "
-        "`repos`, a `pattern` or a declared `product`, else the whole layer; paged. Never "
-        "a pass, a score or an overall verdict.",
+        '`repos` (a list of repository names, e.g. ["repo-a", "repo-b"]; a '
+        "comma-separated string is still accepted), a `pattern` or a declared "
+        "`product`, else the whole layer; paged. Never a pass, a score or an overall verdict.",
         (
-            Param("repos", "string", "Repository names, separated by commas."),
+            Param(
+                "repos",
+                "string_or_list",
+                'Repository names, as a list: ["repo-a", "repo-b"].',
+            ),
             Param("pattern", "string", "A glob over repository names: * and ? are wildcards."),
             Param("product", "string", "A product the layer declares, by name."),
             CURSOR,
@@ -330,6 +351,16 @@ def _string(value: Any, name: str) -> str:
     return value
 
 
+def _string_or_list(value: Any, name: str) -> str | list[str]:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return value
+    raise ArgumentRefused(
+        f"{name} must be a list of repository names (a comma-separated string is also accepted)"
+    )
+
+
 def _integer(value: Any, name: str) -> int:
     if isinstance(value, str) and _DECIMAL.fullmatch(value):
         value = int(value)
@@ -348,6 +379,7 @@ def _boolean(value: Any, name: str) -> bool:
 
 _CONVERT: dict[str, Callable[[Any, str], Any]] = {
     "string": _string,
+    "string_or_list": _string_or_list,
     "integer": _integer,
     "boolean": _boolean,
 }

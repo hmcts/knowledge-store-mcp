@@ -206,10 +206,18 @@ def _notes(store: Store) -> list[str]:
 # --- Scopes -------------------------------------------------------------------------
 
 
-def _names(repos: str) -> list[str]:
-    """The names in a comma-separated `repos`, each bounded, once each, in order."""
-    text = _text(repos, "repos")
-    names = list(dict.fromkeys(part.strip() for part in text.split(",") if part.strip()))
+def _names(repos: str | list[str]) -> list[str]:
+    """The names in `repos`, a list of names or (for callers on v0.2.1) comma-separated
+    text, each bounded, once each, in order. Only the text is split on commas: a list's
+    elements are names as given, and one holding a comma is looked up as it stands."""
+    if isinstance(repos, str):
+        repos = _text(repos, "repos").split(",")
+    if not isinstance(repos, list) or not all(isinstance(item, str) for item in repos):
+        raise ArgumentRefused(
+            "repos must be a list of repository names (a comma-separated string is also accepted)"
+        )
+    texts = [_text(item, "repos") for item in repos]
+    names = list(dict.fromkeys(text.strip() for text in texts if text.strip()))
     if not names:
         raise ArgumentRefused("repos is empty: name at least one repository")
     if len(names) > MAX_REPOS:
@@ -281,7 +289,7 @@ def _scoped(
 
 def minimum_standard(
     session: Session,
-    repos: str | None = None,
+    repos: str | list[str] | None = None,
     pattern: str | None = None,
     product: str | None = None,
     cursor: str | None = None,
@@ -291,8 +299,8 @@ def minimum_standard(
     """Each repository's points against the minimum standard, with their evidence,
     `as_of` and `settings_read_at`, sorted by repository and paged under the cap.
 
-    Scoped by one of: `repos`, comma-separated names, each looked up as `find_repo`
-    looks it up; `pattern`, a glob (`*`, `?`) over the names the layer holds; or
+    Scoped by one of: `repos`, a list of names (or comma-separated text), each looked up
+    as `find_repo` looks it up; `pattern`, a glob (`*`, `?`) over the names the layer holds; or
     `product`, a name in the summary's `products` map. With none, the whole layer.
     An unknown repository or product is answered with its near misses and no
     record; a repository in scope with no record is named under `no_record`, and
