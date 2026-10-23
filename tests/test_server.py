@@ -172,6 +172,41 @@ class WireTypesTest(ServerTestCase):
                     "id must be a whole number from -2**63 to 2**63 - 1",
                 )
 
+    async def test_repos_given_as_a_list_is_answered_as_the_same_text(self):
+        """Catches: a list sent over the wire refused as not text, or converted to
+        something that answers differently from the comma-separated names."""
+        served = self.served(self.store(minimum_standard=True))
+        async with self.client(served) as client:
+            listed, listed_error, _ = await self.call(
+                client, "minimum_standard", {"repos": ["payments-api", "ledger-service"]}
+            )
+            text, text_error, _ = await self.call(
+                client, "minimum_standard", {"repos": "payments-api,ledger-service"}
+            )
+        self.assertFalse(listed_error, listed)
+        self.assertFalse(text_error, text)
+        self.assertEqual(listed, text)
+
+    async def test_repos_that_is_neither_text_nor_a_list_of_text_is_refused(self):
+        """Catches: a non-string element or another type reaching the lookup, or a
+        refusal that does not name the accepted forms."""
+        for value in (["payments-api", 5], 5, True, {"a": "b"}):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    await self.refused("minimum_standard", {"repos": value}),
+                    "repos must be a comma-separated string or a list of names",
+                )
+
+    def test_repos_declares_both_forms_in_its_schema(self):
+        """Catches: `repos` declared as text only, so a client validating against the
+        schema never sends the list, or as a list only, which refuses the text."""
+        properties = server.BY_NAME["minimum_standard"].schema()["properties"]
+        self.assertEqual(
+            properties["repos"]["anyOf"],
+            [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+        )
+        self.assertNotIn("type", properties["repos"])
+
     async def test_a_cursor_that_is_not_text_is_refused(self):
         """Catches: a numeric cursor passed to the pager, whose parser expects text."""
         self.assertEqual(

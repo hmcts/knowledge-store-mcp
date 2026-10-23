@@ -9,6 +9,8 @@ An MCP server that answers questions from a knowledge store on local disk.
 
 One server, one set of tools, wherever the question is asked. Each front door below launches the same stdio server against a local clone of the store, so an answer in Copilot and an answer in Claude Code come from the same thirteen read-only tools.
 
+A plural parameter takes either form: `minimum_standard`'s `repos` is a comma-separated string or a list of names, up to 100 either way.
+
 Every example launches the server with `uvx` at the `v0.1.0` release tag. That route is **confirmed**, decided on 2026-10-22; the spec's [Installation](docs/superpowers/specs/2026-10-20-knowledge-store-mcp-design.md#installation) section says what it needs and why it pins a tag. Replace `<id>` with the store's `store.id`. Askers need [`uv`](https://docs.astral.sh/uv/) installed; nothing else.
 
 `--store-id` finds the asker's clone through `~/.config/knowledge-store/locations`, which holds one absolute clone path per line. The `knowledge-store` skill writes that entry on first clone; anyone else adds the line by hand.

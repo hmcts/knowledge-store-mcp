@@ -96,7 +96,9 @@ class ToolsOverStdioTest(StdioTestCase):
                 self.assertEqual(list(schema["properties"]), names)
                 self.assertEqual(schema.get("required", []), required)
                 for spec in schema["properties"].values():
-                    self.assertIn(spec["type"], ("string", "integer", "boolean"))
+                    forms = spec["anyOf"] if "anyOf" in spec else [spec]
+                    for form in forms:
+                        self.assertIn(form["type"], ("string", "integer", "boolean", "array"))
                 assert tool.description is not None
                 self.assertTrue(tool.description.endswith(UNTRUSTED), tool.description)
                 assert tool.annotations is not None
