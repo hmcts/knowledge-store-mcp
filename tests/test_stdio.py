@@ -48,6 +48,7 @@ PARAMETERS = {
     "tickets": (["repo", "path", "cursor"], ["repo"]),
     "ticket": (["key", "cursor"], ["key"]),
     "answers": (["query", "limit", "cursor"], ["query"]),
+    "minimum_standard": (["repos", "pattern", "product", "cursor"], []),
 }
 
 # How long a child may take to answer everything before the test gives up on it.
@@ -504,6 +505,20 @@ class InstructionsTest(StdioTestCase):
                 self.assertIn(fragment, text)
         # Tracker text is written prose: it must never be listed as mechanical.
         self.assertNotIn("relationships, tickets)", text)
+
+    def test_the_instructions_keep_minimum_standard_evidence_per_point_and_dated(self):
+        """Catches: the minimum-standard rule (#21) dropped, so an assistant sums the
+        evidence into "compliant", reads not_determinable as absent, or presents a
+        record as true of today."""
+        text = " ".join(server.INSTRUCTIONS.split())
+        for fragment in (
+            "Report minimum-standard evidence per point",
+            "never summarise it as compliant, passing or scored",
+            "`not_determinable` is not `absent`",
+            "Present it as of its `as_of`, a point in time.",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, text)
 
     def test_the_instructions_fit_where_claude_code_cuts_them(self):
         """Catches: guidance grown past 4,096 characters, where Claude Code cuts

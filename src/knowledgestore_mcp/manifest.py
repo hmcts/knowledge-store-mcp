@@ -31,6 +31,7 @@ KNOWN_LAYERS = (
     "semantic",
     "explorer",
     "relationships",
+    "minimum_standard",
     "index",
     "deployments",
 )

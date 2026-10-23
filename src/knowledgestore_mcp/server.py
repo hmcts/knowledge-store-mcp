@@ -46,7 +46,14 @@ from mcp_types import (
     ToolAnnotations,
 )
 
-from . import __version__, results, tools_graph, tools_relationships, tools_tickets
+from . import (
+    __version__,
+    results,
+    tools_graph,
+    tools_minimum_standard,
+    tools_relationships,
+    tools_tickets,
+)
 from .graph import GraphRefused
 from .locate import AmbiguousStoreId, NotFound, OutsideStore
 from .manifest import NoManifest, Refused
@@ -98,6 +105,9 @@ community; a tracker record's `as_of` is when it was last checked), such as \
 "analysis as of <date>", and an entry whose `as_of` is null as undated. When a \
 mechanical layer contradicts written analysis, say so: the mechanical layer wins \
 and the analysis is stale.
+- Report minimum-standard evidence per point, with its state and citations; never \
+summarise it as compliant, passing or scored. `not_determinable` is not `absent`. \
+Present it as of its `as_of`, a point in time.
 - Say how current the store is: give its `sources_as_of`, from any result's \
 `store`, or `stale_days` from `store_info`.
 """
@@ -272,6 +282,21 @@ TOOLS: tuple[ToolSpec, ...] = (
         (
             Param("query", "string", "What the answer is about.", required=True),
             Param("limit", "integer", "How many of the best matches to return; default 10."),
+            CURSOR,
+        ),
+    ),
+    ToolSpec(
+        "minimum_standard",
+        tools_minimum_standard.minimum_standard,
+        "Evidence against the GOV.UK minimum standard for publicly accessible systems: per "
+        "repository, each point's state (present, absent, or not_determinable, which is "
+        "not absent) with its cited evidence, `as_of` and `settings_read_at`. Scoped by "
+        "`repos`, a `pattern` or a declared `product`, else the whole layer; paged. Never "
+        "a pass, a score or an overall verdict.",
+        (
+            Param("repos", "string", "Repository names, separated by commas."),
+            Param("pattern", "string", "A glob over repository names: * and ? are wildcards."),
+            Param("product", "string", "A product the layer declares, by name."),
             CURSOR,
         ),
     ),
