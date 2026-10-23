@@ -194,16 +194,29 @@ class WireTypesTest(ServerTestCase):
             with self.subTest(value=value):
                 self.assertEqual(
                     await self.refused("minimum_standard", {"repos": value}),
-                    "repos must be a comma-separated string or a list of names",
+                    "repos must be a list of repository names (a comma-separated string is also accepted)",
                 )
+
+    def test_repos_schema_lists_the_array_first_and_the_string_as_compatibility(self):
+        """Catches: the string offered ahead of the array, so a client choosing the
+        first branch sends the form that is only kept for v0.2.1 callers."""
+        forms = server.BY_NAME["minimum_standard"].schema()["properties"]["repos"]["anyOf"]
+        self.assertEqual([form["type"] for form in forms], ["array", "string"])
+        self.assertEqual(forms[0]["description"], "a list of repository names")
+        self.assertEqual(
+            forms[1]["description"], "a comma-separated string, accepted for compatibility"
+        )
 
     def test_repos_declares_both_forms_in_its_schema(self):
         """Catches: `repos` declared as text only, so a client validating against the
         schema never sends the list, or as a list only, which refuses the text."""
         properties = server.BY_NAME["minimum_standard"].schema()["properties"]
         self.assertEqual(
-            properties["repos"]["anyOf"],
-            [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+            [
+                {k: v for k, v in form.items() if k != "description"}
+                for form in properties["repos"]["anyOf"]
+            ],
+            [{"type": "array", "items": {"type": "string"}}, {"type": "string"}],
         )
         self.assertNotIn("type", properties["repos"])
 

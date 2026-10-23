@@ -159,13 +159,24 @@ class ScopeTest(MinimumStandardTestCase):
 
     def test_a_list_of_names_answers_as_the_same_names_comma_separated(self):
         """Catches: a list read as one name, only its first element read, or its
-        names looked up in another order or form than the comma-separated text."""
+        names looked up in another order or form than the comma-separated text
+        that callers on v0.2.1 send."""
         session = self.session()
         names = ["reporting-worker", "payments-api", "payment-api"]
         self.assertEqual(
             tools_minimum_standard.minimum_standard(session, repos=names),
             tools_minimum_standard.minimum_standard(session, repos=", ".join(names)),
         )
+
+    def test_a_list_element_holding_a_comma_is_one_unknown_name_not_two(self):
+        """Catches: list elements split on commas as the text is, so a name that is
+        not a repository's is quietly read as two that are."""
+        found = tools_minimum_standard.minimum_standard(
+            self.session(), repos=["payments-api,ledger-service"]
+        )
+        self.assertEqual(len(found["repositories"]), 1)
+        self.assertNotEqual(found["repositories"][0].get("exact"), "payments-api")
+        self.assertEqual(found["items"], [])
 
     def test_at_most_a_hundred_names_in_either_form(self):
         """Catches: the name limit applied to the text and not the list (or the
@@ -191,7 +202,8 @@ class ScopeTest(MinimumStandardTestCase):
             with self.subTest(repos=repos):
                 with self.assertRaisesRegex(
                     ArgumentRefused,
-                    "^repos must be a comma-separated string or a list of names$",
+                    "^repos must be a list of repository names"
+                    r" \(a comma-separated string is also accepted\)$",
                 ):
                     tools_minimum_standard.minimum_standard(session, repos=repos)
 
