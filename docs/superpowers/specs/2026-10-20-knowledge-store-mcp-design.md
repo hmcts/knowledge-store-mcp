@@ -22,7 +22,7 @@ Agents answering from a store make five recurring mistakes:
 
 1. **Separate repository** from `knowledge-store-builder`, because the server has its own dependencies (the MCP SDK), threat model and release cycle.
 2. **Stdio only in version 1.** It covers Claude Code and Claude Desktop, plugins on hosted agent platforms, and Claude Agent SDK applications. The HTTP transport and its authentication are deferred.
-3. **Read-only, one store per process,** resolved once at start-up (see *Configuration*).
+3. **Read-only, one store per process,** resolved at start-up, and looked for again on each call while none is found (see *Configuration* and *Start-up*).
 
 
 ## What the server depends on
@@ -49,7 +49,7 @@ The server needs exactly one store, and it finds the store in this order. The fi
 | 3 | `--store-id ID`, looked up in `~/.config/knowledge-store/locations` | a plugin. That file is the list of clone paths the library's `knowledge-store` skill records on first clone, and the server takes the entry whose manifest has `store.id = ID` |
 | 4 | `${CLAUDE_PLUGIN_ROOT}`, when it contains a store | a plugin that ships the store inside itself |
 
-If none resolves, the server refuses to start and names each place it checked. A store's plugin declares a fixed entry, and every asker's own clone is then found by ID. The entry launches the server itself, as *Installation* describes:
+If none resolves, the server still starts and every tool call refuses, as *Start-up* describes, naming each place it checked. A store's plugin declares a fixed entry, and every asker's own clone is then found by ID. The entry launches the server itself, as *Installation* describes:
 
 ```json
 { "mcpServers": { "knowledge-store": {
@@ -89,13 +89,36 @@ Installing a plugin puts no command on the asker's machine, so the client config
 `knowledge-store-mcp --store PATH` starts the server:
 1. **Resolve the store root** in the order under *Configuration*. Every later path is checked against it after `realpath`, so symlinks and `..` can't escape.
 2. **Read the manifest.**
-   - A missing manifest, or an unknown **major** version, refuses to start, naming the version found and the versions supported.
+   - A missing manifest does not stop the server: see *A store that is not there yet* below.
+   - An unknown **major** version, or a manifest that cannot be read, refuses to start, naming the version found and the versions supported.
    - A newer **minor** version starts, and reports the unknown layers as present but unread.
    - **A layer that carries its own format stamp** (the relationships layer's `format` in `repository-dependencies.json`, the index's `index_schema`) is checked on first use. A missing stamp, another layer name or an unsupported major makes the layer **present but unrecognised**: it is never read, and never parsed on a best-effort basis. The relationships layer is also unrecognised when it is stamped but holds no per-repository files: the manifest may name the layer directory (the server reads `by-repo/` inside it) or `by-repo/` itself, and zero files there means a layout the server cannot read, not an empty estate.
 3. **Open the query index read-only,** and read other layers lazily on first use. The server never parses the whole graph into memory when the index is present. Without the index, it falls back to the graph and says so in `store_info`.
    - The store commits the index gzipped, and SQLite cannot open a compressed file. On first use the server decompresses it to `${XDG_CACHE_HOME:-~/.cache}/knowledge-store/<store.id>/<sha256 of the .gz>.sqlite`, then opens that file read-only.
    - The key is the archive's hash, so a rebuilt store gets a new cache entry rather than a stale one. The server removes its other entries for that store id.
    - This cache is the server's only write. It is outside the store, and a failure to write it falls back to the graph, never to a partial file.
+
+#### A store that is not there yet
+
+A client that launches the server shows an exit as "failed to start" and nothing more, so the asker never learns that the clone is not registered or not pulled. The conditions below are therefore **not** start-up failures. The server starts, completes `initialize` and lists its tools, and every tool call, `store_info` included, returns one error result of type `store_unavailable`:
+
+| Condition | `cause` |
+|---|---|
+| a `--store-id` that no clone in the locations file carries | `no_registered_clone` |
+| a resolved root with no `knowledge/store-manifest.json` (a clone not yet pulled) | `no_manifest` |
+| no `--store-id`, `--store`, or store path was given at all | `other` |
+
+The result carries `message`, `cause`, `checked` (the locations file, written `~/.config/knowledge-store/locations` rather than as an absolute path, and whether `KNOWLEDGE_STORE_PATH` is set) and `fix`: register the clone, pull it, then reconnect. No host path is named, as under *Security*.
+
+Resolution runs again on each call, so a clone registered, or a manifest pulled, after start is answered from on the next call without a restart. Once a store is open, the existing reload rules apply to it.
+
+**What still exits with status 2, and why.** These are configuration that no pull or registration cures, and a refusal on every call would only hide them:
+- a `--store-id` that cannot be a store id (it must be one plain path component, as the cache directory name requires), because no clone registered later could carry it;
+- two clones in the locations file carrying the same `store.id`;
+- a manifest that is present but unusable: an unsupported major version, unreadable JSON, no `store.id`, or a layer path that leaves the store;
+- a `--max-response-bytes` that is not a positive whole number.
+
+The line between the two is whether waiting could fix it. An *unregistered* id is waiting; a *malformed* id is a typo.
 
 ### Tools
 

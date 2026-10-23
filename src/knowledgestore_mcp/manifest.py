@@ -48,6 +48,12 @@ class Refused(Exception):
         )
 
 
+class NoManifest(Refused):
+    """The root holds no manifest: a clone not yet pulled, or not a store. Kept apart
+    from the other refusals because it can be put right by pulling, so a server that
+    is already running reports it rather than exiting."""
+
+
 def unrecognised(layer: str, found: str, supported: tuple[int, ...]) -> str:
     """Why a layer that carries its own format stamp is present but not read: `found`
     is this server's own description of the stamp, never text quoted from it."""
@@ -101,7 +107,7 @@ def load(root: Path) -> Manifest:
             SUPPORTED_MAJORS,
         ) from None
     if not path.is_file():
-        raise Refused(f"no {MANIFEST.as_posix()} under {root}", SUPPORTED_MAJORS)
+        raise NoManifest(f"no {MANIFEST.as_posix()} under {root}", SUPPORTED_MAJORS)
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:

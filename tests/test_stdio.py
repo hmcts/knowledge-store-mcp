@@ -298,26 +298,27 @@ class StartUpRefusalTest(StdioTestCase):
             timeout=TIMEOUT,
         )
 
-    def test_no_store_found_exits_2_and_writes_nothing_to_stdout(self):
-        """Catches: an unresolved store started anyway, a refusal written to stdout
-        (the protocol channel), or a zero exit a client reads as a clean stop."""
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if k not in ("KNOWLEDGE_STORE_PATH", "CLAUDE_PLUGIN_ROOT")
-        }
-        result = subprocess.run(
-            [str(SCRIPT)],
-            capture_output=True,
-            text=True,
-            check=False,
-            env={**env, **self.env},
-            stdin=subprocess.DEVNULL,
-            timeout=TIMEOUT,
-        )
+    def test_a_garbled_store_id_exits_2_and_writes_nothing_to_stdout(self):
+        """Catches: a store id no clone could ever carry served as "not registered
+        yet", so a typo in the plugin's configuration waits forever instead of
+        failing where the operator is looking."""
+        result = self.run_script("--store-id", "../not an id")
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
-        self.assertIn("no knowledge store found", result.stderr)
+        self.assertIn("cannot be a store id", result.stderr)
+
+    def test_two_clones_with_one_store_id_exit_2(self):
+        """Catches: an ambiguous locations file treated as "not there yet", which a
+        pull cannot cure and a refusal on every call would hide."""
+        second = build(self.tmp / "second")
+        listing = self.tmp / "home" / ".config" / "knowledge-store" / "locations"
+        listing.parent.mkdir(parents=True)
+        listing.write_text(f"{self.root}\n{second}\n", encoding="utf-8")
+        store_id = json.loads((self.root / MANIFEST).read_text(encoding="utf-8"))["store"]["id"]
+        result = self.run_script("--store-id", store_id)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("more than one clone", result.stderr)
 
     def test_an_unsupported_manifest_exits_2_naming_the_version(self):
         """Catches: a newer major version served, or refused without saying which
@@ -337,6 +338,112 @@ class StartUpRefusalTest(StdioTestCase):
         result = self.run_script("--store", str(self.root), "--max-response-bytes", "0")
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
+
+
+class StoreNotYetAvailableTest(StdioTestCase):
+    """A store that is not there yet is reported on every call, not by exiting."""
+
+    def setUp(self):
+        super().setUp()
+        self.store_id = json.loads((self.root / MANIFEST).read_text(encoding="utf-8"))["store"][
+            "id"
+        ]
+        self.locations = self.tmp / "home" / ".config" / "knowledge-store" / "locations"
+
+    def register(self, clone: Path) -> None:
+        self.locations.parent.mkdir(parents=True, exist_ok=True)
+        self.locations.write_text(f"{clone}\n", encoding="utf-8")
+
+    def run_with(self, args: list[str], body):
+        async def main():
+            params = StdioServerParameters(command=str(SCRIPT), args=args, env=self.env)
+            # Entering the client is the initialize handshake: it raises if the
+            # server exited instead.
+            async with Client(params) as client:
+                return await body(client)
+
+        return asyncio.run(main())
+
+    @staticmethod
+    async def call(client, tool: str = "store_info") -> tuple[dict, bool | None]:
+        result = await client.call_tool(tool, {})
+        block = result.content[0]
+        assert isinstance(block, TextContent)
+        return json.loads(block.text), result.is_error
+
+    def assertRefusal(self, answer: dict, is_error, cause: str) -> dict:
+        self.assertTrue(is_error, answer)
+        refusal = answer["error"]
+        self.assertEqual(refusal["type"], "store_unavailable")
+        self.assertEqual(refusal["cause"], cause)
+        # Where it looked: the locations file and the environment variable, by name.
+        self.assertIn("locations", refusal["checked"]["locations_file"])
+        self.assertIn("KNOWLEDGE_STORE_PATH", refusal["checked"])
+        # The fix, in the order the asker does it.
+        for step in ("Register the clone", "pull it", "reconnect"):
+            self.assertIn(step, refusal["fix"])
+        # No host path goes to a client (SECURITY.md).
+        self.assertNotIn(str(self.tmp), json.dumps(answer))
+        return refusal
+
+    def test_with_no_registered_clone_the_server_starts_and_every_call_says_why(self):
+        """Catches: the server exiting when no clone is registered, so a client
+        shows "failed to start" and the asker never learns the cause or the fix; or
+        a refusal that omits the cause, the places looked, or the fix."""
+
+        async def body(client):
+            return [await self.call(client, tool) for tool in ("store_info", "search", "answers")]
+
+        for answer, is_error in self.run_with(["--store-id", self.store_id], body):
+            refusal = self.assertRefusal(answer, is_error, "no_registered_clone")
+            self.assertIn(self.store_id, refusal["message"])
+
+    def test_a_clone_registered_mid_session_is_answered_from_on_the_next_call(self):
+        """Catches: resolution tried only at start-up, so a clone registered after
+        start needs a restart; or a refusal that sticks once the store appears."""
+
+        async def body(client):
+            before = await self.call(client)
+            self.register(self.root)
+            after = await self.call(client)
+            return before, after
+
+        before, after = self.run_with(["--store-id", self.store_id], body)
+        self.assertRefusal(*before, "no_registered_clone")
+        answer, is_error = after
+        self.assertFalse(is_error, answer)
+        self.assertEqual(answer["store"]["id"], self.store_id)
+
+    def test_a_clone_with_no_manifest_is_refused_naming_that_cause(self):
+        """Catches: a clone that is registered but not pulled reported as "no
+        registered clone", sending the asker to register what is already
+        registered; and a manifest pulled later not being picked up."""
+        clone = self.tmp / "unpulled"
+        clone.mkdir()
+
+        async def body(client):
+            before = await self.call(client)
+            build(clone)
+            after = await self.call(client)
+            return before, after
+
+        before, after = self.run_with(["--store", str(clone)], body)
+        refusal = self.assertRefusal(*before, "no_manifest")
+        self.assertIn("store-manifest.json", refusal["message"])
+        answer, is_error = after
+        self.assertFalse(is_error, answer)
+        self.assertEqual(answer["store"]["id"], self.store_id)
+
+    def test_with_nothing_configured_the_cause_is_other(self):
+        """Catches: no configuration at all reported as a missing clone for an id
+        nobody gave."""
+
+        async def body(client):
+            return await self.call(client)
+
+        answer, is_error = self.run_with([], body)
+        refusal = self.assertRefusal(answer, is_error, "other")
+        self.assertNotIn("registered clone has store id", refusal["message"])
 
 
 class InstructionsTest(StdioTestCase):

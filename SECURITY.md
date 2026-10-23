@@ -75,6 +75,9 @@ An error result has one shape:
 - `graph_refused`, `outside_store` and `store_unreadable`: the store failed the
   call;
 - `store_refused`: the store cannot be served;
+- `store_unavailable`: no store is there yet (a clone not registered, or not
+  pulled). It also carries `cause`, `checked` and `fix`; the places checked are
+  named with `~`, never as absolute paths;
 - `internal`: an unexpected failure.
 
 A call to a tool that does not exist is not a failed call. It is answered with a
@@ -121,8 +124,10 @@ re-serves only what the store committed.
 ## stdout is the protocol channel
 
 Nothing but JSON-RPC is written to stdout. Logging goes to stderr. A store that
-cannot be served is reported on stderr with exit status 2, before anything is
-served (`tests/test_stdio.py`).
+cannot be served because its configuration is wrong is reported on stderr with
+exit status 2, before anything is served. A store that is not there yet (no
+registered clone, or no manifest) is not: the server starts and every call
+refuses with `store_unavailable` (`tests/test_stdio.py`).
 
 **Known limit.** The SDK's stdio reader (`mcp` 2.3.0) drops an input line it
 cannot parse as JSON-RPC without answering it. That includes a line holding a lone

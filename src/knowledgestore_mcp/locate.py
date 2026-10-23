@@ -7,11 +7,15 @@ outside the clone.
 
 import argparse
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 MANIFEST = Path("knowledge") / "store-manifest.json"
+
+# `store.id` becomes one directory name, so it must be one plain path component.
+STORE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 SOURCES = ("--store", "KNOWLEDGE_STORE_PATH", "--store-id", "CLAUDE_PLUGIN_ROOT")
 

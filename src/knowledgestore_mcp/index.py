@@ -29,7 +29,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from .locate import OutsideStore, contained
+from .locate import STORE_ID, OutsideStore, contained
 from .manifest import Manifest, unrecognised
 
 INDEX_PLAIN = Path("knowledge") / "index" / "store.sqlite"
@@ -65,9 +65,6 @@ _VERIFIED: set[tuple[str, int, int]] = set()
 
 # What a temp file's name holds, for an entry and for its digest.
 _TEMP_MARKERS = (".sqlite.tmp-", ".sqlite.sha256.tmp-")
-
-# `store.id` becomes one directory name, so it must be one plain path component.
-_SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 @dataclass(frozen=True)
@@ -141,7 +138,7 @@ def open_index(
             return _connect(plain, INDEX_PLAIN.as_posix(), immutable=False)
         return Fallback(f"no index in the store ({INDEX_ARCHIVE.as_posix()} or {INDEX_PLAIN.name})")
 
-    if not _SAFE_ID.fullmatch(manifest.store_id):
+    if not STORE_ID.fullmatch(manifest.store_id):
         return Fallback(f"store.id {manifest.store_id!r} cannot name a cache directory")
     directory = cache_home / "knowledge-store" / manifest.store_id
     resolved = directory.resolve()

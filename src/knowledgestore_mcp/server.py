@@ -49,10 +49,11 @@ from mcp_types import (
 from . import __version__, results, tools_graph, tools_relationships, tools_tickets
 from .graph import GraphRefused
 from .locate import AmbiguousStoreId, NotFound, OutsideStore
-from .manifest import Refused
+from .manifest import NoManifest, Refused
 from .results import CursorRefused, LayerUnrecognised
 from .store import Session, open_store
 from .tools_graph import INT64, ArgumentRefused
+from .unavailable import NOT_YET, StoreUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -393,24 +394,37 @@ def _now() -> datetime:
 
 
 class KnowledgeStoreServer:
-    """One store, served. The store is opened here, on the thread every call runs
-    on; `Refused` from opening it propagates, before anything is served."""
+    """One store, served. The store is opened on the thread every call runs on.
+
+    Given a `root`, it is opened here and `Refused` from opening it propagates,
+    before anything is served. Given `root=None` with a `resolve` and an `explain`,
+    the server starts with no store: every call then looks for one again, answers
+    from it once there is one, and until then refuses with `explain`'s
+    `StoreUnavailable`. `resolve` returns the root; `explain` turns a `NotFound` or
+    `NoManifest` into the refusal.
+    """
 
     def __init__(
         self,
-        root: Path,
+        root: Path | None,
         cache_home: Path,
         *,
         max_response_bytes: int = results.DEFAULT_MAX_RESPONSE_BYTES,
         clock: Callable[[], datetime] = _now,
+        resolve: Callable[[], Path] | None = None,
+        explain: Callable[[NotFound | NoManifest], StoreUnavailable] | None = None,
     ):
         self.cap = max_response_bytes
+        self._cache_home = cache_home
+        self._clock = clock
+        self._resolve = resolve
+        self._explain = explain
+        self._session: Session | None = None
         # One worker: the thread that opens the store is the only one that reads it.
         self._thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix=NAME)
         try:
-            self._session = self._thread.submit(
-                Session, lambda: open_store(root, cache_home), clock
-            ).result()
+            if root is not None:
+                self._session = self._thread.submit(self._open, root).result()
         except BaseException:
             self._thread.shutdown()
             raise
@@ -441,17 +455,37 @@ class KnowledgeStoreServer:
         text, is_error = await asyncio.wrap_future(future)
         return CallToolResult(content=[TextContent(text=text)], is_error=is_error)
 
+    def _open(self, root: Path) -> Session:
+        return Session(lambda: open_store(root, self._cache_home), self._clock)
+
+    def _session_now(self) -> Session:
+        """The session, opened now if no call has found a store yet. Raises
+        `StoreUnavailable` while there is none to find."""
+        if self._session is not None:
+            return self._session
+        if self._resolve is None or self._explain is None:
+            raise RuntimeError("a server without a store needs resolve and explain")
+        try:
+            self._session = self._open(self._resolve())
+        except NOT_YET as reason:
+            raise self._explain(reason) from None
+        return self._session
+
     def _call(self, name: str, arguments: dict[str, Any] | None) -> tuple[str, bool]:
         """One call to a listed tool, on the store's thread: the text to send, and
         whether it is an error result. Nothing raised escapes: every failure is an
         error result."""
         spec = BY_NAME[name]
         try:
+            session = self._session_now()
             keywords = convert(spec, arguments)
             if spec.paged:
                 keywords["cap_bytes"] = self.cap
-            answer = spec.function(self._session, **keywords)
+            answer = spec.function(session, **keywords)
             return results.encode(answer).decode("utf-8"), False
+        except StoreUnavailable as unavailable:
+            # Every word of it is this server's own, and it names no host path.
+            return results.encode(unavailable.result()).decode("utf-8"), True
         except Exception as exception:
             kind, message = error(exception)
             if kind == "internal":
@@ -466,7 +500,8 @@ class KnowledgeStoreServer:
 
     def close(self) -> None:
         def close_store() -> None:
-            self._session.current()[0].close()
+            if self._session is not None:
+                self._session.current()[0].close()
 
         try:
             self._thread.submit(close_store).result()
