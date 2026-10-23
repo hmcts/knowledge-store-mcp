@@ -153,6 +153,20 @@ Two routes are possible later.
   The store's owner confirms all three for the store's classification, and names who approves them, before the route is enabled for that store.
 - **Who may ask.** The Entra group allowed to ask should match the people who can read the store's repository on GitHub. A wider group would widen access to the store.
 
+## Troubleshooting
+
+**Every tool answers `store_unavailable`.** The server is running but has no store to answer from. The result's `cause` says why, and its `fix` says what to do:
+
+| `cause` | What it means | What to do |
+|---|---|---|
+| `no_registered_clone` | no clone in `~/.config/knowledge-store/locations` carries the `--store-id` | clone the store and add its absolute path as a line in that file (the `knowledge-store` skill does this on first clone), then reconnect the server |
+| `no_manifest` | the clone is found but has no `knowledge/store-manifest.json` | pull the clone, or clone it again if the pull is not enough, then reconnect the server |
+| `other` | no `--store-id`, `--store` or `KNOWLEDGE_STORE_PATH` was given | add `--store-id <id>` to the server's arguments, or set `KNOWLEDGE_STORE_PATH` |
+
+The server looks again on every call, so a clone registered or pulled after the client started is picked up on the next question. Reconnecting is only needed if it is not.
+
+**The server fails to start.** Only a wrong configuration stops it, and its reason is on stderr (exit status 2): a `--store-id` that is not a valid id, two clones in the locations file with the same `store.id`, a manifest in a format major version this server does not read, or a layer that points outside the store. Fix the configuration; waiting or pulling will not help.
+
 ## How the model is told to answer
 
 **The rules travel with the server, not with each front door.** The server is to send its answering guidance in the `instructions` field of its MCP `initialize` result. A client that honours the field hands it to the model, so no copy is kept in a skill, in `.github/copilot-instructions.md` or in a system prompt, and no copy drifts.

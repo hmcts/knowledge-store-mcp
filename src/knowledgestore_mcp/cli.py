@@ -3,6 +3,11 @@
 stdout is the protocol channel from the first byte, so nothing else is ever
 written there: logging goes to stderr, and a store that cannot be served is
 reported on stderr with exit status 2, before the server starts.
+
+The exception is a store that is not there yet: no registered clone for the store
+id, or a clone with no manifest. The server then starts, and every call refuses
+with the cause and the fix (`unavailable`), looking again each time, so a client
+that shows only "failed to start" for an exit still tells the asker what to do.
 """
 
 import argparse
@@ -13,10 +18,11 @@ import sys
 from pathlib import Path
 
 from . import __version__, index, locate
-from .locate import AmbiguousStoreId, NotFound
-from .manifest import Refused
+from .locate import STORE_ID, AmbiguousStoreId, NotFound
+from .manifest import NoManifest, Refused
 from .results import DEFAULT_MAX_RESPONSE_BYTES
 from .server import INSTRUCTIONS, KnowledgeStoreServer
+from .unavailable import explain
 
 # The exit status of a store that cannot be served, as argparse uses for bad usage.
 REFUSED = 2
@@ -67,15 +73,35 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
-    home = Path.home()
-    try:
-        resolved = locate.resolve(args, os.environ, home)
-        served = KnowledgeStoreServer(
-            resolved.root,
-            index.cache_home(os.environ, home),
-            max_response_bytes=args.max_response_bytes,
+    if args.store_id is not None and not STORE_ID.fullmatch(args.store_id):
+        # No store has an id like this, so no clone registered later could answer to it.
+        print(
+            f"knowledge-store-mcp: --store-id {args.store_id!r} cannot be a store id",
+            file=sys.stderr,
         )
-    except (NotFound, AmbiguousStoreId, Refused) as refusal:
+        return REFUSED
+
+    home = Path.home()
+    cache = index.cache_home(os.environ, home)
+
+    def resolve() -> Path:
+        return locate.resolve(args, os.environ, home).root
+
+    try:
+        served = KnowledgeStoreServer(resolve(), cache, max_response_bytes=args.max_response_bytes)
+    except (NotFound, NoManifest) as absent:
+        # Not there yet: serve, and tell the asker on every call (see `unavailable`).
+        print(
+            f"knowledge-store-mcp: {absent}; serving a refusal until it is found", file=sys.stderr
+        )
+        served = KnowledgeStoreServer(
+            None,
+            cache,
+            max_response_bytes=args.max_response_bytes,
+            resolve=resolve,
+            explain=lambda reason: explain(reason, args, os.environ),
+        )
+    except (AmbiguousStoreId, Refused) as refusal:
         print(f"knowledge-store-mcp: {refusal}", file=sys.stderr)
         return REFUSED
     try:
