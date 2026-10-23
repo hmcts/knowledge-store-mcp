@@ -6,6 +6,8 @@
 - `relationships_unrecognised` checks the relationships registry's format stamp
   on first use: a layer without one this server reads is present but
   unrecognised, never read, and refused by every tool that needs it.
+  `minimum_standard_unrecognised` does the same for the minimum-standard layer's
+  summary.
 - `repository` is the three-way answer for a repository name: in the estate, not
   in the estate (with near misses), or referenced by the estate but not held.
   The estate is every repository the index lists, provenance records, or the
@@ -73,6 +75,15 @@ INDEX_UNRECOGNISED = "present but format unrecognised: graph read whole"
 # written as the registry's top-level `"format": {"layer", "major", "minor"}`.
 RELATIONSHIPS = "relationships"
 RELATIONSHIPS_MAJORS = (1,)
+
+# The minimum-standard layer, at the library's fixed layout. Its stamp is the
+# summary's top-level `"format": {"layer", "major", "minor"}`. Source: FORMAT and
+# LAYER in knowledge-store-builder src/knowledgestore/minimum_standard.py, and
+# MINIMUM_STANDARD_STAMP in its store_manifest.py.
+MINIMUM_STANDARD = "minimum_standard"
+MINIMUM_STANDARD_MAJORS = (1,)
+MINIMUM_STANDARD_DIR = Path("knowledge") / "minimum-standard"
+MINIMUM_STANDARD_SUMMARY = MINIMUM_STANDARD_DIR / "summary.json"
 
 
 # A lone UTF-16 surrogate, which `json.loads` accepts from `"\\ud800"` but UTF-8
@@ -190,30 +201,65 @@ def _stamp_found(store: Store) -> str | None:
 
 
 def _relationships_stamp_found(store: Store) -> str | None:
-    """None for a stamp this server reads; otherwise what was found, in this
-    server's own words. Only a layer name that is a plain identifier, and integers,
-    are quoted."""
-    path = contained(store.root, REGISTRY)
+    return _stamp_found_in(store, REGISTRY, "registry", RELATIONSHIPS, RELATIONSHIPS_MAJORS)
+
+
+def _stamp_found_in(
+    store: Store, rel: Path, what: str, layer_name: str, majors: tuple[int, ...]
+) -> str | None:
+    """None when the file at `rel`, the layer's `what`, carries a stamp for
+    `layer_name` at one of `majors`; otherwise what was found, in this server's own
+    words. Only a layer name that is a plain identifier, and integers, are quoted."""
+    path = contained(store.root, rel)
     if not path.is_file():
         return "none"
     try:
         document = json.loads(path.read_bytes())
     except ValueError:
-        return "a registry that is not JSON"
+        return f"a {what} that is not JSON"
+    return stamp_found(document, layer_name, majors)
+
+
+def stamp_found(document: Any, layer_name: str, majors: tuple[int, ...]) -> str | None:
+    """None when `document` carries a top-level stamp for `layer_name` at one of
+    `majors`; otherwise what was found, in this server's own words."""
     stamp = document.get("format") if isinstance(document, dict) else None
     if not isinstance(stamp, dict):
         return "none"
     layer, major, minor = stamp.get("layer"), stamp.get("major"), stamp.get("minor")
-    if layer != RELATIONSHIPS:
+    if layer != layer_name:
         if isinstance(layer, str) and _LAYER_NAME.fullmatch(layer):
             return f"a stamp for the {layer} layer"
         return "a stamp for another layer"
     if isinstance(major, bool) or not isinstance(major, int):
         return "a stamp with no integer major"
-    if major in RELATIONSHIPS_MAJORS:
+    if major in majors:
         return None
     shown = minor if isinstance(minor, int) and not isinstance(minor, bool) else "x"
     return f"{major}.{shown}"
+
+
+def minimum_standard_unrecognised(store: Store) -> str | None:
+    """Why the minimum-standard layer is present but not read, or None when it is
+    absent or readable: its summary's stamp, checked once per loaded store, before
+    anything else in the layer is read."""
+    if not _present(store, MINIMUM_STANDARD):
+        return None
+
+    def check() -> str | None:
+        found = _stamp_found_in(
+            store, MINIMUM_STANDARD_SUMMARY, "summary", MINIMUM_STANDARD, MINIMUM_STANDARD_MAJORS
+        )
+        if found is None:
+            return None
+        return unrecognised(MINIMUM_STANDARD, found, MINIMUM_STANDARD_MAJORS)
+
+    return store.memo("minimum_standard.unrecognised", check)
+
+
+def minimum_standard_readable(store: Store) -> bool:
+    """The minimum-standard layer is present and in a format this server reads."""
+    return _present(store, MINIMUM_STANDARD) and minimum_standard_unrecognised(store) is None
 
 
 def relationships_readable(store: Store) -> bool:
@@ -237,6 +283,9 @@ def unrecognised_layers(store: Store) -> dict[str, str]:
     reason = relationships_unrecognised(store)
     if reason is not None:
         found[RELATIONSHIPS] = reason
+    reason = minimum_standard_unrecognised(store)
+    if reason is not None:
+        found[MINIMUM_STANDARD] = reason
     return found
 
 
@@ -332,7 +381,7 @@ def _list_by_repo(store: Store) -> ByRepo:
             continue
         if not directory.is_dir():
             continue
-        files, outside = _by_repo_directory(store, directory)
+        files, outside = by_repo_directory(store, directory)
         return ByRepo(files, skipped + outside)
     return ByRepo({}, skipped)
 
@@ -344,7 +393,7 @@ def _by_repo_path(layer_path: str) -> str:
     return (named if named.name == BY_REPO_DIR else named / BY_REPO_DIR).as_posix()
 
 
-def _by_repo_directory(store: Store, directory: Path) -> tuple[dict[str, Path], int]:
+def by_repo_directory(store: Store, directory: Path) -> tuple[dict[str, Path], int]:
     """The `.json` files of one `by-repo/` directory by stem, and how many entries
     resolve outside the store."""
     files: dict[str, Path] = {}

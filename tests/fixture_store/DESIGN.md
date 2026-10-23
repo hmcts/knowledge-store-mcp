@@ -476,6 +476,7 @@ gets the wrong one.
 Present: `graph`, `labels`, `provenance`, `intent`, `ticket_descriptions`,
 `summaries`, `topics`, `deep_dives`, `relationships`, and `index` unless
 `index="none"`. Absent: `context`, `deployments`, `explorer`, `history`,
+`minimum_standard` (unless `minimum_standard=True`, section 11),
 `repository_manifest`, `semantic` and `ticket_tracker` (unless `tracker=True`,
 section 6.5). Their `present` is `false` (`null` for deployments) and their files
 do not exist.
@@ -519,3 +520,57 @@ release wrote, which hid a reader that listed the layer directory as repositorie
   shape; this one uses the topic briefs' entry shape (`title`, `html`, `source`),
   plus `as_of` and `commit` as hmcts/knowledge-store-builder#476 plans them: the
   date the entry was written and the store commit that last touched its file.
+- **Minimum standard:** the records, the settings snapshot and the summary's
+  shape are knowledge-store-builder's own writer's output, transcribed: section 11
+  says how they were made.
+
+## 11. Minimum standard (opt-in)
+
+`build(root, minimum_standard=True)` writes `knowledge/minimum-standard/`:
+`github-settings.json`, `summary.json`, and `by-repo/<repo>.json` for three
+repositories. Every file carries
+`"format": {"layer": "minimum_standard", "major": 1, "minor": 0}` and is written
+as the library writes it: sorted, indented by two, with a final newline. The
+default store does not write the layer, so there it is absent (section 9.4).
+`minimum_standard_format` sets the stamp on every file, and `None` writes none.
+
+| Repository | `owner` | `security_contact` | `no_secrets` | `secure_by_design` | `hygiene` | `patching` | `unmaintained` |
+|---|---|---|---|---|---|---|---|
+| ledger-service | absent | absent | not_determinable | not_determinable | absent | not_determinable | not_determinable |
+| payments-api | present | present | absent | present | present | not_determinable | not_determinable |
+| reporting-worker | absent | absent | not_determinable | not_determinable | not_determinable | not_determinable | not_determinable |
+
+- **payments-api's one secret-scan finding** is
+  `{"line": 4, "path": "config/application.yml", "rule": "key-name"}`: a location
+  and a rule. The value is in no file of the store.
+- **`settings_read_at`** is `2026-10-15T20:00:00+00:00` for payments-api and
+  ledger-service. The snapshot cannot read any of ledger-service's settings, so
+  each setting item reads `not_determinable` with the reason `no access`. It holds
+  no entry for reporting-worker, whose `settings_read_at` is therefore null and
+  whose setting items read `no settings snapshot`.
+- **reporting-worker's `owner` is `absent`** although its CODEOWNERS names a
+  team: the only rule is for `/src/`, and no rule names an owner for the
+  repository root.
+- **The summary** declares one product, `payments`: ledger-service and
+  payments-api, not reporting-worker. Its `notes` is
+  `["archived repositories are not in the store"]`.
+
+A reader scoping by `product="payments"` returns ledger-service and payments-api;
+`pattern="pay*"` returns payments-api alone, because payment-apis holds no record.
+`product="payment"` is not a declared product, and its near miss is `payments`.
+
+**The traps:** no point is a pass and no record is a score, so a reader that sums
+them into a verdict is wrong whatever it sums. `not_determinable` is not `absent`:
+ledger-service's settings were not read, which says nothing about whether they
+are on. And every record is true of its `as_of` commit, not of today.
+
+**How it was made.** `generate_minimum_standard.py`, beside `build.py`, runs the
+library's `build_minimum_standard.evidence_for` over three synthetic clones, with
+git's two answers (the last commit, the tracked files) supplied through the
+writer's own `run=` seam so each `as_of` is the commit section 1 pins, and exits 0
+only when the result equals `build.py`'s records. The summary is composed as the
+writer's `main` composes it. The source is knowledge-store-builder's
+`feat/minimum-standard-evidence` at `1a4cdfd` with its final review round on top,
+not yet committed when this was transcribed: `build_minimum_standard.py` sha256
+`ab660f76ff116fb3...`, `minimum_standard.py` `dba480b459170e47...`. Re-run the
+script against the merged library and transcribe again if it exits 1.

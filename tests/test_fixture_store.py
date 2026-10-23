@@ -140,7 +140,7 @@ class ManifestTest(FixtureStoreCase):
                 for rel in paths:
                     self.assertFalse((self.root / rel).exists(), f"{name}: {rel} exists")
             checked += 1
-        self.assertEqual(checked, 17)
+        self.assertEqual(checked, 18)
 
     def test_layer_digests_are_the_files_digests(self):
         """Catches: a digest that does not describe the file it sits beside. Task 4's
@@ -216,6 +216,7 @@ class ManifestTest(FixtureStoreCase):
             "deployments",
             "explorer",
             "history",
+            "minimum_standard",
             "repository_manifest",
             "semantic",
             "ticket_tracker",
@@ -595,6 +596,53 @@ class TrapTest(FixtureStoreCase):
         unstamped = _json(root, registry)
         self.assertNotIn("format", unstamped)
         self.assertEqual(unstamped, {k: v for k, v in stamped.items() if k != "format"})
+
+    def test_the_opt_in_minimum_standard_layer_holds_its_traps(self):
+        """Catches: the layer written without its stamp, a state, the secret finding,
+        the dates or the product drifting from DESIGN.md 11, so the tool tests run
+        over a store that no longer holds what they assert; or the default store
+        writing the layer, so the absent-layer answer is never asked."""
+        layer = "knowledge/minimum-standard"
+        stamp = {"layer": "minimum_standard", "major": 1, "minor": 0}
+        finding = {"line": 4, "path": "config/application.yml", "rule": "key-name"}
+        self.assertInDesign(
+            '`"format": {"layer": "minimum_standard", "major": 1, "minor": 0}`',
+            '`{"line": 4, "path": "config/application.yml", "rule": "key-name"}`',
+            "`2026-10-15T20:00:00+00:00`",
+            '`["archived repositories are not in the store"]`',
+            "| payments-api | present | present | absent | present | present | "
+            "not_determinable | not_determinable |",
+        )
+        self.assertFalse((self.root / layer).exists())
+        root = build(Path(tempfile.mkdtemp(dir=self.root.parent)) / "s", minimum_standard=True)
+        files = sorted(
+            p.relative_to(root / layer).as_posix() for p in (root / layer).rglob("*.json")
+        )
+        self.assertEqual(
+            files,
+            [
+                "by-repo/ledger-service.json",
+                "by-repo/payments-api.json",
+                "by-repo/reporting-worker.json",
+                "github-settings.json",
+                "summary.json",
+            ],
+        )
+        for rel in files:
+            self.assertEqual(_json(root, f"{layer}/{rel}")["format"], stamp, rel)
+        summary = _json(root, f"{layer}/summary.json")
+        self.assertEqual(summary["products"], {"payments": ["ledger-service", "payments-api"]})
+        self.assertEqual(summary["notes"], ["archived repositories are not in the store"])
+        payments = _json(root, f"{layer}/by-repo/payments-api.json")
+        self.assertEqual(payments["points"]["no_secrets"]["evidence"], [finding])
+        self.assertEqual(payments["settings_read_at"], "2026-10-15T20:00:00+00:00")
+        self.assertEqual(
+            payments["as_of"], {"commit": "9" * 40, "date": "2026-10-15T17:45:00+01:00"}
+        )
+        worker = _json(root, f"{layer}/by-repo/reporting-worker.json")
+        self.assertIsNone(worker["settings_read_at"])
+        for rel in files:
+            self.assertNotIn(b"fixture-not-a-secret", (root / layer / rel).read_bytes())
 
     def test_three_hop_chain_and_cycle(self):
         """Catches: a broken link in the chain or the cycle, which would let a

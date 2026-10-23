@@ -26,6 +26,7 @@ CALLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("tickets", {"repo": "payments-api"}),
     ("ticket", {"key": "EX-103"}),
     ("answers", {"query": "refund ledger"}),
+    ("minimum_standard", {"repos": "payments-api"}),
 )
 
 NEAR_MISSES = [
@@ -90,6 +91,10 @@ EXPECT: dict[str, list[tuple[str, Any, Any]]] = {
     ],
     "answers": [
         ("best answer first (DESIGN.md 7)", lambda r: (r["items"][0]["layer"], r["items"][0]["id"]), ("faq", "how-refunds-reach-the-ledger")),
+    ],
+    "minimum_standard": [
+        ("the name looked up (DESIGN.md 11)", lambda r: r["repositories"][0]["exact"], "payments-api"),
+        ("the default store holds no such layer (DESIGN.md 9.4)", lambda r: r["searched"].endswith("; the minimum_standard layer is absent"), True),
     ],
 }  # fmt: skip
 

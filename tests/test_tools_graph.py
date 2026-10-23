@@ -336,6 +336,7 @@ def layers(index_present: bool) -> dict:
         "semantic": {"present": False},
         "explorer": {"present": False},
         "relationships": {"present": True},
+        "minimum_standard": {"present": False},
         "index": {"present": index_present},
         "deployments": {"present": None},
     }
