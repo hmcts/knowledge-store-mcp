@@ -55,6 +55,8 @@ class LibraryGenerationTest(unittest.TestCase):
         """Catches: a library stage that exits 0 and writes nothing, committed as
         a store missing a layer the tool tests then silently skip."""
         layers = _manifest()["layers"]
+        # The same list as `EXPECTED` in library_store/pipeline.py, which refuses
+        # to finish a build without these; keep the two in step.
         for name in (
             "graph",
             "labels",

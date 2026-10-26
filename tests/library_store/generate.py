@@ -292,6 +292,65 @@ def _store_inputs(root: Path) -> None:
     _write(root / EXTRA_LAYER, EXTRA_LAYER_JSON)
 
 
+def _uv_dir(*arguments: str) -> str:
+    return subprocess.run(
+        ["uv", *arguments], check=True, text=True, stdout=subprocess.PIPE
+    ).stdout.strip()
+
+
+def _isolated_home(tmp: Path) -> dict[str, str]:
+    """HOME and the XDG directories inside `tmp`, so nothing in the user's home
+    reaches the build; uv keeps its real cache and interpreters, which it would
+    otherwise look for under the moved HOME."""
+    home = tmp / "home"
+    dirs = {
+        "HOME": home,
+        "XDG_CONFIG_HOME": home / ".config",
+        "XDG_CACHE_HOME": home / ".cache",
+        "XDG_DATA_HOME": home / ".local/share",
+    }
+    for path in dirs.values():
+        path.mkdir(parents=True, exist_ok=True)
+    return {
+        "UV_CACHE_DIR": _uv_dir("cache", "dir"),
+        "UV_PYTHON_INSTALL_DIR": _uv_dir("python", "dir"),
+        **{name: str(path) for name, path in dirs.items()},
+    }
+
+
+def _uv_run(tmp: Path) -> list[str]:
+    return [
+        "uv",
+        "run",
+        "--no-project",
+        "--python",
+        PYTHON,
+        "--with-requirements",
+        str(REQUIREMENTS),
+    ]
+
+
+def _recorded_interpreter() -> str:
+    """The `# interpreter:` line of requirements.txt's header."""
+    for line in REQUIREMENTS.read_text("utf-8").splitlines():
+        if line.startswith("# interpreter:"):
+            return line.removeprefix("# interpreter:").strip()
+    return "not recorded"
+
+
+def _running_interpreter(tmp: Path) -> str:
+    script = (
+        "import platform, sys; print(platform.python_version(), sys.platform, platform.machine())"
+    )
+    done = subprocess.run(
+        [*_uv_run(tmp), "python", "-c", script],
+        text=True,
+        stdout=subprocess.PIPE,
+        env={**os.environ, **_isolated_home(tmp)},
+    )
+    return done.stdout.strip() or "unknown"
+
+
 def _pipeline(tmp: Path, root: Path, *flags: str) -> None:
     """Run `pipeline.py` in the frozen environment. git's `insteadOf` sends every
     `https://github.com/example-org/` URL to the bare remotes, so the real `sync`
@@ -302,20 +361,9 @@ def _pipeline(tmp: Path, root: Path, *flags: str) -> None:
         "GIT_CONFIG_KEY_0": f"url.{(tmp / 'remotes').as_uri()}/.insteadOf",
         "GIT_CONFIG_VALUE_0": f"https://github.com/{ORG}/",
         "PYTHONHASHSEED": "0",
+        **_isolated_home(tmp),
     }
-    command = [
-        "uv",
-        "run",
-        "--no-project",
-        "--python",
-        PYTHON,
-        "--with-requirements",
-        str(REQUIREMENTS),
-        "python",
-        str(PIPELINE),
-        str(root),
-        *flags,
-    ]
+    command = [*_uv_run(tmp), "python", str(PIPELINE), str(root), *flags]
     subprocess.run(command, cwd=root, env=env, check=True)
 
 
@@ -412,11 +460,13 @@ def main(argv: list[str]) -> int:
             fresh = tmp / "out"
             _export(root, fresh)
             differing = [f"store/{rel}" for rel in _differences(fresh, OUT)]
-            if INPUTS.read_text("utf-8") != _inputs_json(shas):
+            if not INPUTS.is_file() or INPUTS.read_text("utf-8") != _inputs_json(shas):
                 differing.append(INPUTS.name)
             for rel in differing:
                 print(f"differs: {rel}")
             if differing:
+                print(f"recorded interpreter: {_recorded_interpreter()}")
+                print(f"this build's interpreter: {_running_interpreter(tmp)}")
                 return 1
             print(f"store/ reproduces from {LIBRARY}")
             return 0

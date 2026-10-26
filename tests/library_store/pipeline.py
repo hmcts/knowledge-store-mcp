@@ -32,7 +32,9 @@ from pathlib import Path
 ORG = "example-org"
 STORE_ID = "library-contract-store"
 
-# Layers the manifest must mark present, in the `layers` table.
+# Layers the manifest must mark present, in the `layers` table. Kept in step with
+# `test_graph_layers_present` in tests/test_library_generation.py, which asserts
+# the same list over the committed store.
 EXPECTED = (
     "graph",
     "labels",
@@ -69,9 +71,26 @@ class Refused(Exception):
     """The pipeline cannot vouch for what it built."""
 
 
+def _home(root: Path) -> dict[str, str]:
+    """A home and XDG directories inside the build's temp dir, so nothing under
+    the user's own (graphify reads `~/.claude` for its installed skill) reaches
+    the build."""
+    home = root.parent / "home"
+    dirs = {
+        "HOME": home,
+        "XDG_CONFIG_HOME": home / ".config",
+        "XDG_CACHE_HOME": home / ".cache",
+        "XDG_DATA_HOME": home / ".local/share",
+    }
+    for path in dirs.values():
+        path.mkdir(parents=True, exist_ok=True)
+    return {name: str(path) for name, path in dirs.items()}
+
+
 def _environment(root: Path) -> dict[str, str]:
     return {
         **os.environ,
+        **_home(root),
         "KSB_ROOT": str(root),
         "KSB_GITHUB_ORG": ORG,
         "KSB_STORE_ID": STORE_ID,
@@ -240,12 +259,15 @@ STEPS: list[Callable[[Path], None]] = [
     detect,
     stage("content-set"),
     stage("gherkin"),
-    json_schema,
+    # `packages` before `json-schema`, the build skill's order.
     stage("packages"),
+    json_schema,
     stage("deployments"),
     stage("relationships"),
     stage("source-urls"),
     cluster,
+    # Prints a MISMATCH note against graph.json.gz: expected, because the
+    # documented order re-gzips the clustered graph only after this records it.
     stage("record-clustering"),
     compress,
     labels,
