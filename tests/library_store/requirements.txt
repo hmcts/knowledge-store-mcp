@@ -11,9 +11,12 @@
 # with networkx's Louvain; record-clustering writes the same into
 # store/graphify-out/clustering-inputs.json.
 # partitioner: louvain
-# The interpreter and platform store/ was generated and checked on; generate.py
-# --check prints this line beside its own when the store does not reproduce.
+# The interpreter and platform, and the git, store/ was generated and checked
+# on; generate.py --check prints each line beside its own when the store does not
+# reproduce. git made every commit and the library's stages read them through it,
+# so how it writes a date reaches the store: 2.55's `%cI` gives UTC as `Z`.
 # interpreter: 3.13.15 darwin arm64
+# git: 2.55.0
 #
 anyio==4.15.1
     # via httpx

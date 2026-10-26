@@ -472,12 +472,19 @@ def _uv_run(tmp: Path) -> list[str]:
     ]
 
 
-def _recorded_interpreter() -> str:
-    """The `# interpreter:` line of requirements.txt's header."""
+def _recorded(field: str) -> str:
+    """The `# <field>:` line of requirements.txt's header."""
     for line in REQUIREMENTS.read_text("utf-8").splitlines():
-        if line.startswith("# interpreter:"):
-            return line.removeprefix("# interpreter:").strip()
+        if line.startswith(f"# {field}:"):
+            return line.removeprefix(f"# {field}:").strip()
     return "not recorded"
+
+
+def _running_git() -> str:
+    """This machine's git, which made every commit and which the library's stages
+    ran: how it writes a date (`%cI` gives UTC as `Z` on 2.55) reaches the store."""
+    done = subprocess.run(["git", "--version"], text=True, stdout=subprocess.PIPE)
+    return done.stdout.strip().removeprefix("git version ") or "unknown"
 
 
 def _running_interpreter(tmp: Path) -> str:
@@ -635,8 +642,10 @@ def main(argv: list[str]) -> int:
             for rel in differing:
                 print(f"differs: {rel}")
             if differing:
-                print(f"recorded interpreter: {_recorded_interpreter()}")
+                print(f"recorded interpreter: {_recorded('interpreter')}")
                 print(f"this build's interpreter: {_running_interpreter(tmp)}")
+                print(f"recorded git: {_recorded('git')}")
+                print(f"this build's git: {_running_git()}")
                 return 1
             print(f"store/ and no-index/ reproduce from {LIBRARY}")
             return 0

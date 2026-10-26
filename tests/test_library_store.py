@@ -156,6 +156,32 @@ class RelationshipsContract(harness.Contract):
                     f"kind is not one the relationships layer lists: {KINDS}",
                 )
 
+    def test_ref_prefix_not_keeps_a_consumer_by_the_refs_the_library_pinned(self):
+        """Catches: the library's `refs_pinned` map read under another key or as a
+        list, so `ref_prefix_not` drops every consumer or keeps every one: beta-app
+        pins `^1.2.0`, so it is dropped under `^1` and kept under `~`. And a
+        target outside the estate - gamma-service, whose registry entry records
+        a count and its referrers but no pins - filtered by a prefix it cannot be
+        judged by, instead of returned whole with the filter named as not
+        applied."""
+        pinned = tools_relationships.dependents(self.session, "alpha-lib", ref_prefix_not="^1")
+        self.assertEqual(pinned["repository"], known("alpha-lib"))
+        self.assertEqual(pinned["items"], [])
+        self.assertEqual(pinned["total"], 0)
+
+        other = tools_relationships.dependents(self.session, "alpha-lib", ref_prefix_not="~")
+        self.assertEqual(other["items"], [{**NPM_EDGE, "repository": "beta-app"}])
+
+        outside = tools_relationships.dependents(self.session, "gamma-service", ref_prefix_not="^1")
+        self.assertEqual(outside["repository"]["answer"], "referenced by the estate but not held")
+        self.assertEqual(
+            outside["items"], [{key: GAMMA[key] for key in GAMMA if key != "outside_estate"}]
+        )
+        self.assertEqual(
+            outside["not_applied"],
+            {"ref_prefix_not": "targets outside the estate record no pins"},
+        )
+
     def test_a_repository_with_no_edges_is_in_the_estate_and_answered_empty(self):
         """Catches: delta-deploy - a clone with no package manifest, whose by-repo
         file has two empty lists - answered as not in the estate, or

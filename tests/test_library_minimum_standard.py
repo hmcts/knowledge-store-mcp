@@ -31,8 +31,9 @@ Every expected record is derived by hand, before the store is read, from what
 - `secure_by_design` (no threat model) and `patching` are `not_determinable`
   everywhere; `unmaintained` is `not_determinable` with the last commit cited:
   "not archived" for alpha-lib and beta-app, "no access" for delta-deploy.
-- `as_of` is each clone's `main` HEAD, its date as git's `%cI` writes it (git 2.55 writes UTC as `Z`); the
-  shas are `inputs.json`'s.
+- `as_of` is each clone's `main` HEAD, its date as git's `%cI` writes it: the
+  generator's git, recorded as `# git:` in `library_store/requirements.txt`,
+  writes UTC as `Z` (2.55). The shas are `inputs.json`'s.
 """
 
 import unittest
@@ -301,7 +302,6 @@ class MinimumStandardContract(harness.Contract):
         found = tools_minimum_standard.minimum_standard(self.session, repos=["beta-app"])
         (record,) = found["items"]
         hygiene = record["points"]["hygiene"]
-        self.assertNotEqual(hygiene["state"], "present")
         self.assertEqual(hygiene["state"], "absent")
         self.assertEqual(
             hygiene_item(record, "branch_protection"),
@@ -370,6 +370,14 @@ class MinimumStandardContract(harness.Contract):
         legacy = tools_minimum_standard.minimum_standard(self.session, repos="alpha-lib,beta-app")
         self.assertEqual(legacy["items"], [ALPHA, BETA])
         self.assertEqual(legacy["repositories"], [known("alpha-lib"), known("beta-app")])
+
+    def test_a_pattern_is_a_glob_over_the_names_the_layer_holds(self):
+        """Catches: `pattern` ignored, so the whole layer comes back, or read as a
+        regular expression rather than a glob, so `*-lib` misses alpha-lib."""
+        found = tools_minimum_standard.minimum_standard(self.session, pattern="*-lib")
+        self.assertEqual(found["items"], [ALPHA])
+        self.assertEqual(found["scope"], "pattern")
+        self.assertEqual(found["total"], 1)
 
     def test_two_scopes_at_once_are_refused(self):
         """Catches: `repos` and `product` both given and one silently dropped, so
