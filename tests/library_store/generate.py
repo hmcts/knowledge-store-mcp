@@ -23,6 +23,24 @@ exactly as the library does. Everything copied into either is the library's or
 graphify's own bytes. Every commit carries a fixed identity and date, so the
 shas recorded in `inputs.json` and every byte of both stores are the same on
 every run; `--check` proves that by rebuilding and comparing.
+
+Hand-written: this script's clone contents, commit messages and `config/`, the
+tracker and GitHub answers (`tracker_responses.json`, `github_responses.json`),
+and the agent-authored inputs above. Library output: everything under `store/`
+and `no-index/`; never edit those by hand. `inputs.json` is this script's record
+of each clone's HEAD.
+
+The pins: `VERSION` and `GRAPHIFY` here; every other package, and the
+partitioner, interpreter and git the store was made with, in `requirements.txt`.
+Move a pin, regenerate, run `--check`, then the tests.
+
+One stand-in remains: `pipeline.py` rebinds the clock that
+`minimum-standard-settings` reads, because v0.19.0 has no seam for it. It moves
+to the library's `now=` seam when v0.19.1 ships.
+
+CI runs the tests over the committed output and never runs this script.
+`COVERAGE.md` is the claim of what those tests cover, and
+`test_library_coverage` keeps it honest.
 """
 
 import json

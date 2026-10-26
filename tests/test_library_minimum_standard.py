@@ -9,8 +9,9 @@ Every expected record is derived by hand, before the store is read, from what
 - The snapshot is `github_responses.json`'s answers, read at 2026-10-20 (the
   clock `pipeline.py` fixes). alpha-lib, beta-app and eta-portal are not
   archived, on `main`, with secret scanning and Dependabot alerts on;
-  alpha-lib's and eta-portal's `main` is protected and beta-app's is not. Every call for delta-deploy is 404, so each of its five
-  settings is unread (`null`). `example-org/.github` is private, so the
+  alpha-lib's and eta-portal's `main` is protected and beta-app's is not.
+  Every call for delta-deploy is 404, so each of its five settings is unread
+  (`null`). `example-org/.github` is private, so the
   organisation supplies no default security policy.
 - `owner`: the first CODEOWNERS found; beta-app's `* @example-org/payments-team`
   names a root owner. `security_contact`: the first SECURITY.md found; beta-app's
@@ -165,6 +166,8 @@ ALPHA = {
         "unmaintained": live("alpha-lib", "2026-10-04T09:00:00Z"),
     },
 }
+# eta-portal reuses ALPHA's points: their snapshot answers and files are
+# identical, so only the last commit, in `unmaintained`, differs.
 ETA = {
     "repository": "eta-portal",
     "as_of": {"commit": SHAS["eta-portal"], "date": "2026-10-05T12:00:00Z"},
