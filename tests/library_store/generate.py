@@ -12,7 +12,7 @@ output is committed, and this script is how that output was made. It needs `uv`
 and `git` on PATH, and network access the first time, to build the frozen
 environment `requirements.txt` names.
 
-This script writes the inputs - three git repositories, their bare remotes, the
+This script writes the inputs - four git repositories, their bare remotes, the
 store's `config/`, one extra layer, and what an agent authors in a real build
 (a community summary, a topic brief, a deep dive, two written answers) - into a
 fresh temporary directory, then runs `pipeline.py` inside the frozen
@@ -62,6 +62,18 @@ IDENTITY = {
 }
 
 ALPHA_PACKAGE = '{\n  "name": "@example/alpha-lib",\n  "version": "1.2.0"\n}\n'
+# DEMO-7's manifest: alpha-lib depends on the package beta-app publishes, which
+# depends on alpha-lib's, so the two repositories form a loop. The dependency is
+# on line 5, the last entry, so with no comma.
+ALPHA_PACKAGE_WITH_APP = """\
+{
+  "name": "@example/alpha-lib",
+  "version": "1.2.0",
+  "dependencies": {
+    "beta-app": "^1.0.0"
+  }
+}
+"""
 ALPHA_REFUND = """\
 export function refund(amount: number): number {
   return -amount;
@@ -77,13 +89,16 @@ export class RefundHandler {
 # and graphify sees no new symbol: a second DEMO-1 commit on one file, so a link
 # counts two commits.
 ALPHA_REFUND_ROUNDED = ALPHA_REFUND + "// Amounts are refunded in whole pence.\n"
+# `credit` extends `money` through `allOf`, so the json-schema stage writes an
+# `extends` edge. It shares line 6 with the `$defs` it opens, so every line the
+# other nodes sit on is unchanged.
 ALPHA_SCHEMA = """\
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.org/schemas/refund.schema.json",
   "title": "Refund",
   "type": "object",
-  "$defs": {
+  "$defs": {"credit": {"allOf": [{"$ref": "#/$defs/money"}], "description": "Given back to the customer."},
     "money": {
       "type": "object",
       "properties": {
@@ -156,6 +171,18 @@ jobs:
       - uses: github/codeql-action/analyze@v3
 """
 
+# eta-portal holds only a package manifest: a second consumer of the package
+# beta-app publishes, on line 5.
+ETA_PACKAGE = """\
+{
+  "name": "eta-portal",
+  "version": "0.1.0",
+  "dependencies": {
+    "beta-app": "^1.0.0"
+  }
+}
+"""
+
 DELTA_VALUES = "replicas: 2\n"
 # The values file's first version, which DEMO-3 replaces: a DEMO-5 commit the
 # tracker denies, with the file's final content, and so the graph and the
@@ -187,6 +214,11 @@ COMMITS = {
             "DEMO-1: refund rounding",
             "2026-10-03T09:00:00+00:00",
             {"src/refund.ts": ALPHA_REFUND_ROUNDED},
+        ),
+        (
+            "DEMO-7: alpha reads app constants",
+            "2026-10-04T09:00:00+00:00",
+            {"package.json": ALPHA_PACKAGE_WITH_APP},
         ),
     ],
     "beta-app": [
@@ -220,6 +252,13 @@ COMMITS = {
                 "config/application.yml": DELTA_APPLICATION,
                 "deploy/signing.pem": DELTA_SIGNING_KEY,
             },
+        ),
+    ],
+    "eta-portal": [
+        (
+            "DEMO-6: portal depends on the app",
+            "2026-10-05T12:00:00+00:00",
+            {"package.json": ETA_PACKAGE},
         ),
     ],
 }
@@ -293,10 +332,12 @@ This is not a payment ledger. Nothing in the estate stores a refund, approves
 one or sends money: those questions need another source.
 """
 
+# `{measured}` is the first eight characters of alpha-lib's HEAD, filled in once
+# the clone is made, as an author names the commit they read.
 DEEP_DIVE_ALPHA = """\
 # alpha-lib
 
-Measured at alpha-lib `18e25097`.
+Measured at alpha-lib `{measured}`.
 
 **alpha-lib is the estate's refund library.** It publishes the
 `@example/alpha-lib` npm package, which beta-app depends on, and it holds the
@@ -305,14 +346,15 @@ refund schema.
 ## What it holds
 
 - `src/refund.ts`: the `refund` function and the `RefundHandler` class whose `handle` method calls it.
-- `schemas/refund.schema.json`: the Refund JSON Schema, with a `money` definition that the `total` property refers to.
-- `package.json`: the package name and version 1.2.0.
+- `schemas/refund.schema.json`: the Refund JSON Schema, with a `money` definition that the `total` property refers to and the `credit` definition extends.
+- `package.json`: the package name, version 1.2.0 and a dependency on beta-app.
 
 ## History
 
-Three commits on `main`. DEMO-1 added the handler and the package manifest on
-1 October 2026; DEMO-2 added the schema the next day, and DEMO-1 returned on
-3 October with a note on rounding. Nothing has changed it since.
+Four commits on `main`. DEMO-1 added the handler and the package manifest on
+1 October 2026; DEMO-2 added the schema the next day, DEMO-1 returned on
+3 October with a note on rounding, and DEMO-7 added the dependency on beta-app
+on 4 October. Nothing has changed it since.
 
 ## Who depends on it
 
@@ -418,16 +460,18 @@ def _sources(tmp: Path) -> dict[str, str]:
     return shas
 
 
-def _store_inputs(root: Path) -> None:
+def _store_inputs(root: Path, shas: dict[str, str]) -> None:
     """The store's configuration and authored inputs, in the store root; the
-    summaries JSON beside it, where `pipeline.py` reads it."""
+    summaries JSON beside it, where `pipeline.py` reads it. `shas` are the clones'
+    HEADs, which the deep dive names."""
     _write(root / "config" / "repositories.txt", REPOSITORIES_TXT)
     _write(root / "config" / "store-extra-layers.json", EXTRA_LAYERS_JSON)
     _write(root / "config" / "products.json", PRODUCTS_JSON)
     _write(root / "config" / "topics.txt", TOPICS_TXT)
     _write(root / EXTRA_LAYER, EXTRA_LAYER_JSON)
     _write(root / "docs" / "topics" / "refunds.md", TOPIC_REFUNDS)
-    _write(root / "docs" / "deep-dives" / "alpha-lib.md", DEEP_DIVE_ALPHA)
+    dive = DEEP_DIVE_ALPHA.replace("{measured}", shas["alpha-lib"][:8])
+    _write(root / "docs" / "deep-dives" / "alpha-lib.md", dive)
     for rel, text in ANSWERS.items():
         _write(root / rel, text)
     summaries = json.dumps({SUMMARY_ANCHOR: SUMMARY_REFUNDS}, indent=1) + "\n"
@@ -565,7 +609,7 @@ def build(tmp: Path) -> tuple[dict[Path, Path], dict[str, str], str]:
     ):
         root = parent / "store"
         root.mkdir(parents=True)
-        _store_inputs(root)
+        _store_inputs(root, shas)
         _pipeline(tmp, root, *flags)
         built[target] = root
     commits = {_answer_commit(root) for root in built.values()}

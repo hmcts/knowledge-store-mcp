@@ -15,7 +15,10 @@ writes, before the store is read:
   `.handle()`, and gives code nodes no `metadata.kind`, so their kind is "".
 - JSON Schema nodes are the library's `json-schema` stage's:
   `<repo>::jsonschema:<path>#<JSON pointer>`, labelled by the schema's `title`
-  or the definition's or property's name, at the line of its `{`.
+  or the definition's or property's name, at the line of its `{`. A `$ref`
+  directly under a property is a `references` edge from it; one inside an
+  `allOf` member is an `extends` edge from the definition holding the `allOf`
+  (`json_schema._on_combinator`, `_visit`).
 - Lines are counted in the clone text; urls are `source_urls`' form,
   `https://github.com/example-org/<repo>/blob/<sha>/<path>#L<line>`, with the
   sha from `inputs.json`.
@@ -42,13 +45,14 @@ SOURCES_AS_OF = "2026-10-08T09:00:00Z"
 
 # Each clone's provenance: its HEAD and that commit's fixed date.
 PROVENANCE = [
-    {"repository": "alpha-lib", "sha": SHAS["alpha-lib"], "committed": "2026-10-03T09:00:00Z"},
+    {"repository": "alpha-lib", "sha": SHAS["alpha-lib"], "committed": "2026-10-04T09:00:00Z"},
     {"repository": "beta-app", "sha": SHAS["beta-app"], "committed": "2026-10-06T09:00:00Z"},
     {
         "repository": "delta-deploy",
         "sha": SHAS["delta-deploy"],
         "committed": "2026-10-08T09:00:00Z",
     },
+    {"repository": "eta-portal", "sha": SHAS["eta-portal"], "committed": "2026-10-05T12:00:00Z"},
 ]
 
 # alpha-lib's src/refund.ts: `refund` on line 1, `RefundHandler` on 5, `handle` on 6.
@@ -86,8 +90,8 @@ PAYMENT_SERVICE = {
     "url": f"{BETA}/src/pay.ts#L3",
 }
 
-# alpha-lib's schemas/refund.schema.json: the root `{` on line 1, `money` on 7,
-# `requestedOn` on 15, `total` on 16.
+# alpha-lib's schemas/refund.schema.json: the root `{` on line 1, `credit` on 6
+# (the line that opens `$defs`), `money` on 7, `requestedOn` on 15, `total` on 16.
 SCHEMA_FILE = "schemas/refund.schema.json"
 SCHEMA_ID = f"alpha-lib::jsonschema:{SCHEMA_FILE}#"
 SCHEMA = {
@@ -97,6 +101,14 @@ SCHEMA = {
     "kind": "schema",
     "file": SCHEMA_FILE,
     "url": f"{ALPHA}/{SCHEMA_FILE}#L1",
+}
+CREDIT = {
+    "id": f"{SCHEMA_ID}/$defs/credit",
+    "label": "credit",
+    "repo": "alpha-lib",
+    "kind": "definition",
+    "file": SCHEMA_FILE,
+    "url": f"{ALPHA}/{SCHEMA_FILE}#L6",
 }
 MONEY = {
     "id": f"{SCHEMA_ID}/$defs/money",
@@ -143,7 +155,7 @@ class GraphContract(harness.Contract):
         }
 
     def _searched(self, *layers: str) -> str:
-        return f"searched 3 repositories in the {' and '.join(layers)} layer" + (
+        return f"searched 4 repositories in the {' and '.join(layers)} layer" + (
             "s" if len(layers) > 1 else ""
         )
 
@@ -194,7 +206,7 @@ class GraphContract(harness.Contract):
                     "deployments.present": True,
                 },
                 "items": PROVENANCE,
-                "total": 3,
+                "total": 4,
                 "page": 1,
                 "next_page": None,
             },
@@ -203,20 +215,20 @@ class GraphContract(harness.Contract):
     def test_store_info_pages_the_provenance_by_its_cursor(self):
         """Catches: `cursor` not followed over the provenance list the library
         wrote, so a second page repeats the first repository or skips one, or the
-        pages end before delta-deploy."""
+        pages end before eta-portal."""
         found = harness.pages(lambda **paging: tools_graph.store_info(self.session, **paging))
         self.assertEqual([page["items"] for page in found], [[item] for item in PROVENANCE])
-        self.assertEqual([page["page"] for page in found], [1, 2, 3])
+        self.assertEqual([page["page"] for page in found], [1, 2, 3, 4])
         self.assertIsNone(found[-1]["next_page"])
 
     # --- find_repo --------------------------------------------------------------
 
     def test_find_repo_knows_each_clone(self):
         """Catches: a clone the library graphed, or one holding only deployment
-        values (delta-deploy), answered as not in the estate or as holding no
-        graph nodes, because the index's or the graph's repositories are read
-        from the wrong field."""
-        for name in ("alpha-lib", "beta-app", "delta-deploy"):
+        values (delta-deploy) or only a package manifest (eta-portal), answered as
+        not in the estate or as holding no graph nodes, because the index's or
+        the graph's repositories are read from the wrong field."""
+        for name in ("alpha-lib", "beta-app", "delta-deploy", "eta-portal"):
             with self.subTest(name=name):
                 found = tools_graph.find_repo(self.session, name)
                 self.assertEqual(found, {"store": self._store([self.reader]), **known(name)})
@@ -340,7 +352,8 @@ class GraphContract(harness.Contract):
         """Catches: `depth` ignored or misread, so a walk of two hops from the field
         `requestedOn` stops at its schema, or runs on to `amount`, which `money`
         contains three hops away; or an edge's direction not flipped when it is
-        walked from its target."""
+        walked from its target. The schema's other parts are `credit`, `money`
+        and `total`, by id."""
         found = tools_graph.neighbours(
             self.session, REQUESTED_ON["id"], depth=2, relation="contains"
         )
@@ -357,14 +370,15 @@ class GraphContract(harness.Contract):
                     SCHEMA,
                     [{"from": REQUESTED_ON["id"], "relation": "contains", "direction": "in"}],
                 ),
+                (2, CREDIT, out),
                 (2, MONEY, out),
                 (2, TOTAL, out),
             ],
         )
 
     def test_neighbours_page_by_their_cursor(self):
-        """Catches: `cursor` not followed over a walk, so the schema's second and
-        third parts are repeated, lost, or served without the start node."""
+        """Catches: `cursor` not followed over a walk, so the schema's later parts
+        are repeated, lost, or served without the start node."""
         found = harness.pages(
             lambda **paging: tools_graph.neighbours(
                 self.session, SCHEMA_ID, relation="contains", **paging
@@ -372,9 +386,9 @@ class GraphContract(harness.Contract):
         )
         self.assertEqual(
             [[self._without_community(item["node"]) for item in page["items"]] for page in found],
-            [[MONEY], [REQUESTED_ON], [TOTAL]],
+            [[CREDIT], [MONEY], [REQUESTED_ON], [TOTAL]],
         )
-        self.assertEqual([self._without_community(page["node"]) for page in found], [SCHEMA] * 3)
+        self.assertEqual([self._without_community(page["node"]) for page in found], [SCHEMA] * 4)
 
     # --- community ----------------------------------------------------------------
 
@@ -468,13 +482,35 @@ class GraphContract(harness.Contract):
                 (item["depth"], self._without_community(item["node"]), item["via"])
                 for item in contains["items"]
             ],
-            [(1, MONEY, via), (1, REQUESTED_ON, via), (1, TOTAL, via)],
+            [(1, CREDIT, via), (1, MONEY, via), (1, REQUESTED_ON, via), (1, TOTAL, via)],
         )
         references = tools_graph.neighbours(self.session, TOTAL["id"], relation="references")
         self.assertEqual(
             [(item["node"]["id"], item["via"]) for item in references["items"]],
             [(MONEY["id"], [{"from": TOTAL["id"], "relation": "references", "direction": "out"}])],
         )
+
+    def test_a_definition_extends_the_definition_its_all_of_names(self):
+        """Catches: the json-schema stage's `extends` edge not read, or read as a
+        `references` edge, so `credit` - whose `allOf` names `money` - does not
+        lead to `money` under `relation="extends"`, or `money` does not show
+        `credit` extending it when walked from its target."""
+        out = tools_graph.neighbours(self.session, CREDIT["id"], relation="extends")
+        self.assertEqual(self._without_community(out["node"]), CREDIT)
+        self.assertEqual(
+            [
+                (item["depth"], self._without_community(item["node"]), item["via"])
+                for item in out["items"]
+            ],
+            [(1, MONEY, [{"from": CREDIT["id"], "relation": "extends", "direction": "out"}])],
+        )
+        back = tools_graph.neighbours(self.session, MONEY["id"], relation="extends")
+        self.assertEqual(
+            [(item["node"]["id"], item["via"]) for item in back["items"]],
+            [(CREDIT["id"], [{"from": MONEY["id"], "relation": "extends", "direction": "in"}])],
+        )
+        references = tools_graph.neighbours(self.session, CREDIT["id"], relation="references")
+        self.assertEqual(references["items"], [])
 
     def test_no_graphify_keyword_node_remains_for_the_schema(self):
         """Catches, after a graphify upgrade and regeneration: graphify's own nodes
@@ -484,6 +520,7 @@ class GraphContract(harness.Contract):
         that state."""
         for text, expected in (
             ("$defs", []),
+            ("allOf", []),
             ("properties", []),
             ("type", []),
             ("schema", []),

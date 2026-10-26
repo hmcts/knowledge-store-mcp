@@ -97,9 +97,9 @@ MANIFEST = Path("knowledge/store-manifest.json")
 # The tracker's answers, as `fetch-tickets` asks after `intent`: the project
 # allowlisted, description and comments requested, and the day fixed so an open
 # ticket's `checked` date is the same every run. The token is a placeholder.
-# Four keys a request, so DEMO-1..DEMO-4 share one and DEMO-5 has its own, which
-# the tracker refuses: the stage records a 401 or 403 against every key of the
-# request it answered (`fetch_tickets.apply_page`).
+# Four keys a request, sorted, so DEMO-1..DEMO-4 share one and DEMO-5..DEMO-7 the
+# other, which the tracker refuses: the stage records a 401 or 403 against every
+# key of the request it answered (`fetch_tickets.apply_page`).
 TRACKER_SETTINGS = {
     "KSB_TRACKER_BASE_URL": "https://tracker.example.invalid",
     "KSB_TRACKER_TOKEN": "fixture-not-a-secret",

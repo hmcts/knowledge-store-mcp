@@ -13,8 +13,9 @@ writes, before the store is read:
   delta-deploy's three files (8 October; its empty `deploy/signing.pem` is
   tracked, so it is linked like any other file); DEMO-5 on delta-deploy's values file
   (7 October, before DEMO-3 rewrote it). DEMO-4 is only on beta-app's branch
-  `feature/DEMO-4-retry` (7 October, `src/pay.ts`), so it is `proposed`. Every
-  other link is one commit.
+  `feature/DEMO-4-retry` (7 October, `src/pay.ts`), so it is `proposed`. DEMO-7
+  lands on alpha-lib's `package.json` (4 October) and DEMO-6 on eta-portal's
+  (5 October). Every other link is one commit.
 - A record's descriptions (`d`, at most two) are the subjects less their key,
   kept when at least 12 characters: "retry" and "ownership" are too short. `d`
   ranks by count, then length, ties in history order (alpha-lib before
@@ -25,9 +26,9 @@ writes, before the store is read:
   fetched and resolved (on 2026-10-05) so, being final, it carries no `checked`
   date; DEMO-3 fetched, unresolved, so checked 2026-10-20, with no description
   and one comment of a thread of three, so `comments_truncated`; DEMO-2 and
-  DEMO-4 not in the response, so recorded `absent`, checked 2026-10-20. DEMO-5
-  is requested on its own (four keys a request), and the tracker answers 403,
-  so it is recorded `denied`, checked 2026-10-20.
+  DEMO-4 not in the response, so recorded `absent`, checked 2026-10-20. DEMO-5,
+  DEMO-6 and DEMO-7 make the second request (four keys a request, sorted), and
+  the tracker answers it 403, so each is recorded `denied`, checked 2026-10-20.
 - Written answers are the authored Markdown, rendered by the library's Markdown
   subset (`build_topic_briefs.markdown_to_html`): `#` is `<h2>`, `##` is `<h3>`,
   and each name in `config/repositories.txt` becomes a link to
@@ -40,6 +41,8 @@ writes, before the store is read:
   generator records it from the repository it made.
 - Topic briefs and deep dives record no date, so they are dated by
   `sources_as_of`: delta-deploy's 8 October commit, the newest in the estate.
+  The deep dive names the alpha-lib commit it was measured at, the first eight
+  characters of `inputs.json`'s sha, as an author writes the commit they read.
 """
 
 import json
@@ -151,13 +154,16 @@ ALPHA_DIVE = {
         "<li><code>src/refund.ts</code>: the <code>refund</code> function and the "
         "<code>RefundHandler</code> class whose <code>handle</code> method calls it.</li>"
         "<li><code>schemas/refund.schema.json</code>: the Refund JSON Schema, with a "
-        "<code>money</code> definition that the <code>total</code> property refers to.</li>"
-        "<li><code>package.json</code>: the package name and version 1.2.0.</li>"
+        "<code>money</code> definition that the <code>total</code> property refers to "
+        "and the <code>credit</code> definition extends.</li>"
+        f"<li><code>package.json</code>: the package name, version 1.2.0 and a dependency "
+        f"on {BETA}.</li>"
         "</ul>"
         "<h3>History</h3>"
-        "<p>Three commits on <code>main</code>. DEMO-1 added the handler and the package "
-        "manifest on 1 October 2026; DEMO-2 added the schema the next day, and DEMO-1 "
-        "returned on 3 October with a note on rounding. Nothing has changed it since.</p>"
+        "<p>Four commits on <code>main</code>. DEMO-1 added the handler and the package "
+        "manifest on 1 October 2026; DEMO-2 added the schema the next day, DEMO-1 "
+        "returned on 3 October with a note on rounding, and DEMO-7 added the dependency "
+        f"on {BETA} on 4 October. Nothing has changed it since.</p>"
         "<h3>Who depends on it</h3>"
         f"<p>{BETA} declares <code>@example/alpha-lib</code> in its "
         "<code>package.json</code> and imports <code>refund</code> in "
@@ -534,7 +540,20 @@ class TicketsContract(harness.Contract):
         """Catches: `fetch-tickets`' `denied` outcome - the tracker refused the
         request - not recognised, so DEMO-5 is reported as a record in a shape the
         server does not read, or as absent, which the stage treats as final when a
-        denial is retried; or its `checked` date not read."""
+        denial is retried; or its `checked` date not read. DEMO-6 and DEMO-7 shared
+        the refused request, so they are denied too."""
+        for key in ("DEMO-6", "DEMO-7"):
+            with self.subTest(key=key):
+                self.assertEqual(
+                    tools_tickets.ticket(self.session, key)["tracker"],
+                    {
+                        "key": key,
+                        "state": "denied",
+                        "as_of": "2026-10-20",
+                        "text": {},
+                        "comments_truncated": False,
+                    },
+                )
         found = tools_tickets.ticket(self.session, "DEMO-5")
         self.assertEqual(
             found,
@@ -613,7 +632,7 @@ class TicketsContract(harness.Contract):
                 "tracker_note": "the ticket_tracker layer holds no record of this ticket",
                 "reach": True,
                 "reach_note": None,
-                "searched": f"searched 3 repositories in the {searched}",
+                "searched": f"searched 4 repositories in the {searched}",
                 "totals": {"landed": 0, "proposed": 0},
                 "landed": [],
                 "proposed": [],

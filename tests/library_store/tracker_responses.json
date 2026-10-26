@@ -65,7 +65,7 @@
    ]
   }
  },
- "https://tracker.example.invalid/rest/api/2/search?jql=key+in+%28DEMO-5%29&fields=summary%2Cissuetype%2Cstatus%2Cresolution%2Ccreated%2Cresolutiondate%2Cparent%2Cdescription%2Ccomment&maxResults=1": {
+ "https://tracker.example.invalid/rest/api/2/search?jql=key+in+%28DEMO-5%2CDEMO-6%2CDEMO-7%29&fields=summary%2Cissuetype%2Cstatus%2Cresolution%2Ccreated%2Cresolutiondate%2Cparent%2Cdescription%2Ccomment&maxResults=3": {
   "status": 403,
   "body": {
    "errorMessages": [

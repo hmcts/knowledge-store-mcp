@@ -4,15 +4,16 @@ This manifest describes the source repositories represented by the combined Grap
 
 | Repository | Commits | Synced at | History | Current source |
 |---|---:|---|---|---|
-| `alpha-lib` | 3 | 2026-10-03 (`18e25097`) | [History](git-history/alpha-lib/index.md) | `https://github.com/example-org/alpha-lib.git` |
+| `alpha-lib` | 4 | 2026-10-04 (`71044986`) | [History](git-history/alpha-lib/index.md) | `https://github.com/example-org/alpha-lib.git` |
 | `beta-app` | 3 | 2026-10-06 (`085f0da7`) | [History](git-history/beta-app/index.md) | `https://github.com/example-org/beta-app.git` |
 | `delta-deploy` | 2 | 2026-10-08 (`3e462391`) | [History](git-history/delta-deploy/index.md) | `https://github.com/example-org/delta-deploy.git` |
+| `eta-portal` | 1 | 2026-10-05 (`002b1cff`) | [History](git-history/eta-portal/index.md) | `https://github.com/example-org/eta-portal.git` |
 
 The repositories themselves are cloned into `repositories/` during graph generation and are not committed to this parent repository.
 
 ## What this manifest does not cover
 
-These 3 repositories were discovered from the `example-org` organisation on a single code host. Repositories outside it were never searched, so they are absent from this store without appearing as gaps.
+These 4 repositories were discovered from the `example-org` organisation on a single code host. Repositories outside it were never searched, so they are absent from this store without appearing as gaps.
 
 **Absence of evidence here is a fact about this store's membership, not about the estate.** When this store reports that there is no evidence of something, read it as no evidence *in the repositories listed above* - and check whether the thing you are looking for lives somewhere that was never in scope.
 

@@ -1,8 +1,9 @@
 {
  "shas": {
-  "alpha-lib": "18e250970e32e1fd57f1da2b308d662883363234",
+  "alpha-lib": "710449869c426dac2fa8101fdf726245e3635ee0",
   "beta-app": "085f0da738cebf28ac22b57c8c07530936769442",
-  "delta-deploy": "3e4623914bbfc716d90a21ff592a8d2db3550ee7"
+  "delta-deploy": "3e4623914bbfc716d90a21ff592a8d2db3550ee7",
+  "eta-portal": "002b1cff8ebb7ca67d5ebe215ab005a137a6ec29"
  },
  "store_answers_commit": "f6b689b013faa74e0a6cb4db8251a4e960316940"
 }

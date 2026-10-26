@@ -12,6 +12,8 @@ knowledge/git-history/beta-app/2026.md
 knowledge/git-history/beta-app/index.md
 knowledge/git-history/delta-deploy/2026.md
 knowledge/git-history/delta-deploy/index.md
+knowledge/git-history/eta-portal/2026.md
+knowledge/git-history/eta-portal/index.md
 knowledge/intent/tracker-undecided.json
 knowledge/provenance.json
 knowledge/relationships/ownership-notes.json
@@ -28,3 +30,4 @@ repositories/beta-app/package.json
 repositories/beta-app/src/pay.ts
 repositories/delta-deploy/ansible/group_vars/prd/beta-app_values.yaml.j2
 repositories/delta-deploy/config/application.yml
+repositories/eta-portal/package.json

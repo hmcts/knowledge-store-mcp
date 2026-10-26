@@ -57,6 +57,7 @@ ticket is not evidence that the code lacks the change either.
 - `alpha-lib`
 - `beta-app`
 - `delta-deploy`
+- `eta-portal`
 
 See [the repository manifest](knowledge/repository-manifest.md) for source
 locations and dataset details.

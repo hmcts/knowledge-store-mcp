@@ -45,6 +45,15 @@
         "dependabot_alerts",
         "secret_scanning"
       ]
+    },
+    "eta-portal": {
+      "archived": false,
+      "branch_protection": "present",
+      "default_branch": "main",
+      "dependabot_alerts": "enabled",
+      "organisation": "example-org",
+      "secret_scanning": "enabled",
+      "unreadable": []
     }
   }
 }

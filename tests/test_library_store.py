@@ -6,13 +6,17 @@ without it.
 `library_store/generate.py` is how it was made and remakes it. The synthetic
 fixture describes the layout as this server understands it; this store is the
 layout as the library writes it, so a disagreement between the two fails here.
-Every expected value is derived by hand from the three clones `generate.py`
+Every expected value is derived by hand from the four clones `generate.py`
 writes: beta-app's `package.json` depends, on its line 4, on `@example/alpha-lib`
 at `^1.2.0`, which alpha-lib publishes, and on `gamma-service`, which no clone
-publishes; delta-deploy holds deployment values and settings and no package
-manifest, so it has no edge. Git
-shas come from `library_store/inputs.json`, which the generator wrote from the
-clones it made.
+publishes; alpha-lib's and eta-portal's `package.json` each depend, on their
+line 5, on `beta-app` at `^1.0.0`, the package beta-app publishes by its `name`;
+delta-deploy holds deployment values and settings and no package manifest, so it
+has no edge. So alpha-lib and beta-app depend on each other, a loop of two, and
+beta-app has two consumers, alpha-lib and eta-portal, which the library lists
+sorted by repository. A walk of alpha-lib's dependents reaches beta-app at one
+hop and eta-portal at two. Git shas come from `library_store/inputs.json`, which
+the generator wrote from the clones it made.
 
 The kinds are v0.19.0's four built-in kinds (`relationships.BUILTIN`), since
 the store registers none of its own (`config/relationship-kinds.json` is not
@@ -46,6 +50,31 @@ NPM_EDGE = {
     "refs_unpinned": 0,
 }
 
+
+def on_beta_app(consumer: str) -> dict:
+    """`consumer` -> beta-app, as each end's by-repo file names the other end: line
+    5 of the consumer's package.json, `"beta-app": "^1.0.0"`, the last entry of
+    its `dependencies` so with no comma, linked at the consumer's built commit."""
+    return {
+        "chart": "",
+        "examples": [
+            {
+                "line": '"beta-app": "^1.0.0"',
+                "url": f"https://github.com/example-org/{consumer}/blob/"
+                f"{SHAS[consumer]}/package.json#L5",
+            }
+        ],
+        "kinds": {"npm_package": 1},
+        "references": 1,
+        "refs_pinned": {"^1.0.0": 1},
+        "refs_unpinned": 0,
+    }
+
+
+ALPHA_ON_BETA = on_beta_app("alpha-lib")
+ETA_ON_BETA = on_beta_app("eta-portal")
+# The loop: alpha-lib depends on beta-app, which depends on alpha-lib.
+LOOP = [["alpha-lib", "beta-app"]]
 
 # beta-app's dependency no clone publishes, as the registry records it.
 GAMMA = {
@@ -92,10 +121,13 @@ class RelationshipsContract(harness.Contract):
         walk = tools_relationships.dependents(self.session, "alpha-lib", transitive=True)
         self.assertEqual(
             [(item["repository"], item["path"]) for item in walk["items"]],
-            [("beta-app", ["alpha-lib", "beta-app"])],
+            [
+                ("beta-app", ["alpha-lib", "beta-app"]),
+                ("eta-portal", ["alpha-lib", "beta-app", "eta-portal"]),
+            ],
         )
         answer = tools_relationships.repo_answer(self.session, "beta-app")
-        self.assertEqual(answer["totals"], {"depends_on": 1, "depended_on_by": 0})
+        self.assertEqual(answer["totals"], {"depends_on": 1, "depended_on_by": 2})
 
     def test_only_by_repo_files_are_repositories(self):
         """Catches: every `.json` in the layer directory read as a repository, so
@@ -103,14 +135,15 @@ class RelationshipsContract(harness.Contract):
         estate and inflate every `searched` count."""
         loaded = self.session.current()[0]
         self.assertEqual(
-            sorted(results.by_repo_files(loaded)), ["alpha-lib", "beta-app", "delta-deploy"]
+            sorted(results.by_repo_files(loaded)),
+            ["alpha-lib", "beta-app", "delta-deploy", "eta-portal"],
         )
         for name in ("kinds", "repository-dependencies", Path(EXTRA_LAYER).stem):
             with self.subTest(name=name):
                 found = tools_graph.find_repo(self.session, name)
                 self.assertEqual(found["answer"], "not in the estate")
         unknown = tools_relationships.dependents(self.session, "epsilon-web")
-        self.assertTrue(unknown["searched"].startswith("searched 3 repositories "))
+        self.assertTrue(unknown["searched"].startswith("searched 4 repositories "))
 
     def test_an_extra_layer_in_the_layer_directory_is_read_as_its_own_layer(self):
         """Catches: the store's extra layer lost to the relationships layer - not
@@ -183,10 +216,12 @@ class RelationshipsContract(harness.Contract):
         )
 
     def test_max_depth_bounds_the_walk_and_names_what_lies_beyond(self):
-        """Catches: `max_depth` ignored, so the walk reports the default four hops,
-        or read as "fewer than", so beta-app - one hop from alpha-lib - is cut;
-        or a repository past the bound named as `beyond` when nothing depends on
-        beta-app."""
+        """Catches: `max_depth` ignored, so a walk of one hop from alpha-lib runs on
+        to eta-portal, two hops away; or read as "fewer than", so beta-app - one
+        hop away - is cut; or the cut made silently, without naming beta-app as
+        the repository whose dependents the walk did not reach; or the loop back
+        to alpha-lib, read at the boundary, not reported. At two hops nothing is
+        cut."""
         walk = tools_relationships.dependents(
             self.session, "alpha-lib", transitive=True, max_depth=1
         )
@@ -195,8 +230,59 @@ class RelationshipsContract(harness.Contract):
             [(item["repository"], item["depth"], item["path"]) for item in walk["items"]],
             [("beta-app", 1, ["alpha-lib", "beta-app"])],
         )
+        self.assertEqual(walk["beyond_max_depth"], ["beta-app"])
+        self.assertEqual(walk["cycles"], LOOP)
+
+        deeper = tools_relationships.dependents(
+            self.session, "alpha-lib", transitive=True, max_depth=2
+        )
+        self.assertEqual(
+            [(item["repository"], item["depth"]) for item in deeper["items"]],
+            [("beta-app", 1), ("eta-portal", 2)],
+        )
+        self.assertEqual(deeper["beyond_max_depth"], [])
+
+    def test_a_transitive_walk_reports_the_loop_once_and_never_follows_it(self):
+        """Catches: `cycles` not found over the library's `depended_on_by` edges, so
+        the loop alpha-lib <-> beta-app goes unreported; the loop followed, so
+        alpha-lib is listed among its own dependents or the walk repeats; or a
+        repository reached at two hops given the wrong path or edge. From
+        alpha-lib: beta-app at one hop, then eta-portal at two, through beta-app;
+        beta-app's other dependent is alpha-lib itself, already visited. From
+        beta-app: alpha-lib and eta-portal at one hop, and the loop the same."""
+        walk = tools_relationships.dependents(self.session, "alpha-lib", transitive=True)
+        self.assertEqual(walk["repository"], known("alpha-lib"))
+        self.assertEqual(walk["max_depth"], 4)
+        self.assertEqual(walk["cycles"], LOOP)
         self.assertEqual(walk["beyond_max_depth"], [])
-        self.assertEqual(walk["cycles"], [])
+        self.assertEqual(
+            walk["items"],
+            [
+                {
+                    "repository": "beta-app",
+                    "depth": 1,
+                    "path": ["alpha-lib", "beta-app"],
+                    "edges": [{**NPM_EDGE, "repository": "beta-app"}],
+                },
+                {
+                    "repository": "eta-portal",
+                    "depth": 2,
+                    "path": ["alpha-lib", "beta-app", "eta-portal"],
+                    "edges": [{**ETA_ON_BETA, "repository": "eta-portal"}],
+                },
+            ],
+        )
+        self.assertEqual(walk["total"], 2)
+
+        other = tools_relationships.dependents(self.session, "beta-app", transitive=True)
+        self.assertEqual(
+            [(item["repository"], item["depth"], item["path"]) for item in other["items"]],
+            [
+                ("alpha-lib", 1, ["beta-app", "alpha-lib"]),
+                ("eta-portal", 1, ["beta-app", "eta-portal"]),
+            ],
+        )
+        self.assertEqual(other["cycles"], LOOP)
 
     def test_dependencies_page_the_edge_and_the_target_outside_by_their_cursor(self):
         """Catches: `cursor` not followed over beta-app's dependencies, so the
@@ -213,16 +299,22 @@ class RelationshipsContract(harness.Contract):
         )
 
     def test_dependents_take_only_their_own_cursor(self):
-        """Catches: `cursor` not judged against the dependents listing, so a page
-        cursor from beta-app's dependencies is followed into alpha-lib's dependents
-        instead of refused. (alpha-lib has one consumer, so its own listing is one
-        page: a second page needs a second consumer in the estate.)"""
+        """Catches: `cursor` not followed over beta-app's two consumers, so the
+        second page repeats alpha-lib, loses eta-portal, or restarts; a page's
+        `total` counting only what it shows; or `cursor` not judged against the
+        dependents listing, so a page cursor from beta-app's dependencies is
+        followed into alpha-lib's dependents instead of refused."""
         found = harness.pages(
-            lambda **paging: tools_relationships.dependents(self.session, "alpha-lib", **paging)
+            lambda **paging: tools_relationships.dependents(self.session, "beta-app", **paging)
         )
         self.assertEqual(
-            [page["items"] for page in found], [[{**NPM_EDGE, "repository": "beta-app"}]]
+            [page["items"] for page in found],
+            [
+                [{**ALPHA_ON_BETA, "repository": "alpha-lib"}],
+                [{**ETA_ON_BETA, "repository": "eta-portal"}],
+            ],
         )
+        self.assertEqual([(page["page"], page["total"]) for page in found], [(1, 2), (2, 2)])
         other = tools_relationships.dependencies(self.session, "beta-app", cap_bytes=1)
         self.assertIsNotNone(other["next_page"])
         with self.assertRaises(results.CursorRefused):
@@ -232,25 +324,49 @@ class RelationshipsContract(harness.Contract):
 
     def test_repo_answer_over_the_cap_pages_the_library_file(self):
         """Catches: the library's by-repo file not split as written when it is over
-        the cap - its fields other than the two lists lost from the page, or its
-        edge not named by list and position - or `cursor` not judged against this
-        listing. (beta-app's file holds one edge, so it is one page: a second needs
-        a second edge in one file.)"""
-        found = tools_relationships.repo_answer(self.session, "beta-app", cap_bytes=1)
+        the cap - its fields other than the two lists lost from a page, or an
+        edge not named by list and position - or `cursor` not followed over
+        beta-app's three edges, `depends_on` then `depended_on_by`, so a page
+        repeats one, drops one, or loses its place across the two lists; or
+        `cursor` not judged against this listing."""
+        found = harness.pages(
+            lambda **paging: tools_relationships.repo_answer(self.session, "beta-app", **paging)
+        )
         self.assertEqual(
-            found["items"],
+            [page["items"] for page in found],
             [
-                {
-                    "list": "depends_on",
-                    "position": 0,
-                    "edge": {**NPM_EDGE, "repository": "alpha-lib"},
-                }
+                [
+                    {
+                        "list": "depends_on",
+                        "position": 0,
+                        "edge": {**NPM_EDGE, "repository": "alpha-lib"},
+                    }
+                ],
+                [
+                    {
+                        "list": "depended_on_by",
+                        "position": 0,
+                        "edge": {**ALPHA_ON_BETA, "repository": "alpha-lib"},
+                    }
+                ],
+                [
+                    {
+                        "list": "depended_on_by",
+                        "position": 1,
+                        "edge": {**ETA_ON_BETA, "repository": "eta-portal"},
+                    }
+                ],
             ],
         )
-        self.assertEqual(found["totals"], {"depends_on": 1, "depended_on_by": 0})
-        self.assertEqual(found["relationships"]["commit"], SHAS["beta-app"])
-        self.assertNotIn("depends_on", found["relationships"])
-        self.assertIsNone(found["next_page"])
+        self.assertEqual(
+            [page["totals"] for page in found], [{"depends_on": 1, "depended_on_by": 2}] * 3
+        )
+        for page in found:
+            with self.subTest(page=page["page"]):
+                self.assertEqual(page["relationships"]["commit"], SHAS["beta-app"])
+                self.assertEqual(page["relationships"]["repository"], "beta-app")
+                self.assertNotIn("depends_on", page["relationships"])
+                self.assertNotIn("depended_on_by", page["relationships"])
         other = tools_relationships.dependencies(self.session, "beta-app", cap_bytes=1)
         with self.assertRaises(results.CursorRefused):
             tools_relationships.repo_answer(

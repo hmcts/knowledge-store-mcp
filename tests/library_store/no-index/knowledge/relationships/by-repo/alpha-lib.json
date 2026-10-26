@@ -1,6 +1,6 @@
 {
- "base_url": "https://github.com/example-org/alpha-lib/blob/18e250970e32e1fd57f1da2b308d662883363234/",
- "commit": "18e250970e32e1fd57f1da2b308d662883363234",
+ "base_url": "https://github.com/example-org/alpha-lib/blob/710449869c426dac2fa8101fdf726245e3635ee0/",
+ "commit": "710449869c426dac2fa8101fdf726245e3635ee0",
  "depended_on_by": [
   {
    "chart": "",
@@ -21,7 +21,26 @@
    "repository": "beta-app"
   }
  ],
- "depends_on": [],
+ "depends_on": [
+  {
+   "chart": "",
+   "examples": [
+    {
+     "line": "\"beta-app\": \"^1.0.0\"",
+     "url": "https://github.com/example-org/alpha-lib/blob/710449869c426dac2fa8101fdf726245e3635ee0/package.json#L5"
+    }
+   ],
+   "kinds": {
+    "npm_package": 1
+   },
+   "references": 1,
+   "refs_pinned": {
+    "^1.0.0": 1
+   },
+   "refs_unpinned": 0,
+   "repository": "beta-app"
+  }
+ ],
  "extra": {},
  "repository": "alpha-lib"
 }

@@ -7,9 +7,9 @@ Every expected record is derived by hand, before the store is read, from what
 `build_minimum_standard_settings.py` (what the snapshot records):
 
 - The snapshot is `github_responses.json`'s answers, read at 2026-10-20 (the
-  clock `pipeline.py` fixes). alpha-lib and beta-app are not archived, on `main`,
-  with secret scanning and Dependabot alerts on; alpha-lib's `main` is protected
-  and beta-app's is not. Every call for delta-deploy is 404, so each of its five
+  clock `pipeline.py` fixes). alpha-lib, beta-app and eta-portal are not
+  archived, on `main`, with secret scanning and Dependabot alerts on;
+  alpha-lib's and eta-portal's `main` is protected and beta-app's is not. Every call for delta-deploy is 404, so each of its five
   settings is unread (`null`). `example-org/.github` is private, so the
   organisation supplies no default security policy.
 - `owner`: the first CODEOWNERS found; beta-app's `* @example-org/payments-team`
@@ -30,7 +30,10 @@ Every expected record is derived by hand, before the store is read, from what
   evidence. An unread setting is `not_determinable`, "no access".
 - `secure_by_design` (no threat model) and `patching` are `not_determinable`
   everywhere; `unmaintained` is `not_determinable` with the last commit cited:
-  "not archived" for alpha-lib and beta-app, "no access" for delta-deploy.
+  "not archived" for alpha-lib, beta-app and eta-portal, "no access" for
+  delta-deploy.
+- eta-portal holds only a `package.json`, with the same snapshot answers as
+  alpha-lib, so its record is alpha-lib's with its own name and last commit.
 - `as_of` is each clone's `main` HEAD, its date as git's `%cI` writes it: the
   generator's git, recorded as `# git:` in `library_store/requirements.txt`,
   writes UTC as `Z` (2.55). The shas are `inputs.json`'s.
@@ -135,7 +138,7 @@ def live(repo: str, date: str) -> dict:
 
 ALPHA = {
     "repository": "alpha-lib",
-    "as_of": {"commit": SHAS["alpha-lib"], "date": "2026-10-03T09:00:00Z"},
+    "as_of": {"commit": SHAS["alpha-lib"], "date": "2026-10-04T09:00:00Z"},
     "settings_read_at": READ_AT,
     "points": {
         "owner": NO_OWNER,
@@ -159,7 +162,16 @@ ALPHA = {
             ],
         ),
         "patching": PATCHING,
-        "unmaintained": live("alpha-lib", "2026-10-03T09:00:00Z"),
+        "unmaintained": live("alpha-lib", "2026-10-04T09:00:00Z"),
+    },
+}
+ETA = {
+    "repository": "eta-portal",
+    "as_of": {"commit": SHAS["eta-portal"], "date": "2026-10-05T12:00:00Z"},
+    "settings_read_at": READ_AT,
+    "points": {
+        **ALPHA["points"],
+        "unmaintained": live("eta-portal", "2026-10-05T12:00:00Z"),
     },
 }
 BETA = {
@@ -272,8 +284,8 @@ class MinimumStandardContract(harness.Contract):
         repository missing from the whole-layer answer, or the summary's notes
         not served."""
         found = tools_minimum_standard.minimum_standard(self.session)
-        self.assertEqual(found["items"], [ALPHA, BETA, DELTA])
-        self.assertEqual(found["total"], 3)
+        self.assertEqual(found["items"], [ALPHA, BETA, DELTA, ETA])
+        self.assertEqual(found["total"], 4)
         self.assertEqual(found["scope"], "estate")
         self.assertEqual(found["notes"], NOTES)
         self.assertNotIn("no_record", found)
@@ -355,7 +367,7 @@ class MinimumStandardContract(harness.Contract):
         unmaintained = found["items"][0]["points"]["unmaintained"]
         self.assertEqual(unmaintained["state"], "not_determinable")
         self.assertEqual(
-            unmaintained["evidence"][0], last_commit("alpha-lib", "2026-10-03T09:00:00Z")
+            unmaintained["evidence"][0], last_commit("alpha-lib", "2026-10-04T09:00:00Z")
         )
 
     def test_repos_scopes_to_the_names_given_as_a_list_or_as_text(self):
@@ -381,13 +393,13 @@ class MinimumStandardContract(harness.Contract):
 
     def test_the_layer_pages_one_repository_a_page_by_its_cursor(self):
         """Catches: `cursor` not followed over the layer's records, so a page
-        repeats alpha-lib or drops delta-deploy, or a later page loses the
-        summary's notes."""
+        repeats alpha-lib or drops delta-deploy or eta-portal, or a later page
+        loses the summary's notes."""
         found = harness.pages(
             lambda **paging: tools_minimum_standard.minimum_standard(self.session, **paging)
         )
-        self.assertEqual([page["items"] for page in found], [[ALPHA], [BETA], [DELTA]])
-        self.assertEqual([page["notes"] for page in found], [NOTES] * 3)
+        self.assertEqual([page["items"] for page in found], [[ALPHA], [BETA], [DELTA], [ETA]])
+        self.assertEqual([page["notes"] for page in found], [NOTES] * 4)
 
     def test_two_scopes_at_once_are_refused(self):
         """Catches: `repos` and `product` both given and one silently dropped, so
