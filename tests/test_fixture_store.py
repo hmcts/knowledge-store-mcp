@@ -599,7 +599,8 @@ class TrapTest(FixtureStoreCase):
 
     def test_the_opt_in_minimum_standard_layer_holds_its_traps(self):
         """Catches: the layer written without its stamp, a state, the secret finding,
-        the dates or the product drifting from DESIGN.md 11, so the tool tests run
+        the organisation-default citation, the dates or the product drifting from
+        DESIGN.md 11, so the tool tests run
         over a store that no longer holds what they assert; or the default store
         writing the layer, so the absent-layer answer is never asked."""
         layer = "knowledge/minimum-standard"
@@ -610,8 +611,9 @@ class TrapTest(FixtureStoreCase):
             '`{"line": 4, "path": "config/application.yml", "rule": "key-name"}`',
             "`2026-10-15T20:00:00+00:00`",
             '`["archived repositories are not in the store"]`',
-            "| payments-api | present | present | absent | present | present | "
+            "| payments-api | present | present | not_determinable | present | present | "
             "not_determinable | not_determinable |",
+            "`example-org/.github`",
         )
         self.assertFalse((self.root / layer).exists())
         root = build(Path(tempfile.mkdtemp(dir=self.root.parent)) / "s", minimum_standard=True)
@@ -635,6 +637,12 @@ class TrapTest(FixtureStoreCase):
         self.assertEqual(summary["notes"], ["archived repositories are not in the store"])
         payments = _json(root, f"{layer}/by-repo/payments-api.json")
         self.assertEqual(payments["points"]["no_secrets"]["evidence"], [finding])
+        self.assertEqual(payments["points"]["no_secrets"]["state"], "not_determinable")
+        ledger = _json(root, f"{layer}/by-repo/ledger-service.json")
+        self.assertEqual(
+            ledger["points"]["security_contact"]["evidence"][-1],
+            {"path": "example-org/.github", "reason": "no organisation default security policy"},
+        )
         self.assertEqual(payments["settings_read_at"], "2026-10-15T20:00:00+00:00")
         self.assertEqual(
             payments["as_of"], {"commit": "9" * 40, "date": "2026-10-15T17:45:00+01:00"}

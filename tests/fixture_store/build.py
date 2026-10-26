@@ -512,9 +512,11 @@ FAQ_DATA = {
 
 # --- The minimum-standard layer -----------------------------------------------------
 #
-# Transcribed from knowledge-store-builder's own writer: `build_minimum_standard.
-# evidence_for` run over three synthetic clones, the script DESIGN.md 11 names. Only
-# the stamp is left out of each record; `build` writes it, so a variant can change it.
+# Transcribed from knowledge-store-builder v0.19.0's own writers: `build_minimum_standard.
+# evidence_for` run over three synthetic clones, reading a settings snapshot made by
+# `build_minimum_standard_settings`, by the script DESIGN.md 11 names. Only the stamp
+# is left out of each record and the snapshot; `build` writes it, so a variant can
+# change it.
 
 MINIMUM_STANDARD = "knowledge/minimum-standard"
 MINIMUM_STANDARD_FORMAT = {"layer": "minimum_standard", "major": 1, "minor": 0}
@@ -608,6 +610,10 @@ MINIMUM_STANDARD_RECORDS: dict[str, dict] = {
                     {"path": ".github/SECURITY.md", "reason": "not found"},
                     {"path": "SECURITY.md", "reason": "not found"},
                     {"path": "docs/SECURITY.md", "reason": "not found"},
+                    {
+                        "path": "example-org/.github",
+                        "reason": "no organisation default security policy",
+                    },
                 ],
                 "reason": "no SECURITY.md",
                 "state": "absent",
@@ -685,8 +691,8 @@ MINIMUM_STANDARD_RECORDS: dict[str, dict] = {
             },
             "no_secrets": {
                 "evidence": [{"line": 4, "path": "config/application.yml", "rule": "key-name"}],
-                "reason": "pattern scan of the current tree found these; values are not recorded and history is not scanned",
-                "state": "absent",
+                "reason": "only secret-looking setting names were found; no committed value was confirmed",
+                "state": "not_determinable",
             },
             "owner": {
                 "evidence": [
@@ -836,6 +842,9 @@ MINIMUM_STANDARD_RECORDS: dict[str, dict] = {
 }
 
 MINIMUM_STANDARD_SETTINGS: dict = {
+    "organisations": {
+        "example-org": {"default_security_policy": None, "public": True, "unreadable": []},
+    },
     "read_at": "2026-10-15T20:00:00+00:00",
     "repositories": {
         "ledger-service": {
@@ -843,6 +852,7 @@ MINIMUM_STANDARD_SETTINGS: dict = {
             "branch_protection": None,
             "default_branch": None,
             "dependabot_alerts": None,
+            "organisation": "example-org",
             "secret_scanning": None,
             "unreadable": [
                 "archived",
@@ -857,6 +867,7 @@ MINIMUM_STANDARD_SETTINGS: dict = {
             "branch_protection": "present",
             "default_branch": "main",
             "dependabot_alerts": "enabled",
+            "organisation": "example-org",
             "secret_scanning": "enabled",
             "unreadable": [],
         },

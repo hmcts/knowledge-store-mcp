@@ -537,17 +537,25 @@ default store does not write the layer, so there it is absent (section 9.4).
 | Repository | `owner` | `security_contact` | `no_secrets` | `secure_by_design` | `hygiene` | `patching` | `unmaintained` |
 |---|---|---|---|---|---|---|---|
 | ledger-service | absent | absent | not_determinable | not_determinable | absent | not_determinable | not_determinable |
-| payments-api | present | present | absent | present | present | not_determinable | not_determinable |
+| payments-api | present | present | not_determinable | present | present | not_determinable | not_determinable |
 | reporting-worker | absent | absent | not_determinable | not_determinable | not_determinable | not_determinable | not_determinable |
 
 - **payments-api's one secret-scan finding** is
   `{"line": 4, "path": "config/application.yml", "rule": "key-name"}`: a location
-  and a rule. The value is in no file of the store.
+  and a rule. The value is in no file of the store. A `key-name` finding is a
+  setting named for a secret, not a committed value, so the point is
+  `not_determinable` with that finding as its evidence: evidence is not absence.
+- **ledger-service's `security_contact` is `absent`** with four citations: the
+  three places a SECURITY.md could be, each not found, and
+  `example-org/.github`, the organisation's public `.github` repository, which
+  holds no default security policy for GitHub to apply in its place.
 - **`settings_read_at`** is `2026-10-15T20:00:00+00:00` for payments-api and
   ledger-service. The snapshot cannot read any of ledger-service's settings, so
   each setting item reads `not_determinable` with the reason `no access`. It holds
   no entry for reporting-worker, whose `settings_read_at` is therefore null and
-  whose setting items read `no settings snapshot`.
+  whose setting items read `no settings snapshot`. The snapshot's
+  `organisations` records `example-org`'s `.github` as public with no
+  `default_security_policy`, and each repository entry names its `organisation`.
 - **reporting-worker's `owner` is `absent`** although its CODEOWNERS names a
   team: the only rule is for `/src/`, and no rule names an owner for the
   repository root.
@@ -567,10 +575,13 @@ are on. And every record is true of its `as_of` commit, not of today.
 **How it was made.** `generate_minimum_standard.py`, beside `build.py`, runs the
 library's `build_minimum_standard.evidence_for` over three synthetic clones, with
 git's two answers (the last commit, the tracked files) supplied through the
-writer's own `run=` seam so each `as_of` is the commit section 1 pins, and exits 0
-only when the result equals `build.py`'s records. The summary is composed as the
-writer's `main` composes it. The source is knowledge-store-builder's
-`feat/minimum-standard-evidence` at `1a4cdfd` with its final review round on top,
-not yet committed when this was transcribed: `build_minimum_standard.py` sha256
-`ab660f76ff116fb3...`, `minimum_standard.py` `dba480b459170e47...`. Re-run the
-script against the merged library and transcribe again if it exits 1.
+writer's own `run=` seam so each `as_of` is the commit section 1 pins. The
+settings snapshot it reads is made by the settings stage's own
+`read_repository` and `read_organisation` over canned `gh api` answers, through
+its `runner` seam; only `read_at` is the fixture's, because the stage takes it
+from the clock. The script exits 0 only when the records and the snapshot equal
+`build.py`'s. The summary is composed as the writer's `main` composes it. The
+source is knowledge-store-builder v0.19.0 (`eb7cc81`): `build_minimum_standard.py`
+sha256 `8851a60240eb168f...`, `build_minimum_standard_settings.py`
+`c2b8244a837687ad...`, `minimum_standard.py` `dba480b459170e47...`. Re-run the
+script against a later library and transcribe again if it exits 1.

@@ -9,17 +9,24 @@ has the minimum-standard stage. The library is not a dependency of this reposito
 output transcribed; CI never runs it. It writes three synthetic clones to a
 temporary directory, runs `build_minimum_standard.evidence_for` over each, and
 supplies git's two answers - the last commit, and the tracked files - through the
-writer's own `run=` seam, so each `as_of` is the commit DESIGN.md 1 pins. It exits
-0 when the records and the settings snapshot equal `build.py`'s, and otherwise
-prints the writer's records so they can be transcribed.
+writer's own `run=` seam, so each `as_of` is the commit DESIGN.md 1 pins.
 
-The clones' files are the only hand-written part. The secret-scan finding comes
-from a made-up value in `config/application.yml`; the writer records its rule,
-path and line, and the value reaches no file of the fixture.
+The settings snapshot the writer reads is made the same way: the settings stage's
+own `read_repository` and `read_organisation` run over canned `gh api` answers
+(`GITHUB`), through the `runner` seam. Only `read_at` is taken from `build.py`,
+because the stage stamps it from the clock. The script exits 0 when the records
+and the snapshot equal `build.py`'s, and otherwise prints what differs so it can
+be transcribed.
+
+The clones' files and the `gh api` answers are the only hand-written parts. The
+secret-scan finding comes from a made-up value in `config/application.yml`; the
+writer records its rule, path and line, and the value reaches no file of the
+fixture.
 """
 
 import importlib
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -29,8 +36,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from fixture_store.build import (  # noqa: E402
     MINIMUM_STANDARD_RECORDS,
     MINIMUM_STANDARD_SETTINGS,
+    ORG,
     REPOSITORIES,
 )
+
+# The repositories the snapshot holds; reporting-worker is left out, so the writer
+# has no snapshot entry for it (DESIGN.md 11).
+SNAPSHOT_REPOSITORIES = ("ledger-service", "payments-api")
+
+# `gh api <path>` -> (HTTP status, body): 200 with a JSON body, 204 with none, and
+# 404 as `gh` reports it. A path not here is a 404 too, which is how GitHub answers
+# a token that cannot see ledger-service: every one of its settings is unreadable.
+# The organisation's `.github` repository is public and holds no SECURITY.md, so
+# GitHub applies no default contact from it.
+GITHUB: dict[str, tuple[int, dict | None]] = {
+    f"repos/{ORG}/payments-api": (
+        200,
+        {
+            "archived": False,
+            "default_branch": "main",
+            "security_and_analysis": {"secret_scanning": {"status": "enabled"}},
+        },
+    ),
+    f"repos/{ORG}/payments-api/vulnerability-alerts": (204, None),
+    f"repos/{ORG}/payments-api/branches/main": (200, {"name": "main", "protected": True}),
+    f"repos/{ORG}/.github": (200, {"private": False, "visibility": "public"}),
+}
 
 # name -> (every tracked file and its text, the content-set paths the scan reads).
 CLONES: dict[str, tuple[dict[str, str], list[str]]] = {
@@ -71,11 +102,36 @@ CLONES: dict[str, tuple[dict[str, str], list[str]]] = {
 }
 
 
-def records(library_src: Path, work: Path) -> dict[str, dict]:
+def gh(arguments: list[str]) -> str:
+    """`gh api <path>` as the settings stage's `runner` calls it."""
+    if len(arguments) != 2 or arguments[0] != "api":
+        raise AssertionError(f"gh {arguments} is not a call the stage was expected to make")
+    status, body = GITHUB.get(arguments[1], (404, None))
+    if status == 404:
+        error = json.dumps({"message": "Not Found", "status": "404"})
+        raise subprocess.CalledProcessError(1, ["gh", *arguments], output=error)
+    return "" if body is None else json.dumps(body)
+
+
+def settings(stage) -> dict:
+    """The snapshot as the settings stage's `main` composes it, less its stamp."""
+    repositories = {}
+    for name in SNAPSHOT_REPOSITORIES:
+        record = stage.read_repository(gh, ORG, name)
+        record["organisation"] = ORG
+        repositories[name] = record
+    return {
+        "organisations": {ORG: stage.read_organisation(gh, ORG)},
+        "read_at": MINIMUM_STANDARD_SETTINGS["read_at"],
+        "repositories": repositories,
+    }
+
+
+def records(library_src: Path, work: Path, snapshot: dict) -> dict[str, dict]:
     sys.path.insert(0, str(library_src))
     writer = importlib.import_module("knowledgestore.build_minimum_standard")
     contract = importlib.import_module("knowledgestore.minimum_standard")
-    snapshot = {**MINIMUM_STANDARD_SETTINGS, "format": contract.format_stamp()}
+    snapshot = {**snapshot, "format": contract.format_stamp()}
     made = {}
     for name, (files, content) in sorted(CLONES.items()):
         clone = work / name
@@ -98,14 +154,28 @@ def records(library_src: Path, work: Path) -> dict[str, dict]:
 
 
 def main() -> int:
+    library_src = Path(sys.argv[1]).resolve()
+    sys.path.insert(0, str(library_src))
+    snapshot = settings(importlib.import_module("knowledgestore.build_minimum_standard_settings"))
     with tempfile.TemporaryDirectory() as tmp:
-        made = records(Path(sys.argv[1]).resolve(), Path(tmp))
-    if made == MINIMUM_STANDARD_RECORDS:
-        print(f"build.py's {len(made)} minimum-standard records are the writer's own")
-        return 0
-    print(json.dumps(made, indent=2, sort_keys=True))
-    print("build.py's records differ from the writer's: transcribe the above", file=sys.stderr)
-    return 1
+        made = records(library_src, Path(tmp), snapshot)
+    status = 0
+    if snapshot != MINIMUM_STANDARD_SETTINGS:
+        print(json.dumps({"MINIMUM_STANDARD_SETTINGS": snapshot}, indent=2, sort_keys=True))
+        print("build.py's settings snapshot differs from the stage's", file=sys.stderr)
+        status = 1
+    if made != MINIMUM_STANDARD_RECORDS:
+        print(json.dumps({"MINIMUM_STANDARD_RECORDS": made}, indent=2, sort_keys=True))
+        print("build.py's records differ from the writer's", file=sys.stderr)
+        status = 1
+    if status:
+        print("transcribe the above into build.py", file=sys.stderr)
+    else:
+        print(
+            f"build.py's settings snapshot and {len(made)} minimum-standard records "
+            "are the library's own"
+        )
+    return status
 
 
 if __name__ == "__main__":
