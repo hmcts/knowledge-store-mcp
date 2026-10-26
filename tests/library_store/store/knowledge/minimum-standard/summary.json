@@ -1,0 +1,64 @@
+{
+  "format": {
+    "layer": "minimum_standard",
+    "major": 1,
+    "minor": 0
+  },
+  "notes": [
+    "archived repositories are not in the store"
+  ],
+  "products": {
+    "payments": [
+      "alpha-lib",
+      "beta-app"
+    ]
+  },
+  "repositories": {
+    "alpha-lib": {
+      "as_of": {
+        "commit": "1def2e9d4b9ca5c361eed7fe284ec1df7ba1251c",
+        "date": "2026-10-02T09:00:00Z"
+      },
+      "points": {
+        "hygiene": "absent",
+        "no_secrets": "not_determinable",
+        "owner": "absent",
+        "patching": "not_determinable",
+        "secure_by_design": "not_determinable",
+        "security_contact": "absent",
+        "unmaintained": "not_determinable"
+      }
+    },
+    "beta-app": {
+      "as_of": {
+        "commit": "085f0da738cebf28ac22b57c8c07530936769442",
+        "date": "2026-10-06T09:00:00Z"
+      },
+      "points": {
+        "hygiene": "absent",
+        "no_secrets": "not_determinable",
+        "owner": "present",
+        "patching": "not_determinable",
+        "secure_by_design": "not_determinable",
+        "security_contact": "present",
+        "unmaintained": "not_determinable"
+      }
+    },
+    "delta-deploy": {
+      "as_of": {
+        "commit": "8f4baa6737231af070b7598e3b73c5880f56cf76",
+        "date": "2026-10-08T09:00:00Z"
+      },
+      "points": {
+        "hygiene": "absent",
+        "no_secrets": "not_determinable",
+        "owner": "absent",
+        "patching": "not_determinable",
+        "secure_by_design": "not_determinable",
+        "security_contact": "absent",
+        "unmaintained": "not_determinable"
+      }
+    }
+  },
+  "settings_read_at": "2026-10-20T00:00:00+00:00"
+}

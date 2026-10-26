@@ -1,0 +1,20 @@
+{
+ "alpha-lib": {
+  "title": "Deep dive: alpha-lib",
+  "html": "<h2><a href=\"https://github.com/example-org/alpha-lib\" target=\"_blank\" rel=\"noopener\">alpha-lib</a></h2><p>Measured at <a href=\"https://github.com/example-org/alpha-lib\" target=\"_blank\" rel=\"noopener\">alpha-lib</a> <code>1def2e9d</code>.</p><p><b><a href=\"https://github.com/example-org/alpha-lib\" target=\"_blank\" rel=\"noopener\">alpha-lib</a> is the estate's refund library.</b> It publishes the <code>@example/alpha-lib</code> npm package, which <a href=\"https://github.com/example-org/beta-app\" target=\"_blank\" rel=\"noopener\">beta-app</a> depends on, and it holds the refund schema.</p><h3>What it holds</h3><ul><li><code>src/refund.ts</code>: the <code>refund</code> function and the <code>RefundHandler</code> class whose</li></ul><p><code>handle</code> method calls it.</p><ul><li><code>schemas/refund.schema.json</code>: the Refund JSON Schema, with a <code>money</code></li></ul><p>definition that the <code>total</code> property refers to.</p><ul><li><code>package.json</code>: the package name and version 1.2.0.</li></ul><h3>History</h3><p>Two commits on <code>main</code>. DEMO-1 added the handler and the package manifest on 1 October 2026; DEMO-2 added the schema the next day. Nothing has changed it since.</p><h3>Who depends on it</h3><p><a href=\"https://github.com/example-org/beta-app\" target=\"_blank\" rel=\"noopener\">beta-app</a> declares <code>@example/alpha-lib</code> in its <code>package.json</code> and imports <code>refund</code> in <code>src/pay.ts</code>. No other repository in the estate refers to it.</p><h3>Limits</h3><p>This dossier describes the code at the commit above and says nothing about how the package is released or who maintains it.</p>",
+  "source": "docs/deep-dives/alpha-lib.md",
+  "sha": "1def2e9d"
+ },
+ "_metadata": {
+  "prose_digests": [
+   "e6dd8f31789870c9bf2e8f4d4e426fa10771115e5df0963d1e77c7eaf4c1a868"
+  ],
+  "authored": {
+   "alpha-lib": {
+    "authored_as_of": "2026-10-08T09:00:00Z",
+    "authored_commit": "8f4baa6737231af070b7598e3b73c5880f56cf76",
+    "source_sha256": "08f78d2a3a4dd845b08b4d723a426981d53b82b2270d98ab3777c51bb475faf6"
+   }
+  }
+ }
+}

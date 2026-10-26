@@ -1,7 +1,8 @@
-"""Regenerate `store/`: a store knowledge-store-builder's own stages wrote, at the
-release named in `VERSION`, with the graph graphify `GRAPHIFY` extracted.
+"""Regenerate `store/` and `no-index/`: stores knowledge-store-builder's own stages
+wrote, at the release named in `VERSION`, with the graph graphify `GRAPHIFY`
+extracted.
 
-    uv run python tests/library_store/generate.py           # rebuild store/
+    uv run python tests/library_store/generate.py           # rebuild both
     uv run python tests/library_store/generate.py --check   # rebuild elsewhere, compare
 
 The library is not a dependency of this repository: it is not on PyPI, its
@@ -12,12 +13,16 @@ and `git` on PATH, and network access the first time, to build the frozen
 environment `requirements.txt` names.
 
 This script writes the inputs - three git repositories, their bare remotes, the
-store's `config/` and one extra layer - into a fresh temporary directory, then
-runs `pipeline.py` inside the frozen environment, which runs the library's real
-stages in their documented order. Everything copied into `store/` is the
-library's or graphify's own bytes. Every commit carries a fixed identity and
-date, so the shas recorded in `inputs.json` and every byte of the store are the
-same on every run; `--check` proves that by rebuilding and comparing.
+store's `config/`, one extra layer, and what an agent authors in a real build
+(a community summary, a topic brief, a deep dive, two written answers) - into a
+fresh temporary directory, then runs `pipeline.py` inside the frozen
+environment, which runs the library's real stages in their documented order. It
+runs it twice over the same inputs: once whole for `store/`, and once with
+`--no-index` for `no-index/`, so the second store records its index absent
+exactly as the library does. Everything copied into either is the library's or
+graphify's own bytes. Every commit carries a fixed identity and date, so the
+shas recorded in `inputs.json` and every byte of both stores are the same on
+every run; `--check` proves that by rebuilding and comparing.
 """
 
 import json
@@ -204,10 +209,16 @@ REPOSITORIES_TXT = "".join(f"{name}|https://github.com/{ORG}/{name}.git|main\n" 
 # A layer the store owns, declared in `extra_layers` and kept beside the library's
 # relationships files: it must never be read as a repository.
 EXTRA_LAYER = "knowledge/relationships/ownership-notes.json"
+# The answers-layer output, declared beside it as the docs declare it.
+ANSWERS_LAYER = "knowledge/answers.json"
 EXTRA_LAYERS_JSON = (
     '{\n  "ownership_notes": {\n'
     f'    "path": "{EXTRA_LAYER}",\n'
     '    "description": "Which team owns each shared library",\n'
+    '    "kind": "answers"\n  },\n'
+    '  "answers": {\n'
+    f'    "path": "{ANSWERS_LAYER}",\n'
+    '    "description": "Written journeys and findings.",\n'
     '    "kind": "answers"\n  }\n}\n'
 )
 EXTRA_LAYER_JSON = (
@@ -216,6 +227,108 @@ EXTRA_LAYER_JSON = (
     '    "html": "<p>The platform team publishes alpha-lib for every web application.</p>",\n'
     '    "source": "docs/answers/who-owns-alpha-lib.md"\n  }\n}\n'
 )
+
+# Agent-authored inputs. In a real build an agent writes these from the evidence
+# the `extract` stages gather; here they are fixed text the tests quote.
+
+# The summary of the community holding `alpha-lib::src_refund_refund`, keyed by
+# that anchor; `pipeline.py` re-keys it by community id before `summaries merge`.
+SUMMARY_ANCHOR = "alpha-lib::src_refund_refund"
+SUMMARY_REFUNDS = (
+    "The refund code alpha-lib publishes as the @example/alpha-lib package. "
+    "The refund function turns an amount into its negative, and "
+    "RefundHandler.handle passes each amount it is given to refund."
+)
+
+TOPICS_TXT = "refunds | Refunds | refund, payment\n"
+TOPIC_REFUNDS = """\
+# Refunds
+
+**A refund is the negative of the amount paid, computed in one place: the
+`refund` function in alpha-lib.** Every caller in this estate reaches it, either
+directly or through `RefundHandler`.
+
+## Mechanisms
+
+- `refund(amount)` in alpha-lib's `src/refund.ts` returns `-amount`. It holds no
+  state and performs no checks.
+- `RefundHandler.handle(amount)` in the same file passes the amount straight to
+  `refund`.
+- beta-app's `PaymentService.pay` in `src/pay.ts` imports `refund` from the
+  `@example/alpha-lib` package, so a payment in beta-app is computed by the
+  library rather than by its own code.
+- The refund schema in alpha-lib, `schemas/refund.schema.json`, describes a
+  refund request: a `requestedOn` date and a `total` that refers to the `money`
+  definition.
+
+## Evidence
+
+DEMO-1 introduced the handler in alpha-lib and the call from beta-app. DEMO-2
+added the schema.
+
+## What this is NOT
+
+This is not a payment ledger. Nothing in the estate stores a refund, approves
+one or sends money: those questions need another source.
+"""
+
+DEEP_DIVE_ALPHA = """\
+# alpha-lib
+
+Measured at alpha-lib `1def2e9d`.
+
+**alpha-lib is the estate's refund library.** It publishes the
+`@example/alpha-lib` npm package, which beta-app depends on, and it holds the
+refund schema.
+
+## What it holds
+
+- `src/refund.ts`: the `refund` function and the `RefundHandler` class whose
+  `handle` method calls it.
+- `schemas/refund.schema.json`: the Refund JSON Schema, with a `money`
+  definition that the `total` property refers to.
+- `package.json`: the package name and version 1.2.0.
+
+## History
+
+Two commits on `main`. DEMO-1 added the handler and the package manifest on
+1 October 2026; DEMO-2 added the schema the next day. Nothing has changed it
+since.
+
+## Who depends on it
+
+beta-app declares `@example/alpha-lib` in its `package.json` and imports
+`refund` in `src/pay.ts`. No other repository in the estate refers to it.
+
+## Limits
+
+This dossier describes the code at the commit above and says nothing about how
+the package is released or who maintains it.
+"""
+
+# Written answers for `answers-layer`. One carries a `date:`; the other has
+# none, so it is dated by its commit in the store's own repository (2026-10-19,
+# made by `pipeline.py`).
+ANSWER_HOW_REFUNDS_WORK = """\
+---
+date: 2026-10-18
+---
+# How do refunds work?
+
+A refund is the negative of the amount paid. alpha-lib's `refund` function
+computes it, and beta-app calls it through the `@example/alpha-lib` package.
+"""
+ANSWER_WHO_APPROVES_REFUNDS = """\
+# Who approves refunds?
+
+The payments team approves refunds over the daily limit. The code does not
+enforce an approval: it is a team practice.
+"""
+ANSWERS = {
+    "docs/answers/how-refunds-work.md": ANSWER_HOW_REFUNDS_WORK,
+    "docs/answers/who-approves-refunds.md": ANSWER_WHO_APPROVES_REFUNDS,
+}
+PRODUCTS_JSON = '{"payments": ["alpha-lib", "beta-app"]}\n'
 
 # Library outputs never committed: the plain graph and index sit beside the
 # archives a store commits instead.
@@ -287,9 +400,19 @@ def _sources(tmp: Path) -> dict[str, str]:
 
 
 def _store_inputs(root: Path) -> None:
+    """The store's configuration and authored inputs, in the store root; the
+    summaries JSON beside it, where `pipeline.py` reads it."""
     _write(root / "config" / "repositories.txt", REPOSITORIES_TXT)
     _write(root / "config" / "store-extra-layers.json", EXTRA_LAYERS_JSON)
+    _write(root / "config" / "products.json", PRODUCTS_JSON)
+    _write(root / "config" / "topics.txt", TOPICS_TXT)
     _write(root / EXTRA_LAYER, EXTRA_LAYER_JSON)
+    _write(root / "docs" / "topics" / "refunds.md", TOPIC_REFUNDS)
+    _write(root / "docs" / "deep-dives" / "alpha-lib.md", DEEP_DIVE_ALPHA)
+    for rel, text in ANSWERS.items():
+        _write(root / rel, text)
+    summaries = json.dumps({SUMMARY_ANCHOR: SUMMARY_REFUNDS}, indent=1) + "\n"
+    _write(root.parent / "authored" / "summaries-by-anchor.json", summaries)
 
 
 def _uv_dir(*arguments: str) -> str:
@@ -392,14 +515,22 @@ def _copied(root: Path) -> list[str]:
     return sorted(files)
 
 
-def build(tmp: Path) -> tuple[Path, dict[str, str]]:
-    """Inputs and every stage, in `tmp`. Returns the store root and the shas."""
+def build(tmp: Path) -> tuple[dict[Path, Path], dict[str, str]]:
+    """Inputs and every stage, in `tmp`, twice: the whole pipeline, and the same
+    inputs without `index`. Returns each built root by the directory it is
+    committed to, and the shas."""
     shas = _sources(tmp)
-    root = tmp / "store"
-    root.mkdir()
-    _store_inputs(root)
-    _pipeline(tmp, root)
-    return root, shas
+    built = {}
+    for target, parent, flags in (
+        (OUT, tmp / "full", ()),
+        (NO_INDEX, tmp / "bare", ("--no-index",)),
+    ):
+        root = parent / "store"
+        root.mkdir(parents=True)
+        _store_inputs(root)
+        _pipeline(tmp, root, *flags)
+        built[target] = root
+    return built, shas
 
 
 def _inputs_json(shas: dict[str, str]) -> str:
@@ -452,14 +583,16 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory() as name:
         tmp = Path(name).resolve()
         try:
-            root, shas = build(tmp)
+            built, shas = build(tmp)
         except subprocess.CalledProcessError as failed:
             print(f"generation failed, nothing written: {failed}", file=sys.stderr)
             return 1
         if check:
-            fresh = tmp / "out"
-            _export(root, fresh)
-            differing = [f"store/{rel}" for rel in _differences(fresh, OUT)]
+            differing = []
+            for target, root in built.items():
+                fresh = tmp / "out" / target.name
+                _export(root, fresh)
+                differing += [f"{target.name}/{rel}" for rel in _differences(fresh, target)]
             if not INPUTS.is_file() or INPUTS.read_text("utf-8") != _inputs_json(shas):
                 differing.append(INPUTS.name)
             for rel in differing:
@@ -468,11 +601,13 @@ def main(argv: list[str]) -> int:
                 print(f"recorded interpreter: {_recorded_interpreter()}")
                 print(f"this build's interpreter: {_running_interpreter(tmp)}")
                 return 1
-            print(f"store/ reproduces from {LIBRARY}")
+            print(f"store/ and no-index/ reproduce from {LIBRARY}")
             return 0
-        _export(root, OUT)
+        for target, root in built.items():
+            _export(root, target)
         INPUTS.write_text(_inputs_json(shas), encoding="utf-8")
-    print(f"wrote {OUT.relative_to(HERE.parent.parent)} from {LIBRARY}")
+    for target in built:
+        print(f"wrote {target.relative_to(HERE.parent.parent)} from {LIBRARY}")
     return 0
 
 

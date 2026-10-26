@@ -1,0 +1,23 @@
+{
+ "refunds": {
+  "title": "Refunds",
+  "keywords": [
+   "refund",
+   "payment"
+  ],
+  "html": "<h2>Refunds</h2><p><b>A refund is the negative of the amount paid, computed in one place: the <code>refund</code> function in <a href=\"https://github.com/example-org/alpha-lib\" target=\"_blank\" rel=\"noopener\">alpha-lib</a>.</b> Every caller in this estate reaches it, either directly or through <code>RefundHandler</code>.</p><h3>Mechanisms</h3><ul><li><code>refund(amount)</code> in <a href=\"https://github.com/example-org/alpha-lib\" target=\"_blank\" rel=\"noopener\">alpha-lib</a>'s <code>src/refund.ts</code> returns <code>-amount</code>. It holds no</li></ul><p>state and performs no checks.</p><ul><li><code>RefundHandler.handle(amount)</code> in the same file passes the amount straight to</li></ul><p><code>refund</code>.</p><ul><li><a href=\"https://github.com/example-org/beta-app\" target=\"_blank\" rel=\"noopener\">beta-app</a>'s <code>PaymentService.pay</code> in <code>src/pay.ts</code> imports <code>refund</code> from the</li></ul><p><code>@example/alpha-lib</code> package, so a payment in <a href=\"https://github.com/example-org/beta-app\" target=\"_blank\" rel=\"noopener\">beta-app</a> is computed by the library rather than by its own code.</p><ul><li>The refund schema in <a href=\"https://github.com/example-org/alpha-lib\" target=\"_blank\" rel=\"noopener\">alpha-lib</a>, <code>schemas/refund.schema.json</code>, describes a</li></ul><p>refund request: a <code>requestedOn</code> date and a <code>total</code> that refers to the <code>money</code> definition.</p><h3>Evidence</h3><p>DEMO-1 introduced the handler in <a href=\"https://github.com/example-org/alpha-lib\" target=\"_blank\" rel=\"noopener\">alpha-lib</a> and the call from <a href=\"https://github.com/example-org/beta-app\" target=\"_blank\" rel=\"noopener\">beta-app</a>. DEMO-2 added the schema.</p><h3>What this is NOT</h3><p>This is not a payment ledger. Nothing in the estate stores a refund, approves one or sends money: those questions need another source.</p>",
+  "source": "docs/topics/refunds.md"
+ },
+ "_metadata": {
+  "prose_digests": [
+   "692b353c5cfe18558663400b5fc72dd4afab821e2e2ddeb4330fd56544df91d8"
+  ],
+  "authored": {
+   "refunds": {
+    "authored_as_of": "2026-10-08T09:00:00Z",
+    "authored_commit": "8f4baa6737231af070b7598e3b73c5880f56cf76",
+    "source_sha256": "ad93602981cf2f9f45cbd6d839ba81b9abbf39fa888bdf6dd000dcbf8136acea"
+   }
+  }
+ }
+}

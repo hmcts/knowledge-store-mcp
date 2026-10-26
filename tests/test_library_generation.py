@@ -12,13 +12,38 @@ import json
 import re
 import unittest
 
-from library_store.generate import OUT, REQUIREMENTS
+from pathlib import Path
 
-MANIFEST = OUT / "knowledge/store-manifest.json"
+from library_store.generate import NO_INDEX, OUT, REQUIREMENTS
+
+MANIFEST = "knowledge/store-manifest.json"
+
+# Every layer v0.19.0's manifest names: its 18 `LAYERS` and `deployments`.
+LIBRARY_LAYERS = (
+    "graph",
+    "labels",
+    "provenance",
+    "repository_manifest",
+    "context",
+    "content_files",
+    "history",
+    "intent",
+    "ticket_descriptions",
+    "ticket_tracker",
+    "summaries",
+    "topics",
+    "deep_dives",
+    "semantic",
+    "explorer",
+    "relationships",
+    "minimum_standard",
+    "index",
+    "deployments",
+)
 
 
-def _manifest() -> dict:
-    return json.loads(MANIFEST.read_text("utf-8"))
+def _manifest(store: Path = OUT) -> dict:
+    return json.loads((store / MANIFEST).read_text("utf-8"))
 
 
 class LibraryGenerationTest(unittest.TestCase):
@@ -51,27 +76,41 @@ class LibraryGenerationTest(unittest.TestCase):
         self.assertEqual(record["partitioner"], named.group(1))
         self.assertEqual(named.group(1), "louvain")
 
-    def test_graph_layers_present(self):
-        """Catches: a library stage that exits 0 and writes nothing, committed as
-        a store missing a layer the tool tests then silently skip."""
-        layers = _manifest()["layers"]
-        # The same list as `EXPECTED` in library_store/pipeline.py, which refuses
-        # to finish a build without these; keep the two in step.
-        for name in (
-            "graph",
-            "labels",
-            "provenance",
-            "history",
-            "context",
-            "repository_manifest",
-            "content_files",
-            "intent",
-            "ticket_descriptions",
-            "relationships",
-            "deployments",
-        ):
+    def test_every_library_layer_is_present(self):
+        """Catches: a library stage that exits 0 and writes nothing (fetch-tickets
+        with no tracker settings, a merge that skipped every entry), committed as
+        a store missing a layer the tool tests then silently skip; and a manifest
+        that stops naming a layer at all."""
+        manifest = _manifest()
+        layers = manifest["layers"]
+        # The same names as `EXPECTED` in library_store/pipeline.py, which refuses
+        # to finish a build without them: v0.19.0's 18 layers plus `deployments`.
+        # Keep the two in step.
+        self.assertEqual(sorted(layers), sorted(LIBRARY_LAYERS))
+        for name in LIBRARY_LAYERS:
             with self.subTest(layer=name):
                 self.assertIs(layers[name]["present"], True)
+        for name in ("ownership_notes", "answers"):
+            with self.subTest(extra_layer=name):
+                self.assertIs(manifest["extra_layers"][name]["present"], True)
+
+    def test_no_index_store_is_the_same_store_without_its_index(self):
+        """Catches: the no-index store built from other inputs, or with another
+        stage skipped, so the graph-fallback tests compare against a store that
+        differs from `store/` in more than the index."""
+        full, bare = _manifest(), _manifest(NO_INDEX)
+        self.assertIs(full["layers"]["index"]["present"], True)
+        self.assertIs(bare["layers"]["index"]["present"], False)
+        self.assertEqual(sorted(bare["layers"]), sorted(full["layers"]))
+        for name, layer in full["layers"].items():
+            if name == "index":
+                continue
+            with self.subTest(layer=name):
+                self.assertIs(bare["layers"][name]["present"], layer["present"])
+        self.assertEqual(
+            {name: layer["present"] for name, layer in bare["extra_layers"].items()},
+            {name: layer["present"] for name, layer in full["extra_layers"].items()},
+        )
 
 
 if __name__ == "__main__":

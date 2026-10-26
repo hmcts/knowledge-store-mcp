@@ -1,0 +1,43 @@
+{
+ "conflicts": {},
+ "edges": [
+  {
+   "chart": "",
+   "consumer": "beta-app",
+   "examples": [
+    {
+     "line": "\"@example/alpha-lib\": \"^1.2.0\",",
+     "url": "https://github.com/example-org/beta-app/blob/085f0da738cebf28ac22b57c8c07530936769442/package.json#L4"
+    }
+   ],
+   "kinds": {
+    "npm_package": 1
+   },
+   "provider": "alpha-lib",
+   "references": 1,
+   "refs_pinned": {
+    "^1.2.0": 1
+   },
+   "refs_unpinned": 0
+  }
+ ],
+ "format": {
+  "layer": "relationships",
+  "major": 1,
+  "minor": 1
+ },
+ "unresolved_conflicts": {},
+ "unresolved_targets_outside_estate": {
+  "helm_chart": {},
+  "maven_artifact": {},
+  "npm_package": {
+   "gamma-service": {
+    "referenced_by": [
+     "beta-app"
+    ],
+    "references": 1
+   }
+  },
+  "terraform_module": {}
+ }
+}

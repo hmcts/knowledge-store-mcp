@@ -1,0 +1,27 @@
+{
+ "base_url": "https://github.com/example-org/beta-app/blob/085f0da738cebf28ac22b57c8c07530936769442/",
+ "commit": "085f0da738cebf28ac22b57c8c07530936769442",
+ "depended_on_by": [],
+ "depends_on": [
+  {
+   "chart": "",
+   "examples": [
+    {
+     "line": "\"@example/alpha-lib\": \"^1.2.0\",",
+     "url": "https://github.com/example-org/beta-app/blob/085f0da738cebf28ac22b57c8c07530936769442/package.json#L4"
+    }
+   ],
+   "kinds": {
+    "npm_package": 1
+   },
+   "references": 1,
+   "refs_pinned": {
+    "^1.2.0": 1
+   },
+   "refs_unpinned": 0,
+   "repository": "alpha-lib"
+  }
+ ],
+ "extra": {},
+ "repository": "beta-app"
+}

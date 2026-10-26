@@ -1,0 +1,8 @@
+{
+ "base_url": "https://github.com/example-org/delta-deploy/blob/8f4baa6737231af070b7598e3b73c5880f56cf76/",
+ "commit": "8f4baa6737231af070b7598e3b73c5880f56cf76",
+ "depended_on_by": [],
+ "depends_on": [],
+ "extra": {},
+ "repository": "delta-deploy"
+}

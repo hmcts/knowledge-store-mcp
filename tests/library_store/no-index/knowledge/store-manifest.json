@@ -1,0 +1,181 @@
+{
+ "digest": "08f05f0f0c1b2953",
+ "extra_layers": {
+  "answers": {
+   "description": "Written journeys and findings.",
+   "digest": "73a2963bca4b6acd",
+   "kind": "answers",
+   "path": "knowledge/answers.json",
+   "present": true
+  },
+  "ownership_notes": {
+   "description": "Which team owns each shared library",
+   "digest": "cd64f41bda64b001",
+   "kind": "answers",
+   "path": "knowledge/relationships/ownership-notes.json",
+   "present": true
+  }
+ },
+ "format": {
+  "major": 1,
+  "minor": 4
+ },
+ "layers": {
+  "content_files": {
+   "digest": "756acaded1546a37",
+   "paths": [
+    "knowledge/corpus/content-files.txt"
+   ],
+   "present": true
+  },
+  "context": {
+   "digest": "a318503e6600c281",
+   "paths": [
+    "knowledge_context.md"
+   ],
+   "present": true
+  },
+  "deep_dives": {
+   "authored_as_of": {
+    "newest": "2026-10-08T09:00:00Z",
+    "oldest": "2026-10-08T09:00:00Z"
+   },
+   "digest": "5963a03d6af60e99",
+   "paths": [
+    "knowledge/deep-dives/dives.json"
+   ],
+   "present": true
+  },
+  "deployments": {
+   "digest": null,
+   "paths": [],
+   "present": true
+  },
+  "explorer": {
+   "digest": "aef45595e4534bc8",
+   "paths": [
+    "graphify-out/explorer.html"
+   ],
+   "present": true
+  },
+  "graph": {
+   "digest": "66c9789d578812c1",
+   "paths": [
+    "graphify-out/graph.json.gz",
+    "graphify-out/graph.json"
+   ],
+   "present": true,
+   "source_urls": true
+  },
+  "history": {
+   "digest": "63fa562702282ad7",
+   "paths": [
+    "knowledge/git-history/"
+   ],
+   "present": true
+  },
+  "index": {
+   "digest": null,
+   "paths": [
+    "knowledge/index/store.sqlite.gz",
+    "knowledge/index/store.sqlite"
+   ],
+   "present": false
+  },
+  "intent": {
+   "digest": "a47ca57c4ab390e8",
+   "paths": [
+    "knowledge/intent/file-tickets.json.gz"
+   ],
+   "present": true,
+   "reach": true
+  },
+  "labels": {
+   "digest": "cc93c8af5c31ff18",
+   "paths": [
+    "graphify-out/.graphify_labels.json"
+   ],
+   "present": true
+  },
+  "minimum_standard": {
+   "digest": "08b7b6cc5e5d9c31",
+   "paths": [
+    "knowledge/minimum-standard/"
+   ],
+   "present": true,
+   "recognised": true
+  },
+  "provenance": {
+   "digest": "2ea4c8f0d74159e9",
+   "paths": [
+    "knowledge/provenance.json"
+   ],
+   "present": true
+  },
+  "relationships": {
+   "digest": "ea13f021d35dc25e",
+   "paths": [
+    "knowledge/relationships/"
+   ],
+   "present": true,
+   "recognised": true,
+   "unresolved_conflicts": 0
+  },
+  "repository_manifest": {
+   "digest": "e9ef10a0c7182f66",
+   "paths": [
+    "knowledge/repository-manifest.md"
+   ],
+   "present": true
+  },
+  "semantic": {
+   "digest": "9b821f804c8113f9",
+   "paths": [
+    "knowledge/semantic/token-neighbours.json.gz"
+   ],
+   "present": true
+  },
+  "summaries": {
+   "authored_as_of": {
+    "newest": "2026-10-08T09:00:00Z",
+    "oldest": "2026-10-08T09:00:00Z"
+   },
+   "digest": "89445a1bb5e67990",
+   "paths": [
+    "knowledge/summaries/communities.json"
+   ],
+   "present": true
+  },
+  "ticket_descriptions": {
+   "digest": "1c37071bb95d65db",
+   "paths": [
+    "knowledge/intent/ticket-descriptions.json.gz"
+   ],
+   "present": true
+  },
+  "ticket_tracker": {
+   "digest": "b13e8bee1df38ce4",
+   "paths": [
+    "knowledge/intent/ticket-tracker.json.gz"
+   ],
+   "present": true
+  },
+  "topics": {
+   "authored_as_of": {
+    "newest": "2026-10-08T09:00:00Z",
+    "oldest": "2026-10-08T09:00:00Z"
+   },
+   "digest": "052dc31bf1955960",
+   "paths": [
+    "knowledge/topics/briefs.json"
+   ],
+   "present": true
+  }
+ },
+ "library_version": "0.19.0",
+ "sources_as_of": "2026-10-08T09:00:00Z",
+ "store": {
+  "github_org": "example-org",
+  "id": "library-contract-store"
+ }
+}
