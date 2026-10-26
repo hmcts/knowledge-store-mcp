@@ -250,16 +250,10 @@ directly or through `RefundHandler`.
 
 ## Mechanisms
 
-- `refund(amount)` in alpha-lib's `src/refund.ts` returns `-amount`. It holds no
-  state and performs no checks.
-- `RefundHandler.handle(amount)` in the same file passes the amount straight to
-  `refund`.
-- beta-app's `PaymentService.pay` in `src/pay.ts` imports `refund` from the
-  `@example/alpha-lib` package, so a payment in beta-app is computed by the
-  library rather than by its own code.
-- The refund schema in alpha-lib, `schemas/refund.schema.json`, describes a
-  refund request: a `requestedOn` date and a `total` that refers to the `money`
-  definition.
+- `refund(amount)` in alpha-lib's `src/refund.ts` returns `-amount`. It holds no state and performs no checks.
+- `RefundHandler.handle(amount)` in the same file passes the amount straight to `refund`.
+- beta-app's `PaymentService.pay` in `src/pay.ts` imports `refund` from the `@example/alpha-lib` package, so a payment in beta-app is computed by the library rather than by its own code.
+- The refund schema in alpha-lib, `schemas/refund.schema.json`, describes a refund request: a `requestedOn` date and a `total` that refers to the `money` definition.
 
 ## Evidence
 
@@ -283,10 +277,8 @@ refund schema.
 
 ## What it holds
 
-- `src/refund.ts`: the `refund` function and the `RefundHandler` class whose
-  `handle` method calls it.
-- `schemas/refund.schema.json`: the Refund JSON Schema, with a `money`
-  definition that the `total` property refers to.
+- `src/refund.ts`: the `refund` function and the `RefundHandler` class whose `handle` method calls it.
+- `schemas/refund.schema.json`: the Refund JSON Schema, with a `money` definition that the `total` property refers to.
 - `package.json`: the package name and version 1.2.0.
 
 ## History

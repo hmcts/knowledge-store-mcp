@@ -1,5 +1,5 @@
 {
- "digest": "37b90b800adcc184",
+ "digest": "f489ea4c91d8ecae",
  "extra_layers": {
   "answers": {
    "description": "Written journeys and findings.",
@@ -40,7 +40,7 @@
     "newest": "2026-10-08T09:00:00Z",
     "oldest": "2026-10-08T09:00:00Z"
    },
-   "digest": "5963a03d6af60e99",
+   "digest": "5f6d002601f29913",
    "paths": [
     "knowledge/deep-dives/dives.json"
    ],
@@ -52,7 +52,7 @@
    "present": true
   },
   "explorer": {
-   "digest": "aef45595e4534bc8",
+   "digest": "cc3729e65253d7cc",
    "paths": [
     "graphify-out/explorer.html"
    ],
@@ -165,7 +165,7 @@
     "newest": "2026-10-08T09:00:00Z",
     "oldest": "2026-10-08T09:00:00Z"
    },
-   "digest": "052dc31bf1955960",
+   "digest": "7c1fa4b70f92dd3e",
    "paths": [
     "knowledge/topics/briefs.json"
    ],

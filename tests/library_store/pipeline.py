@@ -439,6 +439,10 @@ def verify(root: Path, index: bool = True) -> None:
         _clustered(json.load(stream)["nodes"])
 
 
+# The one step `--no-index` skips, held by identity so no other step named
+# alike can be skipped with it.
+INDEX_STEP = stage("index")
+
 # In order. Later layers go in before `manifest`.
 STEPS: list[Callable[[Path], None]] = [
     stage("sync"),
@@ -477,7 +481,7 @@ STEPS: list[Callable[[Path], None]] = [
     answers_layer,
     stage("semantic"),
     stage("explorer"),
-    stage("index"),
+    INDEX_STEP,
     stage("manifest"),
 ]
 
@@ -490,7 +494,7 @@ def main(argv: list[str]) -> int:
     index = argv[1:] != ["--no-index"]
     try:
         for step in STEPS:
-            if step.__name__ == INDEX and not index:
+            if step is INDEX_STEP and not index:
                 print("$ (skipped: --no-index) knowledgestore index", flush=True)
                 continue
             step(root)
