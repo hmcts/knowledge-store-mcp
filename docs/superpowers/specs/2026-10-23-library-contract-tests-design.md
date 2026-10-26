@@ -40,7 +40,6 @@ on either side that breaks the product's expected behaviour fails a test here.
 - Running the generator in CI. The library is not installable under CI's
   `uv sync --no-build`, and generation needs the network for package and model
   downloads. CI runs the tests over the committed output, as today.
-- The minimum-standard layer until a library release writes it (see Phasing).
 - Hosting or M365 work.
 
 ## Anti-goals (a failure even if it works)
@@ -60,7 +59,9 @@ on either side that breaks the product's expected behaviour fails a test here.
 
 ## Constraints
 
-- Library pinned at **v0.18.3** (manifest format 1.3). Graphify pinned at
+- Library pinned at **v0.19.0** (manifest format 1.4, which adds the
+  `minimum_standard` layer; v0.19.0 also adds the `json-schema` stage, which
+  rewrites JSON Schema nodes in the merged graph). Graphify pinned at
   **`graphifyy[terraform,sql]==0.9.93`**, the library's floor.
 - Graphify 0.9.93 `update` is offline, calls no model, and is deterministic:
   two runs over the same clone gave byte-identical `graph.json`, communities
@@ -117,6 +118,12 @@ on either side that breaks the product's expected behaviour fails a test here.
   model, recorded in its manifest (my call). The server reads only its presence,
   so if it proves non-deterministic, fall back to recording that layer as absent
   and say so; never hand-write it.
+- **Minimum standard:** the real `minimum-standard-settings` stage driven
+  through its `runner` seam (the `gh api` edge) with canned GitHub responses,
+  then the real `minimum-standard` stage over the clones. The clones carry the
+  files each hygiene item looks for, so at least one point is `present`, one
+  `absent` and one `not_determinable`, and one secret-scan finding comes from an
+  obviously fake value.
 - **Provenance:** the real `sync`, cloning from local bare repositories so it is
   offline; `config/repositories.txt` carries `https://github.com/example-org/...`
   URLs for the source-URL stage — the builder resolves how sync clones locally
@@ -133,7 +140,8 @@ or a trap the server must handle. At minimum:
 - **Three clones**, e.g. `repo-a` (a TypeScript library publishing an npm
   package), `repo-b` (depends on it; code calling across two files so graphify
   makes edges and more than one community), `repo-c` (a deploy-values repo for
-  the `deployments` stage).
+  the `deployments` stage), and one JSON Schema file in a clone so the
+  `json-schema` stage has something to rewrite.
 - **Commits** whose subjects carry ticket keys (`DEMO-1: ...`), at least one key
   on more than one file and repo, and one branch-only (proposed) key, so intent,
   ticket descriptions and the `proposed` path are non-empty.
@@ -164,19 +172,19 @@ from the inputs above:
 | `tickets` | landed tickets for a file; proposed tickets with branches; both modes |
 | `ticket` | files, description fields, tracker fields and `as_of`; a key with no tracker record |
 | `answers` | topics, deep dives, the answers-layer extra and the relationships-directory extra; dates from `authored`/`as_of` as v0.2.x reads them |
-| `minimum_standard` | absent layer reported as absent (until phase 2) |
+| `minimum_standard` | each point's state, evidence and reason for a repo; `repos=` scope; products and notes from the summary |
 
-Plus: the manifest names the pinned library release and format 1.3; the
+Plus: the manifest names the pinned library release and format 1.4; the
 committed store reproduces byte-for-byte from the generator; a tool added to
 `server.TOOLS` without a matching contract test fails.
 
-## Phasing
+## Also in this change
 
-1. **This change:** pin v0.18.3; every layer except minimum-standard.
-2. **When KSB #495 is released** (manifest 1.4, minimum-standard layer): move
-   the pin, add minimum-standard inputs and assertions, and regenerate
-   `tests/fixture_store/generate_minimum_standard.py` against it (backlog item 4
-   of the handover). KSB flags format changes ahead of the pin.
+Regenerate `tests/fixture_store/generate_minimum_standard.py`'s expectations
+against v0.19.0 (hygiene items renamed: `code_scanning_workflow`, a
+secret-scanning pair, `vulnerability_alerts`, `branch_protection`; `unmaintained`
+now `not_determinable` when not archived), and fix the server if
+`minimum_standard` no longer reads the library's records correctly.
 
 ## Left to the builder
 
