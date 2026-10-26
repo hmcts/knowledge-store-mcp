@@ -186,7 +186,7 @@ class GraphContract(harness.Contract):
                     {
                         "repository": "alpha-lib",
                         "sha": SHAS["alpha-lib"],
-                        "committed": "2026-10-02T09:00:00Z",
+                        "committed": "2026-10-03T09:00:00Z",
                     },
                     {
                         "repository": "beta-app",

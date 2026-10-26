@@ -1,7 +1,8 @@
 {
  "shas": {
-  "alpha-lib": "1def2e9d4b9ca5c361eed7fe284ec1df7ba1251c",
+  "alpha-lib": "18e250970e32e1fd57f1da2b308d662883363234",
   "beta-app": "085f0da738cebf28ac22b57c8c07530936769442",
   "delta-deploy": "8f4baa6737231af070b7598e3b73c5880f56cf76"
- }
+ },
+ "store_answers_commit": "f6b689b013faa74e0a6cb4db8251a4e960316940"
 }

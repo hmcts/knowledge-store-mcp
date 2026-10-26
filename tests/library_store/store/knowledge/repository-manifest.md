@@ -4,7 +4,7 @@ This manifest describes the source repositories represented by the combined Grap
 
 | Repository | Commits | Synced at | History | Current source |
 |---|---:|---|---|---|
-| `alpha-lib` | 2 | 2026-10-02 (`1def2e9d`) | [History](git-history/alpha-lib/index.md) | `https://github.com/example-org/alpha-lib.git` |
+| `alpha-lib` | 3 | 2026-10-03 (`18e25097`) | [History](git-history/alpha-lib/index.md) | `https://github.com/example-org/alpha-lib.git` |
 | `beta-app` | 3 | 2026-10-06 (`085f0da7`) | [History](git-history/beta-app/index.md) | `https://github.com/example-org/beta-app.git` |
 | `delta-deploy` | 1 | 2026-10-08 (`8f4baa67`) | [History](git-history/delta-deploy/index.md) | `https://github.com/example-org/delta-deploy.git` |
 

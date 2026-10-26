@@ -6,18 +6,24 @@ Every expected value is derived by hand from what `library_store/generate.py`
 writes, before the store is read:
 
 - Tickets are the keys in commit subjects (`build_intent_index`). DEMO-1 lands on
-  alpha-lib's `package.json` and `src/refund.ts` (1 October) and beta-app's
+  alpha-lib's `package.json` and `src/refund.ts` (1 October), on `src/refund.ts`
+  again (3 October, so that link counts two commits), and on beta-app's
   `package.json` and `src/pay.ts` (5 October); DEMO-2 on alpha-lib's schema
-  (2 October). DEMO-4 is only on beta-app's branch `feature/DEMO-4-retry`
-  (7 October, `src/pay.ts`), so it is `proposed`. Each link is one commit.
-- A record's descriptions (`d`) are the subjects less their key, kept when at
-  least 12 characters: "retry" is too short, so DEMO-4 has none. `d` ranks by
-  count, then length, ties in history order (alpha-lib before beta-app); the
-  subjects (`s`) by count, then text.
+  (2 October); DEMO-3 on beta-app's four ownership files (6 October) and
+  delta-deploy's two files (8 October). DEMO-4 is only on beta-app's branch
+  `feature/DEMO-4-retry` (7 October, `src/pay.ts`), so it is `proposed`. Every
+  other link is one commit.
+- A record's descriptions (`d`, at most two) are the subjects less their key,
+  kept when at least 12 characters: "retry" and "ownership" are too short. `d`
+  ranks by count, then length, ties in history order (alpha-lib before
+  beta-app); the subjects (`s`, at most three) by count, then text. A ticket
+  that never landed keeps its branch subjects in `s`.
 - The tracker's answers are `tracker_responses.json`'s, cached by
-  `fetch_tickets` with `today` 2026-10-20: DEMO-1 fetched and resolved (on
-  2026-10-05) so, being final, it carries no `checked` date; DEMO-2 not in the
-  response, so recorded `absent`, checked 2026-10-20.
+  `fetch_tickets` with `today` 2026-10-20 and empty fields dropped: DEMO-1
+  fetched and resolved (on 2026-10-05) so, being final, it carries no `checked`
+  date; DEMO-3 fetched, unresolved, so checked 2026-10-20, with no description
+  or comments; DEMO-2 and DEMO-4 not in the response, so recorded `absent`,
+  checked 2026-10-20.
 - Written answers are the authored Markdown, rendered by the library's Markdown
   subset (`build_topic_briefs.markdown_to_html`): `#` is `<h2>`, `##` is `<h3>`,
   and each name in `config/repositories.txt` becomes a link to
@@ -25,26 +31,27 @@ writes, before the store is read:
   browse URL is set, so ticket keys stay text.
 - `how-refunds-work` is dated by its `date:` and never committed; the store's
   own repository commits `who-approves-refunds` alone, as `pipeline.py` does,
-  on 2026-10-19, which `answers-layer` writes with `+00:00` for UTC. Its sha was
-  derived by making that commit from the same inputs - the file text,
-  `Fixture Author <fixture@example.invalid>`, the date and the message "Who
-  approves refunds" - with git configuration off, in a scratch repository.
+  on 2026-10-19, which `answers-layer` writes with `+00:00` for UTC. That
+  commit's sha, like each clone's, is read from `inputs.json`, where the
+  generator records it from the repository it made.
 - Topic briefs and deep dives record no date, so they are dated by
   `sources_as_of`: delta-deploy's 8 October commit, the newest in the estate.
 """
 
+import json
 import unittest
 from typing import Any
 
 from knowledgestore_mcp import tools_tickets
 from library_store import harness
-from library_store.generate import EXTRA_LAYER
+from library_store.generate import EXTRA_LAYER, INPUTS, STORE_ANSWERS_COMMIT
+from library_store.harness import SHAS
 
 # 2026-10-08T09:00:00+00:00, delta-deploy's only commit, the newest in the estate.
 SOURCES_AS_OF = "2026-10-08T09:00:00Z"
 
 # The store's own commit of docs/answers/who-approves-refunds.md (see above).
-WHO_APPROVES_COMMIT = "f6b689b013faa74e0a6cb4db8251a4e960316940"
+WHO_APPROVES_COMMIT: str = json.loads(INPUTS.read_text("utf-8"))[STORE_ANSWERS_COMMIT]
 
 
 def link(repo: str) -> str:
@@ -131,7 +138,7 @@ ALPHA_DIVE = {
     "summary": "Deep dive: alpha-lib",
     "text": (
         f"<h2>{ALPHA}</h2>"
-        f"<p>Measured at {ALPHA} <code>1def2e9d</code>.</p>"
+        f"<p>Measured at {ALPHA} <code>{SHAS['alpha-lib'][:8]}</code>.</p>"
         f"<p><b>{ALPHA} is the estate's refund library.</b> It publishes the "
         f"<code>@example/alpha-lib</code> npm package, which {BETA} depends on, and it "
         "holds the refund schema.</p>"
@@ -144,9 +151,9 @@ ALPHA_DIVE = {
         "<li><code>package.json</code>: the package name and version 1.2.0.</li>"
         "</ul>"
         "<h3>History</h3>"
-        "<p>Two commits on <code>main</code>. DEMO-1 added the handler and the package "
-        "manifest on 1 October 2026; DEMO-2 added the schema the next day. Nothing has "
-        "changed it since.</p>"
+        "<p>Three commits on <code>main</code>. DEMO-1 added the handler and the package "
+        "manifest on 1 October 2026; DEMO-2 added the schema the next day, and DEMO-1 "
+        "returned on 3 October with a note on rounding. Nothing has changed it since.</p>"
         "<h3>Who depends on it</h3>"
         f"<p>{BETA} declares <code>@example/alpha-lib</code> in its "
         "<code>package.json</code> and imports <code>refund</code> in "
@@ -178,12 +185,14 @@ DEMO_1 = {
     "key": "DEMO-1",
     "proposed": False,
     "branches": [],
-    "description": ["refund handler", "pay via refund"],
-    "text": {"subjects": ["pay via refund", "refund handler"]},
+    # "refund rounding" is the longest; "refund handler" ties "pay via refund" on
+    # length and comes first in history; two are kept.
+    "description": ["refund rounding", "refund handler"],
+    "text": {"subjects": ["pay via refund", "refund handler", "refund rounding"]},
     "first": "2026-10-01",
     "last": "2026-10-05",
     "repos": ["alpha-lib", "beta-app"],
-    "commits": 2,
+    "commits": 3,
 }
 DEMO_2 = {
     "key": "DEMO-2",
@@ -196,6 +205,39 @@ DEMO_2 = {
     "repos": ["alpha-lib"],
     "commits": 1,
 }
+DEMO_3 = {
+    "key": "DEMO-3",
+    "proposed": False,
+    "branches": [],
+    "description": ["production values"],
+    "text": {"subjects": ["ownership", "production values"]},
+    "first": "2026-10-06",
+    "last": "2026-10-08",
+    "repos": ["beta-app", "delta-deploy"],
+    "commits": 2,
+}
+DEMO_4 = {
+    "key": "DEMO-4",
+    "proposed": True,
+    "branches": ["feature/DEMO-4-retry"],
+    "description": [],
+    "text": {"subjects": ["retry"]},
+    "first": "2026-10-07",
+    "last": "2026-10-07",
+    "repos": ["beta-app"],
+    "commits": 1,
+}
+
+
+def absent(key: str) -> dict:
+    """A key the tracker did not return, as `fetch-tickets` caches it."""
+    return {
+        "key": key,
+        "state": "absent",
+        "as_of": "2026-10-20",
+        "text": {},
+        "comments_truncated": False,
+    }
 
 
 def known(name: str) -> dict:
@@ -228,11 +270,10 @@ class TicketsContract(harness.Contract):
     # --- tickets ------------------------------------------------------------------
 
     def test_tickets_for_a_file_list_the_landed_ticket(self):
-        """Catches: the ticket layer's per-file `tickets` map, or the index's ticket
-        rows, read from the wrong key or keyed by the wrong repository, so the
-        ticket whose commit made alpha-lib's `src/refund.ts` is not listed, is
-        listed as proposed, or its commit count is lost; or `intent.reach`
-        not read, so a landed list the library vouches for is flagged as doubtful."""
+        """Catches: the rows of another repository returned for alpha-lib, so its
+        file's ticket is missing; a link's commit count not read, so the two
+        DEMO-1 commits on `src/refund.ts` are shown as one; or `intent.reach` not
+        read, so a landed list the library vouches for is flagged as doubtful."""
         found = tools_tickets.tickets(self.session, "alpha-lib", "src/refund.ts")
         self.assertEqual(
             found,
@@ -242,7 +283,7 @@ class TicketsContract(harness.Contract):
                 "reach": True,
                 "reach_note": None,
                 "totals": {"landed": 1, "proposed": 0},
-                "landed": [{"ticket": "DEMO-1", "path": "src/refund.ts", "commits": 1}],
+                "landed": [{"ticket": "DEMO-1", "path": "src/refund.ts", "commits": 2}],
                 "proposed": [],
                 "total": 1,
                 "page": 1,
@@ -315,7 +356,7 @@ class TicketsContract(harness.Contract):
                 "totals": {"landed": 4, "proposed": 0},
                 "landed": [
                     {"repository": "alpha-lib", "path": "package.json", "commits": 1},
-                    {"repository": "alpha-lib", "path": "src/refund.ts", "commits": 1},
+                    {"repository": "alpha-lib", "path": "src/refund.ts", "commits": 2},
                     {"repository": "beta-app", "path": "package.json", "commits": 1},
                     {"repository": "beta-app", "path": "src/pay.ts", "commits": 1},
                 ],
@@ -333,22 +374,87 @@ class TicketsContract(harness.Contract):
         not read, so the answer does not say when the tracker was asked."""
         found = tools_tickets.ticket(self.session, "DEMO-2")
         self.assertEqual(found["ticket"], DEMO_2)
-        self.assertEqual(
-            found["tracker"],
-            {
-                "key": "DEMO-2",
-                "state": "absent",
-                "as_of": "2026-10-20",
-                "text": {},
-                "comments_truncated": False,
-            },
-        )
+        self.assertEqual(found["tracker"], absent("DEMO-2"))
         self.assertIsNone(found["tracker_note"])
         self.assertEqual(
             found["landed"],
             [{"repository": "alpha-lib", "path": "schemas/refund.schema.json", "commits": 1}],
         )
         self.assertEqual(found["proposed"], [])
+
+    def test_ticket_an_unresolved_tracker_record(self):
+        """Catches: an unresolved record dated by anything but its `checked` day,
+        text the stage dropped as empty (resolution, description, comments)
+        returned as found, or a thread the tracker returned whole marked
+        `comments_truncated`; and a ticket's files in two repositories not all
+        listed."""
+        found = tools_tickets.ticket(self.session, "DEMO-3")
+        self.assertEqual(
+            found,
+            {
+                "store": self._store(
+                    [*self._ticket_files(), "ticket_descriptions", "ticket_tracker"]
+                ),
+                "ticket": DEMO_3,
+                "tracker": {
+                    "key": "DEMO-3",
+                    "state": "fetched",
+                    "as_of": "2026-10-20",
+                    "text": {"title": "Ready beta-app for production", "status": "In Progress"},
+                    "comments_truncated": False,
+                },
+                "tracker_note": None,
+                "reach": True,
+                "reach_note": None,
+                "totals": {"landed": 6, "proposed": 0},
+                "landed": [
+                    {"repository": "beta-app", "path": ".github/CODEOWNERS", "commits": 1},
+                    {"repository": "beta-app", "path": ".github/dependabot.yml", "commits": 1},
+                    {
+                        "repository": "beta-app",
+                        "path": ".github/workflows/codeql.yml",
+                        "commits": 1,
+                    },
+                    {"repository": "beta-app", "path": "SECURITY.md", "commits": 1},
+                    {
+                        "repository": "delta-deploy",
+                        "path": "ansible/group_vars/prd/beta-app_values.yaml.j2",
+                        "commits": 1,
+                    },
+                    {"repository": "delta-deploy", "path": "config/application.yml", "commits": 1},
+                ],
+                "proposed": [],
+                "total": 6,
+                "page": 1,
+                "next_page": None,
+            },
+        )
+
+    def test_ticket_that_never_landed(self):
+        """Catches: the library's `proposed` flag or `branches` not read from the
+        ticket-descriptions record, so DEMO-4 reads as landed work or loses its
+        branch; or the index's `landed` column, or the ticket layer's `proposed`
+        section, misread, so its one file is listed as landed."""
+        found = tools_tickets.ticket(self.session, "DEMO-4")
+        self.assertEqual(
+            found,
+            {
+                "store": self._store(
+                    [*self._ticket_files(), "ticket_descriptions", "ticket_tracker"]
+                ),
+                "ticket": DEMO_4,
+                "tracker": absent("DEMO-4"),
+                "tracker_note": None,
+                "reach": True,
+                "reach_note": None,
+                "totals": {"landed": 0, "proposed": 1},
+                "landed": [],
+                "proposed": [{"repository": "beta-app", "path": "src/pay.ts", "commits": 1}],
+                "total": 1,
+                "page": 1,
+                "next_page": None,
+            },
+        )
 
     def test_a_key_no_layer_holds(self):
         """Catches: an unknown key answered with another ticket's files or records,

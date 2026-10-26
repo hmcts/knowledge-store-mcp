@@ -49,6 +49,8 @@ REQUIREMENTS = HERE / "requirements.txt"
 PIPELINE = HERE / "pipeline.py"
 
 ORG = "example-org"
+# `inputs.json`'s key for the store repository's commit of the committed answer.
+STORE_ANSWERS_COMMIT = "store_answers_commit"
 STORE_ID = "library-contract-store"
 
 # Who made every commit. Fixed, with the dates below, so every sha is too.
@@ -71,6 +73,10 @@ export class RefundHandler {
   }
 }
 """
+# The same file with one trailing comment, so every line above it keeps its number
+# and graphify sees no new symbol: a second DEMO-1 commit on one file, so a link
+# counts two commits.
+ALPHA_REFUND_ROUNDED = ALPHA_REFUND + "// Amounts are refunded in whole pence.\n"
 ALPHA_SCHEMA = """\
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -166,6 +172,11 @@ COMMITS = {
             "DEMO-2: refund schema",
             "2026-10-02T09:00:00+00:00",
             {"schemas/refund.schema.json": ALPHA_SCHEMA},
+        ),
+        (
+            "DEMO-1: refund rounding",
+            "2026-10-03T09:00:00+00:00",
+            {"src/refund.ts": ALPHA_REFUND_ROUNDED},
         ),
     ],
     "beta-app": [
@@ -269,7 +280,7 @@ one or sends money: those questions need another source.
 DEEP_DIVE_ALPHA = """\
 # alpha-lib
 
-Measured at alpha-lib `1def2e9d`.
+Measured at alpha-lib `18e25097`.
 
 **alpha-lib is the estate's refund library.** It publishes the
 `@example/alpha-lib` npm package, which beta-app depends on, and it holds the
@@ -283,9 +294,9 @@ refund schema.
 
 ## History
 
-Two commits on `main`. DEMO-1 added the handler and the package manifest on
-1 October 2026; DEMO-2 added the schema the next day. Nothing has changed it
-since.
+Three commits on `main`. DEMO-1 added the handler and the package manifest on
+1 October 2026; DEMO-2 added the schema the next day, and DEMO-1 returned on
+3 October with a note on rounding. Nothing has changed it since.
 
 ## Who depends on it
 
@@ -507,10 +518,22 @@ def _copied(root: Path) -> list[str]:
     return sorted(files)
 
 
-def build(tmp: Path) -> tuple[dict[Path, Path], dict[str, str]]:
+# The answer `pipeline.py` commits in the store's own repository.
+COMMITTED_ANSWER = "docs/answers/who-approves-refunds.md"
+assert COMMITTED_ANSWER in ANSWERS
+
+
+def _answer_commit(root: Path) -> str:
+    """The store repository's last commit of `COMMITTED_ANSWER`: made from the
+    inputs with a fixed identity and date, so the same on every run."""
+    return _git(root, "log", "-1", "--format=%H", "--", COMMITTED_ANSWER).strip()
+
+
+def build(tmp: Path) -> tuple[dict[Path, Path], dict[str, str], str]:
     """Inputs and every stage, in `tmp`, twice: the whole pipeline, and the same
     inputs without `index`. Returns each built root by the directory it is
-    committed to, and the shas."""
+    committed to, each clone's `main` sha, and the store's own commit of the
+    answer dated by its commit, which both runs make identically."""
     shas = _sources(tmp)
     built = {}
     for target, parent, flags in (
@@ -522,11 +545,15 @@ def build(tmp: Path) -> tuple[dict[Path, Path], dict[str, str]]:
         _store_inputs(root)
         _pipeline(tmp, root, *flags)
         built[target] = root
-    return built, shas
+    commits = {_answer_commit(root) for root in built.values()}
+    if len(commits) != 1 or "" in commits:
+        raise subprocess.CalledProcessError(1, "git log", f"answer commits differ: {commits}")
+    return built, shas, commits.pop()
 
 
-def _inputs_json(shas: dict[str, str]) -> str:
-    return json.dumps({"shas": dict(sorted(shas.items()))}, indent=1) + "\n"
+def _inputs_json(shas: dict[str, str], answer_commit: str) -> str:
+    recorded = {"shas": dict(sorted(shas.items())), STORE_ANSWERS_COMMIT: answer_commit}
+    return json.dumps(recorded, indent=1) + "\n"
 
 
 def _clear(directory: Path) -> None:
@@ -575,7 +602,7 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory() as name:
         tmp = Path(name).resolve()
         try:
-            built, shas = build(tmp)
+            built, shas, answer_commit = build(tmp)
         except subprocess.CalledProcessError as failed:
             print(f"generation failed, nothing written: {failed}", file=sys.stderr)
             return 1
@@ -585,7 +612,9 @@ def main(argv: list[str]) -> int:
                 fresh = tmp / "out" / target.name
                 _export(root, fresh)
                 differing += [f"{target.name}/{rel}" for rel in _differences(fresh, target)]
-            if not INPUTS.is_file() or INPUTS.read_text("utf-8") != _inputs_json(shas):
+            if not INPUTS.is_file() or INPUTS.read_text("utf-8") != _inputs_json(
+                shas, answer_commit
+            ):
                 differing.append(INPUTS.name)
             for rel in differing:
                 print(f"differs: {rel}")
@@ -597,7 +626,7 @@ def main(argv: list[str]) -> int:
             return 0
         for target, root in built.items():
             _export(root, target)
-        INPUTS.write_text(_inputs_json(shas), encoding="utf-8")
+        INPUTS.write_text(_inputs_json(shas, answer_commit), encoding="utf-8")
     for target in built:
         print(f"wrote {target.relative_to(HERE.parent.parent)} from {LIBRARY}")
     return 0

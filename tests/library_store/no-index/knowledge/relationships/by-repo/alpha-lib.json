@@ -1,6 +1,6 @@
 {
- "base_url": "https://github.com/example-org/alpha-lib/blob/1def2e9d4b9ca5c361eed7fe284ec1df7ba1251c/",
- "commit": "1def2e9d4b9ca5c361eed7fe284ec1df7ba1251c",
+ "base_url": "https://github.com/example-org/alpha-lib/blob/18e250970e32e1fd57f1da2b308d662883363234/",
+ "commit": "18e250970e32e1fd57f1da2b308d662883363234",
  "depended_on_by": [
   {
    "chart": "",

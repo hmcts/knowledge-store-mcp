@@ -1,5 +1,5 @@
 {
- "digest": "da229a5c6b9a7dc6",
+ "digest": "caf3ffde5f60287a",
  "extra_layers": {
   "answers": {
    "description": "Written journeys and findings.",
@@ -40,7 +40,7 @@
     "newest": "2026-10-08T09:00:00Z",
     "oldest": "2026-10-08T09:00:00Z"
    },
-   "digest": "5f6d002601f29913",
+   "digest": "bd0202da5a20e6a6",
    "paths": [
     "knowledge/deep-dives/dives.json"
    ],
@@ -52,14 +52,14 @@
    "present": true
   },
   "explorer": {
-   "digest": "cc3729e65253d7cc",
+   "digest": "b560de5982ae3ce5",
    "paths": [
     "graphify-out/explorer.html"
    ],
    "present": true
   },
   "graph": {
-   "digest": "66c9789d578812c1",
+   "digest": "7bf1142a6603f9ab",
    "paths": [
     "graphify-out/graph.json.gz",
     "graphify-out/graph.json"
@@ -68,7 +68,7 @@
    "source_urls": true
   },
   "history": {
-   "digest": "63fa562702282ad7",
+   "digest": "5a7a0030d992cbca",
    "paths": [
     "knowledge/git-history/"
    ],
@@ -83,7 +83,7 @@
    "present": false
   },
   "intent": {
-   "digest": "a47ca57c4ab390e8",
+   "digest": "04219ae8de9c946a",
    "paths": [
     "knowledge/intent/file-tickets.json.gz"
    ],
@@ -98,7 +98,7 @@
    "present": true
   },
   "minimum_standard": {
-   "digest": "08b7b6cc5e5d9c31",
+   "digest": "4dcd5e79f4036c42",
    "paths": [
     "knowledge/minimum-standard/"
    ],
@@ -106,14 +106,14 @@
    "recognised": true
   },
   "provenance": {
-   "digest": "2ea4c8f0d74159e9",
+   "digest": "aa2e9a972d67d9ad",
    "paths": [
     "knowledge/provenance.json"
    ],
    "present": true
   },
   "relationships": {
-   "digest": "ea13f021d35dc25e",
+   "digest": "259e7413a888954d",
    "paths": [
     "knowledge/relationships/"
    ],
@@ -122,7 +122,7 @@
    "unresolved_conflicts": 0
   },
   "repository_manifest": {
-   "digest": "e9ef10a0c7182f66",
+   "digest": "a50368c1c9ec6b57",
    "paths": [
     "knowledge/repository-manifest.md"
    ],
@@ -147,7 +147,7 @@
    "present": true
   },
   "ticket_descriptions": {
-   "digest": "1c37071bb95d65db",
+   "digest": "f9125ff18ccab4f9",
    "paths": [
     "knowledge/intent/ticket-descriptions.json.gz"
    ],

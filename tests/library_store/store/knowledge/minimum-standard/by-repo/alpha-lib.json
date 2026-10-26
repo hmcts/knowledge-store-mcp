@@ -1,7 +1,7 @@
 {
   "as_of": {
-    "commit": "1def2e9d4b9ca5c361eed7fe284ec1df7ba1251c",
-    "date": "2026-10-02T09:00:00Z"
+    "commit": "18e250970e32e1fd57f1da2b308d662883363234",
+    "date": "2026-10-03T09:00:00Z"
   },
   "format": {
     "layer": "minimum_standard",
@@ -121,8 +121,8 @@
     "unmaintained": {
       "evidence": [
         {
-          "commit": "1def2e9d4b9ca5c361eed7fe284ec1df7ba1251c",
-          "date": "2026-10-02T09:00:00Z",
+          "commit": "18e250970e32e1fd57f1da2b308d662883363234",
+          "date": "2026-10-03T09:00:00Z",
           "reason": "last commit"
         },
         {
