@@ -21,6 +21,7 @@ KNOWN_LAYERS = (
     "provenance",
     "repository_manifest",
     "context",
+    "content_files",
     "history",
     "intent",
     "ticket_descriptions",
