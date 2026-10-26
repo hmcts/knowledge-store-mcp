@@ -167,6 +167,7 @@ from the inputs above:
 | `search` | a label hit with node, file, repo, url; `repo=` scope; index and graph-fallback modes agree |
 | `node` | a known node's fields; unknown id |
 | `neighbours` | relations and targets of a node with edges; both modes |
+| `search`, `node`, `neighbours` (json-schema) | `kind=` filters to the json-schema kinds `schema`, `definition`, `field` (`metadata.kind`, `metadata.format: "json-schema"`); a field node's `contains` / `references` / `extends` edges; graphify's keyword nodes for that schema file are gone; both modes |
 | `community` | members, label and summary for a summarised community; one without a summary |
 | `repo_answer`, `dependents`, `dependencies` | existing assertions, plus `kind=` against the library's `kinds.json` |
 | `tickets` | landed tickets for a file; proposed tickets with branches; both modes |
