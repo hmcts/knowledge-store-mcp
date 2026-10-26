@@ -40,6 +40,17 @@ BETA = "https://github.com/example-org/beta-app/blob/" + SHAS["beta-app"]
 # 2026-10-08T09:00:00+00:00, delta-deploy's last commit, the newest in the estate.
 SOURCES_AS_OF = "2026-10-08T09:00:00Z"
 
+# Each clone's provenance: its HEAD and that commit's fixed date.
+PROVENANCE = [
+    {"repository": "alpha-lib", "sha": SHAS["alpha-lib"], "committed": "2026-10-03T09:00:00Z"},
+    {"repository": "beta-app", "sha": SHAS["beta-app"], "committed": "2026-10-06T09:00:00Z"},
+    {
+        "repository": "delta-deploy",
+        "sha": SHAS["delta-deploy"],
+        "committed": "2026-10-08T09:00:00Z",
+    },
+]
+
 # alpha-lib's src/refund.ts: `refund` on line 1, `RefundHandler` on 5, `handle` on 6.
 REFUND = {
     "id": "alpha-lib::src_refund_refund",
@@ -182,28 +193,21 @@ class GraphContract(harness.Contract):
                     "intent.reach": True,
                     "deployments.present": True,
                 },
-                "items": [
-                    {
-                        "repository": "alpha-lib",
-                        "sha": SHAS["alpha-lib"],
-                        "committed": "2026-10-03T09:00:00Z",
-                    },
-                    {
-                        "repository": "beta-app",
-                        "sha": SHAS["beta-app"],
-                        "committed": "2026-10-06T09:00:00Z",
-                    },
-                    {
-                        "repository": "delta-deploy",
-                        "sha": SHAS["delta-deploy"],
-                        "committed": "2026-10-08T09:00:00Z",
-                    },
-                ],
+                "items": PROVENANCE,
                 "total": 3,
                 "page": 1,
                 "next_page": None,
             },
         )
+
+    def test_store_info_pages_the_provenance_by_its_cursor(self):
+        """Catches: `cursor` not followed over the provenance list the library
+        wrote, so a second page repeats the first repository or skips one, or the
+        pages end before delta-deploy."""
+        found = harness.pages(lambda **paging: tools_graph.store_info(self.session, **paging))
+        self.assertEqual([page["items"] for page in found], [[item] for item in PROVENANCE])
+        self.assertEqual([page["page"] for page in found], [1, 2, 3])
+        self.assertIsNone(found[-1]["next_page"])
 
     # --- find_repo --------------------------------------------------------------
 
@@ -271,6 +275,33 @@ class GraphContract(harness.Contract):
         alpha = tools_graph.search(self.session, "RefundHandler", repo="alpha-lib")
         self.assertEqual([item["id"] for item in alpha["items"]], [REFUND_HANDLER["id"]])
 
+    def test_search_limit_keeps_the_best_ranked_and_counts_every_match(self):
+        """Catches: `limit` ignored, or applied before the rank, so the wrong nodes
+        come back; or `matches` counting only what was returned. alpha-lib holds
+        four labels with a word beginning `refund`: the schema's `Refund`,
+        `refund()`, `RefundHandler` - one word each, so bm25 ties them and the id
+        orders them - and graphify's file node `refund.ts`, two words, ranked
+        last."""
+        found = tools_graph.search(self.session, "refund", repo="alpha-lib", limit=2)
+        self.assertEqual(found["matches"], 4)
+        self.assertEqual(
+            [self._without_community(item) for item in found["items"]], [SCHEMA, REFUND]
+        )
+
+    def test_search_pages_its_ranked_nodes_by_its_cursor(self):
+        """Catches: `cursor` not followed over a search, so the next page restarts
+        the ranking or loses its order, or `matches` changes from page to page."""
+        found = harness.pages(
+            lambda **paging: tools_graph.search(
+                self.session, "refund", repo="alpha-lib", limit=3, **paging
+            )
+        )
+        self.assertEqual(
+            [[self._without_community(item) for item in page["items"]] for page in found],
+            [[SCHEMA], [REFUND], [REFUND_HANDLER]],
+        )
+        self.assertEqual([page["matches"] for page in found], [4, 4, 4])
+
     # --- node ---------------------------------------------------------------------
 
     def test_node_by_its_merged_id(self):
@@ -304,6 +335,46 @@ class GraphContract(harness.Contract):
             [(1, [{"from": HANDLE["id"], "relation": "calls", "direction": "out"}])],
         )
         self.assertEqual(self._without_community(items[0]["node"]), REFUND)
+
+    def test_neighbours_at_depth_two_reach_the_schema_s_other_parts(self):
+        """Catches: `depth` ignored or misread, so a walk of two hops from the field
+        `requestedOn` stops at its schema, or runs on to `amount`, which `money`
+        contains three hops away; or an edge's direction not flipped when it is
+        walked from its target."""
+        found = tools_graph.neighbours(
+            self.session, REQUESTED_ON["id"], depth=2, relation="contains"
+        )
+        self.assertEqual(self._without_community(found["node"]), REQUESTED_ON)
+        out = [{"from": SCHEMA_ID, "relation": "contains", "direction": "out"}]
+        self.assertEqual(
+            [
+                (item["depth"], self._without_community(item["node"]), item["via"])
+                for item in found["items"]
+            ],
+            [
+                (
+                    1,
+                    SCHEMA,
+                    [{"from": REQUESTED_ON["id"], "relation": "contains", "direction": "in"}],
+                ),
+                (2, MONEY, out),
+                (2, TOTAL, out),
+            ],
+        )
+
+    def test_neighbours_page_by_their_cursor(self):
+        """Catches: `cursor` not followed over a walk, so the schema's second and
+        third parts are repeated, lost, or served without the start node."""
+        found = harness.pages(
+            lambda **paging: tools_graph.neighbours(
+                self.session, SCHEMA_ID, relation="contains", **paging
+            )
+        )
+        self.assertEqual(
+            [[self._without_community(item["node"]) for item in page["items"]] for page in found],
+            [[MONEY], [REQUESTED_ON], [TOTAL]],
+        )
+        self.assertEqual([self._without_community(page["node"]) for page in found], [SCHEMA] * 3)
 
     # --- community ----------------------------------------------------------------
 
@@ -341,6 +412,24 @@ class GraphContract(harness.Contract):
             {"id": payments, "label": "Payments", "summary": None, "summary_as_of": None},
         )
         self.assertIn(PAYMENT_SERVICE["id"], [item["id"] for item in found["items"]])
+
+    def test_a_community_pages_its_members_by_its_cursor(self):
+        """Catches: `cursor` not followed over a community's members, so a page
+        repeats or drops one, or a later page loses the label and summary. Which
+        nodes graphify clusters with `refund` is its choice, so the pages are
+        held to the whole listing, which must hold `refund` and `RefundHandler`."""
+        refunds = self._community_of(REFUND["id"])
+        whole = [item["id"] for item in tools_graph.community(self.session, refunds)["items"]]
+        self.assertIn(REFUND["id"], whole)
+        self.assertIn(REFUND_HANDLER["id"], whole)
+        found = harness.pages(
+            lambda **paging: tools_graph.community(self.session, refunds, **paging)
+        )
+        self.assertEqual(
+            [[item["id"] for item in page["items"]] for page in found],
+            [[member] for member in whole],
+        )
+        self.assertEqual({page["community"]["label"] for page in found}, {"Refunds"})
 
     # --- the json-schema layer ------------------------------------------------------
 

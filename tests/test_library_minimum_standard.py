@@ -379,6 +379,16 @@ class MinimumStandardContract(harness.Contract):
         self.assertEqual(found["scope"], "pattern")
         self.assertEqual(found["total"], 1)
 
+    def test_the_layer_pages_one_repository_a_page_by_its_cursor(self):
+        """Catches: `cursor` not followed over the layer's records, so a page
+        repeats alpha-lib or drops delta-deploy, or a later page loses the
+        summary's notes."""
+        found = harness.pages(
+            lambda **paging: tools_minimum_standard.minimum_standard(self.session, **paging)
+        )
+        self.assertEqual([page["items"] for page in found], [[ALPHA], [BETA], [DELTA]])
+        self.assertEqual([page["notes"] for page in found], [NOTES] * 3)
+
     def test_two_scopes_at_once_are_refused(self):
         """Catches: `repos` and `product` both given and one silently dropped, so
         the answer is scoped by a name the caller did not mean."""

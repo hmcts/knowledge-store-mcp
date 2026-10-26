@@ -335,7 +335,55 @@ class TicketsContract(harness.Contract):
             },
         )
 
+    def test_tickets_page_both_lists_by_their_cursor(self):
+        """Catches: `cursor` not followed over the two lists, so the branch-only
+        DEMO-4 is lost or repeated on the second page, or a page's `totals` count
+        only what it shows. Items order by ticket then path: DEMO-1 before DEMO-4."""
+        found = harness.pages(
+            lambda **paging: tools_tickets.tickets(self.session, "beta-app", "src/pay.ts", **paging)
+        )
+        self.assertEqual(
+            [(page["landed"], page["proposed"]) for page in found],
+            [
+                ([{"ticket": "DEMO-1", "path": "src/pay.ts", "commits": 1}], []),
+                (
+                    [],
+                    [
+                        {
+                            "ticket": "DEMO-4",
+                            "path": "src/pay.ts",
+                            "commits": 1,
+                            "branches": ["feature/DEMO-4-retry"],
+                        }
+                    ],
+                ),
+            ],
+        )
+        self.assertEqual([page["totals"] for page in found], [{"landed": 1, "proposed": 1}] * 2)
+
     # --- ticket -------------------------------------------------------------------
+
+    def test_ticket_pages_its_files_by_its_cursor(self):
+        """Catches: `cursor` not followed over a ticket's files, so DEMO-3's seven
+        files across beta-app and delta-deploy come back repeated, out of their
+        repository-then-path order, or short of delta-deploy's."""
+        found = harness.pages(
+            lambda **paging: tools_tickets.ticket(self.session, "DEMO-3", **paging)
+        )
+        self.assertEqual(
+            [(item["repository"], item["path"]) for page in found for item in page["landed"]],
+            [
+                ("beta-app", ".github/CODEOWNERS"),
+                ("beta-app", ".github/dependabot.yml"),
+                ("beta-app", ".github/workflows/codeql.yml"),
+                ("beta-app", "SECURITY.md"),
+                ("delta-deploy", "ansible/group_vars/prd/beta-app_values.yaml.j2"),
+                ("delta-deploy", "config/application.yml"),
+                ("delta-deploy", "deploy/signing.pem"),
+            ],
+        )
+        self.assertEqual([page["page"] for page in found], [1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual({page["ticket"]["key"] for page in found}, {"DEMO-3"})
 
     def test_ticket_has_its_files_record_and_tracker_record(self):
         """Catches: a key's files read from the wrong layer or column, so DEMO-1
@@ -562,6 +610,26 @@ class TicketsContract(harness.Contract):
                 "page": 1,
                 "next_page": None,
             },
+        )
+
+    def test_answers_limit_keeps_the_first_by_id_and_counts_every_match(self):
+        """Catches: `limit` ignored, or applied before the rank, or `matches`
+        counting only what was returned. Each of the four answers holding `refund`
+        matches its one word, so they rank by id: `alpha-lib`, `how-refunds-work`,
+        `refunds`, `who-approves-refunds`."""
+        found = tools_tickets.answers(self.session, "refund", 2)
+        self.assertEqual(found["matches"], 4)
+        self.assertEqual(found["items"], [ALPHA_DIVE, HOW_REFUNDS_WORK])
+
+    def test_answers_page_by_their_cursor(self):
+        """Catches: `cursor` not followed over the ranked answers, so a page
+        repeats an answer from another layer or drops one."""
+        found = harness.pages(
+            lambda **paging: tools_tickets.answers(self.session, "refund", **paging)
+        )
+        self.assertEqual(
+            [page["items"] for page in found],
+            [[ALPHA_DIVE], [HOW_REFUNDS_WORK], [REFUNDS_TOPIC], [WHO_APPROVES_REFUNDS]],
         )
 
     def test_an_answer_query_nothing_matches(self):

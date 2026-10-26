@@ -182,6 +182,81 @@ class RelationshipsContract(harness.Contract):
             {"ref_prefix_not": "targets outside the estate record no pins"},
         )
 
+    def test_max_depth_bounds_the_walk_and_names_what_lies_beyond(self):
+        """Catches: `max_depth` ignored, so the walk reports the default four hops,
+        or read as "fewer than", so beta-app - one hop from alpha-lib - is cut;
+        or a repository past the bound named as `beyond` when nothing depends on
+        beta-app."""
+        walk = tools_relationships.dependents(
+            self.session, "alpha-lib", transitive=True, max_depth=1
+        )
+        self.assertEqual(walk["max_depth"], 1)
+        self.assertEqual(
+            [(item["repository"], item["depth"], item["path"]) for item in walk["items"]],
+            [("beta-app", 1, ["alpha-lib", "beta-app"])],
+        )
+        self.assertEqual(walk["beyond_max_depth"], [])
+        self.assertEqual(walk["cycles"], [])
+
+    def test_dependencies_page_the_edge_and_the_target_outside_by_their_cursor(self):
+        """Catches: `cursor` not followed over beta-app's dependencies, so the
+        target outside the estate, gamma-service, is lost or repeated on the second
+        page, or a page's `totals` count only what it shows."""
+        found = harness.pages(
+            lambda **paging: tools_relationships.dependencies(self.session, "beta-app", **paging)
+        )
+        self.assertEqual(
+            [page["items"] for page in found], [[{**NPM_EDGE, "repository": "alpha-lib"}], [GAMMA]]
+        )
+        self.assertEqual(
+            [page["totals"] for page in found], [{"depends_on": 1, "outside_estate": 1}] * 2
+        )
+
+    def test_dependents_take_only_their_own_cursor(self):
+        """Catches: `cursor` not judged against the dependents listing, so a page
+        cursor from beta-app's dependencies is followed into alpha-lib's dependents
+        instead of refused. (alpha-lib has one consumer, so its own listing is one
+        page: a second page needs a second consumer in the estate.)"""
+        found = harness.pages(
+            lambda **paging: tools_relationships.dependents(self.session, "alpha-lib", **paging)
+        )
+        self.assertEqual(
+            [page["items"] for page in found], [[{**NPM_EDGE, "repository": "beta-app"}]]
+        )
+        other = tools_relationships.dependencies(self.session, "beta-app", cap_bytes=1)
+        self.assertIsNotNone(other["next_page"])
+        with self.assertRaises(results.CursorRefused):
+            tools_relationships.dependents(
+                self.session, "alpha-lib", cursor=other["next_page"], cap_bytes=1
+            )
+
+    def test_repo_answer_over_the_cap_pages_the_library_file(self):
+        """Catches: the library's by-repo file not split as written when it is over
+        the cap - its fields other than the two lists lost from the page, or its
+        edge not named by list and position - or `cursor` not judged against this
+        listing. (beta-app's file holds one edge, so it is one page: a second needs
+        a second edge in one file.)"""
+        found = tools_relationships.repo_answer(self.session, "beta-app", cap_bytes=1)
+        self.assertEqual(
+            found["items"],
+            [
+                {
+                    "list": "depends_on",
+                    "position": 0,
+                    "edge": {**NPM_EDGE, "repository": "alpha-lib"},
+                }
+            ],
+        )
+        self.assertEqual(found["totals"], {"depends_on": 1, "depended_on_by": 0})
+        self.assertEqual(found["relationships"]["commit"], SHAS["beta-app"])
+        self.assertNotIn("depends_on", found["relationships"])
+        self.assertIsNone(found["next_page"])
+        other = tools_relationships.dependencies(self.session, "beta-app", cap_bytes=1)
+        with self.assertRaises(results.CursorRefused):
+            tools_relationships.repo_answer(
+                self.session, "beta-app", other["next_page"], cap_bytes=1
+            )
+
     def test_a_repository_with_no_edges_is_in_the_estate_and_answered_empty(self):
         """Catches: delta-deploy - a clone with no package manifest, whose by-repo
         file has two empty lists - answered as not in the estate, or

@@ -23,7 +23,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 from unittest import mock
 
 from knowledgestore_mcp import store
@@ -89,6 +89,17 @@ class LibraryStoreCase(unittest.TestCase):
     def reader(self) -> str:
         """The layer every graph answer comes from in this mode."""
         return "index" if self.INDEXED else "graph"
+
+
+def pages(call: Callable[..., dict[str, Any]], most: int = 20) -> list[dict[str, Any]]:
+    """Every page of a listing at a cap of one byte, so each page holds one item:
+    `call(cursor=..., cap_bytes=...)` from no cursor, following each `next_page`.
+    Stops after `most` pages, so a cursor that never advances fails rather than
+    loops."""
+    found = [call(cursor=None, cap_bytes=1)]
+    while found[-1]["next_page"] is not None and len(found) < most:
+        found.append(call(cursor=found[-1]["next_page"], cap_bytes=1))
+    return found
 
 
 if TYPE_CHECKING:
