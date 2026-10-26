@@ -82,7 +82,7 @@ class CoverageMapTest(unittest.TestCase):
         rows = _arguments()
         for spec in server.TOOLS:
             with self.subTest(tool=spec.name):
-                self.assertTrue((spec.name, TOOL_ROW) in rows, "no row for the tool")
+                self.assertIn((spec.name, TOOL_ROW), rows, "no row for the tool")
                 library, _ = rows[(spec.name, TOOL_ROW)]
                 self.assertTrue(_library_ids(library), "no library contract test")
         tools = {spec.name for spec in server.TOOLS}
@@ -97,7 +97,7 @@ class CoverageMapTest(unittest.TestCase):
         expected = {(spec.name, param.name) for spec in server.TOOLS for param in spec.params}
         for tool, argument in sorted(expected):
             with self.subTest(tool=tool, argument=argument):
-                self.assertTrue((tool, argument) in rows, "no row for the argument")
+                self.assertIn((tool, argument), rows, "no row for the argument")
                 library, fixture = rows[(tool, argument)]
                 if _library_ids(library):
                     continue
