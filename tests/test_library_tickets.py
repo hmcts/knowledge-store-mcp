@@ -10,7 +10,8 @@ writes, before the store is read:
   again (3 October, so that link counts two commits), and on beta-app's
   `package.json` and `src/pay.ts` (5 October); DEMO-2 on alpha-lib's schema
   (2 October); DEMO-3 on beta-app's four ownership files (6 October) and
-  delta-deploy's two files (8 October). DEMO-4 is only on beta-app's branch
+  delta-deploy's two files (8 October); DEMO-5 on delta-deploy's values file
+  (7 October, before DEMO-3 rewrote it). DEMO-4 is only on beta-app's branch
   `feature/DEMO-4-retry` (7 October, `src/pay.ts`), so it is `proposed`. Every
   other link is one commit.
 - A record's descriptions (`d`, at most two) are the subjects less their key,
@@ -22,8 +23,10 @@ writes, before the store is read:
   `fetch_tickets` with `today` 2026-10-20 and empty fields dropped: DEMO-1
   fetched and resolved (on 2026-10-05) so, being final, it carries no `checked`
   date; DEMO-3 fetched, unresolved, so checked 2026-10-20, with no description
-  or comments; DEMO-2 and DEMO-4 not in the response, so recorded `absent`,
-  checked 2026-10-20.
+  and one comment of a thread of three, so `comments_truncated`; DEMO-2 and
+  DEMO-4 not in the response, so recorded `absent`, checked 2026-10-20. DEMO-5
+  is requested on its own (four keys a request), and the tracker answers 403,
+  so it is recorded `denied`, checked 2026-10-20.
 - Written answers are the authored Markdown, rendered by the library's Markdown
   subset (`build_topic_briefs.markdown_to_html`): `#` is `<h2>`, `##` is `<h3>`,
   and each name in `config/repositories.txt` becomes a link to
@@ -47,7 +50,7 @@ from library_store import harness
 from library_store.generate import EXTRA_LAYER, INPUTS, STORE_ANSWERS_COMMIT
 from library_store.harness import SHAS
 
-# 2026-10-08T09:00:00+00:00, delta-deploy's only commit, the newest in the estate.
+# 2026-10-08T09:00:00+00:00, delta-deploy's last commit, the newest in the estate.
 SOURCES_AS_OF = "2026-10-08T09:00:00Z"
 
 # The store's own commit of docs/answers/who-approves-refunds.md (see above).
@@ -215,6 +218,17 @@ DEMO_3 = {
     "last": "2026-10-08",
     "repos": ["beta-app", "delta-deploy"],
     "commits": 2,
+}
+DEMO_5 = {
+    "key": "DEMO-5",
+    "proposed": False,
+    "branches": [],
+    "description": ["first production values"],
+    "text": {"subjects": ["first production values"]},
+    "first": "2026-10-07",
+    "last": "2026-10-07",
+    "repos": ["delta-deploy"],
+    "commits": 1,
 }
 DEMO_4 = {
     "key": "DEMO-4",
@@ -384,10 +398,10 @@ class TicketsContract(harness.Contract):
 
     def test_ticket_an_unresolved_tracker_record(self):
         """Catches: an unresolved record dated by anything but its `checked` day,
-        text the stage dropped as empty (resolution, description, comments)
-        returned as found, or a thread the tracker returned whole marked
-        `comments_truncated`; and a ticket's files in two repositories not all
-        listed."""
+        text the stage dropped as empty (resolution, description) returned as
+        found, or `comments_truncated` not read, so one comment of a thread of
+        three reads as the whole thread; and a ticket's files in two repositories
+        not all listed."""
         found = tools_tickets.ticket(self.session, "DEMO-3")
         self.assertEqual(
             found,
@@ -400,8 +414,12 @@ class TicketsContract(harness.Contract):
                     "key": "DEMO-3",
                     "state": "fetched",
                     "as_of": "2026-10-20",
-                    "text": {"title": "Ready beta-app for production", "status": "In Progress"},
-                    "comments_truncated": False,
+                    "text": {
+                        "title": "Ready beta-app for production",
+                        "status": "In Progress",
+                        "comments": ["The production values live in delta-deploy."],
+                    },
+                    "comments_truncated": True,
                 },
                 "tracker_note": None,
                 "reach": True,
@@ -425,6 +443,44 @@ class TicketsContract(harness.Contract):
                 ],
                 "proposed": [],
                 "total": 6,
+                "page": 1,
+                "next_page": None,
+            },
+        )
+
+    def test_ticket_the_tracker_denied(self):
+        """Catches: `fetch-tickets`' `denied` outcome - the tracker refused the
+        request - not recognised, so DEMO-5 is reported as a record in a shape the
+        server does not read, or as absent, which the stage treats as final when a
+        denial is retried; or its `checked` date not read."""
+        found = tools_tickets.ticket(self.session, "DEMO-5")
+        self.assertEqual(
+            found,
+            {
+                "store": self._store(
+                    [*self._ticket_files(), "ticket_descriptions", "ticket_tracker"]
+                ),
+                "ticket": DEMO_5,
+                "tracker": {
+                    "key": "DEMO-5",
+                    "state": "denied",
+                    "as_of": "2026-10-20",
+                    "text": {},
+                    "comments_truncated": False,
+                },
+                "tracker_note": None,
+                "reach": True,
+                "reach_note": None,
+                "totals": {"landed": 1, "proposed": 0},
+                "landed": [
+                    {
+                        "repository": "delta-deploy",
+                        "path": "ansible/group_vars/prd/beta-app_values.yaml.j2",
+                        "commits": 1,
+                    }
+                ],
+                "proposed": [],
+                "total": 1,
                 "page": 1,
                 "next_page": None,
             },

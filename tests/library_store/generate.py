@@ -157,6 +157,10 @@ jobs:
 """
 
 DELTA_VALUES = "replicas: 2\n"
+# The values file's first version, which DEMO-3 replaces: a DEMO-5 commit the
+# tracker denies, with the file's final content, and so the graph and the
+# deployments layer, unchanged.
+DELTA_VALUES_FIRST = "replicas: 1\n"
 DELTA_APPLICATION = "password: fixture-not-a-secret\n"
 
 # Each repository's commits on `main`, oldest first: (subject, date, files).
@@ -197,6 +201,11 @@ COMMITS = {
         ),
     ],
     "delta-deploy": [
+        (
+            "DEMO-5: first production values",
+            "2026-10-07T12:00:00+00:00",
+            {"ansible/group_vars/prd/beta-app_values.yaml.j2": DELTA_VALUES_FIRST},
+        ),
         (
             "DEMO-3: production values",
             "2026-10-08T09:00:00+00:00",

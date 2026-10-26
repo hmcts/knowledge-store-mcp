@@ -37,7 +37,7 @@ from library_store.harness import LIBRARY_LAYERS, SHAS
 ALPHA = "https://github.com/example-org/alpha-lib/blob/" + SHAS["alpha-lib"]
 BETA = "https://github.com/example-org/beta-app/blob/" + SHAS["beta-app"]
 
-# 2026-10-08T09:00:00+00:00, delta-deploy's only commit, the newest in the estate.
+# 2026-10-08T09:00:00+00:00, delta-deploy's last commit, the newest in the estate.
 SOURCES_AS_OF = "2026-10-08T09:00:00Z"
 
 # alpha-lib's src/refund.ts: `refund` on line 1, `RefundHandler` on 5, `handle` on 6.

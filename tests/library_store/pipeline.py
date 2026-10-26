@@ -17,8 +17,8 @@ community by what is in it. The summary texts come from `generate.py`, which
 writes every other authored input (topic, deep-dive and answers Markdown) too.
 
 Only the IO edges are stood in for, through the library's own seams:
-`fetch_tickets.main(opener=, sleep=, today=)` answers from
-`tracker_responses.json`, and `build_minimum_standard_settings.main(runner=)`
+`fetch_tickets.main(opener=, sleep=, today=)` answers each request with the
+status and body `tracker_responses.json` gives it, and `build_minimum_standard_settings.main(runner=)`
 answers each `gh api` path from `github_responses.json`. A request either file
 does not hold raises, so a stage cannot read an unexpected one as "nothing".
 
@@ -97,18 +97,23 @@ MANIFEST = Path("knowledge/store-manifest.json")
 # The tracker's answers, as `fetch-tickets` asks after `intent`: the project
 # allowlisted, description and comments requested, and the day fixed so an open
 # ticket's `checked` date is the same every run. The token is a placeholder.
+# Four keys a request, so DEMO-1..DEMO-4 share one and DEMO-5 has its own, which
+# the tracker refuses: the stage records a 401 or 403 against every key of the
+# request it answered (`fetch_tickets.apply_page`).
 TRACKER_SETTINGS = {
     "KSB_TRACKER_BASE_URL": "https://tracker.example.invalid",
     "KSB_TRACKER_TOKEN": "fixture-not-a-secret",
     "KSB_TRACKER_PROJECTS": "DEMO",
     "KSB_TRACKER_FETCH_DESCRIPTION": "1",
     "KSB_TRACKER_FETCH_COMMENTS": "1",
+    "KSB_TRACKER_PAGE_SIZE": "4",
 }
 TRACKER_TODAY = "2026-10-20"
 
 # The stage itself, called in a process of its own because `knowledgestore.config`
-# reads the settings at import. The opener answers a URL from the file or raises;
-# not an `OSError`, which the stage would record as a failed page and carry on.
+# reads the settings at import. The opener answers a URL with the status and body
+# the file gives it, or raises; not an `OSError`, which the stage would record as a
+# failed page and carry on.
 FETCH_TICKETS = """\
 import json, sys
 from knowledgestore import fetch_tickets
@@ -119,7 +124,8 @@ responses = json.loads(open(sys.argv[1], encoding="utf-8").read())
 def opener(url, headers):
     if url not in responses:
         raise LookupError("no canned tracker response for " + url)
-    return fetch_tickets.Response(200, json.dumps(responses[url]))
+    answer = responses[url]
+    return fetch_tickets.Response(answer["status"], json.dumps(answer["body"]))
 
 
 sys.exit(fetch_tickets.main([], opener=opener, sleep=lambda seconds: None, today=sys.argv[2]))
