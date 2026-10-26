@@ -1,5 +1,5 @@
 {
- "digest": "8d6fd04ff41fe156",
+ "digest": "2ae83a103b178b63",
  "extra_layers": {
   "ownership_notes": {
    "description": "Which team owns each shared library",
@@ -11,24 +11,25 @@
  },
  "format": {
   "major": 1,
-  "minor": 1
+  "minor": 4
  },
  "layers": {
   "content_files": {
-   "digest": null,
+   "digest": "9b5eb7a05c492b59",
    "paths": [
     "knowledge/corpus/content-files.txt"
    ],
-   "present": false
+   "present": true
   },
   "context": {
-   "digest": null,
+   "digest": "a318503e6600c281",
    "paths": [
     "knowledge_context.md"
    ],
-   "present": false
+   "present": true
   },
   "deep_dives": {
+   "authored_as_of": null,
    "digest": null,
    "paths": [
     "knowledge/deep-dives/dives.json"
@@ -38,7 +39,7 @@
   "deployments": {
    "digest": null,
    "paths": [],
-   "present": null
+   "present": true
   },
   "explorer": {
    "digest": null,
@@ -48,20 +49,20 @@
    "present": false
   },
   "graph": {
-   "digest": null,
+   "digest": "b019c4fe6dc93a8d",
    "paths": [
     "graphify-out/graph.json.gz",
     "graphify-out/graph.json"
    ],
-   "present": false,
-   "source_urls": null
+   "present": true,
+   "source_urls": true
   },
   "history": {
-   "digest": null,
+   "digest": "63fa562702282ad7",
    "paths": [
     "knowledge/git-history/"
    ],
-   "present": false
+   "present": true
   },
   "index": {
    "digest": null,
@@ -72,41 +73,50 @@
    "present": false
   },
   "intent": {
-   "digest": null,
+   "digest": "a47ca57c4ab390e8",
    "paths": [
     "knowledge/intent/file-tickets.json.gz"
    ],
-   "present": false,
-   "reach": null
+   "present": true,
+   "reach": true
   },
   "labels": {
-   "digest": null,
+   "digest": "cc93c8af5c31ff18",
    "paths": [
     "graphify-out/.graphify_labels.json"
    ],
-   "present": false
+   "present": true
+  },
+  "minimum_standard": {
+   "digest": null,
+   "paths": [
+    "knowledge/minimum-standard/"
+   ],
+   "present": false,
+   "recognised": null
   },
   "provenance": {
-   "digest": null,
+   "digest": "2ea4c8f0d74159e9",
    "paths": [
     "knowledge/provenance.json"
    ],
-   "present": false
+   "present": true
   },
   "relationships": {
-   "digest": "32d0b045bdfa56e9",
+   "digest": "ea13f021d35dc25e",
    "paths": [
     "knowledge/relationships/"
    ],
    "present": true,
-   "recognised": true
+   "recognised": true,
+   "unresolved_conflicts": 0
   },
   "repository_manifest": {
-   "digest": null,
+   "digest": "e9ef10a0c7182f66",
    "paths": [
     "knowledge/repository-manifest.md"
    ],
-   "present": false
+   "present": true
   },
   "semantic": {
    "digest": null,
@@ -116,6 +126,7 @@
    "present": false
   },
   "summaries": {
+   "authored_as_of": null,
    "digest": null,
    "paths": [
     "knowledge/summaries/communities.json"
@@ -123,11 +134,11 @@
    "present": false
   },
   "ticket_descriptions": {
-   "digest": null,
+   "digest": "1c37071bb95d65db",
    "paths": [
     "knowledge/intent/ticket-descriptions.json.gz"
    ],
-   "present": false
+   "present": true
   },
   "ticket_tracker": {
    "digest": null,
@@ -137,6 +148,7 @@
    "present": false
   },
   "topics": {
+   "authored_as_of": null,
    "digest": null,
    "paths": [
     "knowledge/topics/briefs.json"
@@ -144,8 +156,8 @@
    "present": false
   }
  },
- "library_version": "0.18.0",
- "sources_as_of": null,
+ "library_version": "0.19.0",
+ "sources_as_of": "2026-10-08T09:00:00Z",
  "store": {
   "github_org": "example-org",
   "id": "library-contract-store"

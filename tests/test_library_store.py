@@ -1,13 +1,15 @@
 """The contract with the library: the dependency tools over a store that
-knowledge-store-builder's own `relationships` and `manifest` stages wrote.
+knowledge-store-builder's own stages wrote.
 
 `library_store/store/` is the library's output, committed, and
 `library_store/generate.py` is how it was made and remakes it. The synthetic
 fixture describes the layout as this server understands it; this store is the
 layout as the library writes it, so a disagreement between the two fails here.
-Every expected value is derived by hand from the two clones `generate.py` writes:
-beta-app's `package.json` depends on `@example/alpha-lib` at `^1.2.0`, which
-alpha-lib publishes.
+Every expected value is derived by hand from the three clones `generate.py`
+writes: beta-app's `package.json` depends, on its line 4, on `@example/alpha-lib`
+at `^1.2.0`, which alpha-lib publishes, and on `gamma-service`, which no clone
+publishes; delta-deploy holds deployment values only. Git shas come from
+`library_store/inputs.json`, which the generator wrote from the clones it made.
 """
 
 import json
@@ -19,14 +21,22 @@ from pathlib import Path
 from unittest import mock
 
 from knowledgestore_mcp import results, store, tools_graph, tools_relationships, tools_tickets
-from library_store.generate import EXTRA_LAYER, OUT, VERSION
+from library_store.generate import EXTRA_LAYER, INPUTS, OUT, VERSION
 
 NOW = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
+SHAS = json.loads(INPUTS.read_text("utf-8"))["shas"]
 
-# beta-app -> alpha-lib, as each end's by-repo file names the other end.
+# beta-app -> alpha-lib, as each end's by-repo file names the other end: line 4 of
+# beta-app's package.json, linked at the commit the store was built from.
 NPM_EDGE = {
     "chart": "",
-    "examples": [{"line": '"@example/alpha-lib": "^1.2.0"', "url": None}],
+    "examples": [
+        {
+            "line": '"@example/alpha-lib": "^1.2.0",',
+            "url": "https://github.com/example-org/beta-app/blob/"
+            f"{SHAS['beta-app']}/package.json#L4",
+        }
+    ],
     "kinds": {"npm_package": 1},
     "references": 1,
     "refs_pinned": {"^1.2.0": 1},
@@ -34,15 +44,19 @@ NPM_EDGE = {
 }
 
 
+# beta-app's dependency no clone publishes, as the registry records it.
+GAMMA = {
+    "kind": "npm_package",
+    "target": "gamma-service",
+    "references": 1,
+    "referenced_by": ["beta-app"],
+    "outside_estate": True,
+}
+
+
 def known(name: str) -> dict:
-    return {
-        "answer": "in the estate",
-        "exact": name,
-        "matched_case_insensitively": False,
-        "graph_nodes": 0,
-        "cloned_at": None,
-        "note": "in the estate, but the graph holds no nodes for it",
-    }
+    """A repository the graph holds nodes for."""
+    return {"answer": "in the estate", "exact": name, "matched_case_insensitively": False}
 
 
 class LibraryStoreTest(unittest.TestCase):
@@ -76,8 +90,8 @@ class LibraryStoreTest(unittest.TestCase):
         self.assertEqual(found["total"], 1)
 
         depends = tools_relationships.dependencies(self.session, "beta-app")
-        self.assertEqual(depends["items"], [{**NPM_EDGE, "repository": "alpha-lib"}])
-        self.assertEqual(depends["totals"], {"depends_on": 1, "outside_estate": 0})
+        self.assertEqual(depends["items"], [{**NPM_EDGE, "repository": "alpha-lib"}, GAMMA])
+        self.assertEqual(depends["totals"], {"depends_on": 1, "outside_estate": 1})
 
         walk = tools_relationships.dependents(self.session, "alpha-lib", transitive=True)
         self.assertEqual(
@@ -92,13 +106,15 @@ class LibraryStoreTest(unittest.TestCase):
         `kinds`, `repository-dependencies` and the store's own extra layer join the
         estate and inflate every `searched` count."""
         loaded = self.session.current()[0]
-        self.assertEqual(sorted(results.by_repo_files(loaded)), ["alpha-lib", "beta-app"])
+        self.assertEqual(
+            sorted(results.by_repo_files(loaded)), ["alpha-lib", "beta-app", "delta-deploy"]
+        )
         for name in ("kinds", "repository-dependencies", Path(EXTRA_LAYER).stem):
             with self.subTest(name=name):
                 found = tools_graph.find_repo(self.session, name)
                 self.assertEqual(found["answer"], "not in the estate")
-        unknown = tools_relationships.dependents(self.session, "gamma-service")
-        self.assertTrue(unknown["searched"].startswith("searched 2 repositories "))
+        unknown = tools_relationships.dependents(self.session, "epsilon-web")
+        self.assertTrue(unknown["searched"].startswith("searched 3 repositories "))
 
     def test_an_extra_layer_in_the_layer_directory_is_read_as_its_own_layer(self):
         """Catches: the store's extra layer lost to the relationships layer - not

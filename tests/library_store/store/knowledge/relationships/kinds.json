@@ -21,7 +21,7 @@
   "pins": "version specs",
   "references": 1,
   "skipped": {},
-  "unresolved": 0
+  "unresolved": 1
  },
  "terraform_module": {
   "edges": 0,
