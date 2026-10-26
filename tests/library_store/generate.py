@@ -522,7 +522,7 @@ def _isolated_home(tmp: Path) -> dict[str, str]:
     }
 
 
-def _uv_run(tmp: Path) -> list[str]:
+def _uv_run() -> list[str]:
     return [
         "uv",
         "run",
@@ -554,7 +554,7 @@ def _running_interpreter(tmp: Path) -> str:
         "import platform, sys; print(platform.python_version(), sys.platform, platform.machine())"
     )
     done = subprocess.run(
-        [*_uv_run(tmp), "python", "-c", script],
+        [*_uv_run(), "python", "-c", script],
         text=True,
         stdout=subprocess.PIPE,
         env={**os.environ, **_isolated_home(tmp)},
@@ -574,7 +574,7 @@ def _pipeline(tmp: Path, root: Path, *flags: str) -> None:
         "PYTHONHASHSEED": "0",
         **_isolated_home(tmp),
     }
-    command = [*_uv_run(tmp), "python", str(PIPELINE), str(root), *flags]
+    command = [*_uv_run(), "python", str(PIPELINE), str(root), *flags]
     subprocess.run(command, cwd=root, env=env, check=True)
 
 

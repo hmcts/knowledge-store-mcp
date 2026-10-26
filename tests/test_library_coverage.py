@@ -116,22 +116,39 @@ class CoverageMapTest(unittest.TestCase):
         self.assertTrue(cited)
         for name in cited:
             with self.subTest(test=name):
-                test = _loads(name)
-                self.assertIsNotNone(test, "does not resolve to a test")
-                if "WithIndex." in name:
-                    # Each form must read the store its name claims.
-                    self.assertEqual(
-                        (getattr(test, "INDEXED", None), getattr(test, "STORE", None)),
-                        (True, OUT),
-                        "the cited form does not read the indexed store",
-                    )
-                    twin = _loads(name.replace("WithIndex.", "WithoutIndex."))
-                    self.assertIsNotNone(twin, "no WithoutIndex twin")
-                    self.assertEqual(
-                        (getattr(twin, "INDEXED", None), getattr(twin, "STORE", None)),
-                        (False, NO_INDEX),
-                        "the twin does not read the store without the index",
-                    )
+                self._assert_resolves(name)
+
+    def test_every_layer_field_cites_a_test_that_exists(self):
+        """Catches: a layer-field row added to the map with no test cited, or citing
+        a test that was renamed, deleted or lost its WithoutIndex twin, so a read of
+        a library layer is claimed covered when nothing fails if it breaks."""
+        rows = _section("Layer fields")
+        self.assertTrue(rows)
+        for field, library, *_ in rows:
+            with self.subTest(field=field):
+                ids = _library_ids(library)
+                self.assertTrue(ids, "no library contract test cited")
+                for name in ids:
+                    with self.subTest(test=name):
+                        self._assert_resolves(name)
+
+    def _assert_resolves(self, name: str) -> None:
+        test = _loads(name)
+        self.assertIsNotNone(test, "does not resolve to a test")
+        if "WithIndex." in name:
+            # Each form must read the store its name claims.
+            self.assertEqual(
+                (getattr(test, "INDEXED", None), getattr(test, "STORE", None)),
+                (True, OUT),
+                "the cited form does not read the indexed store",
+            )
+            twin = _loads(name.replace("WithIndex.", "WithoutIndex."))
+            self.assertIsNotNone(twin, "no WithoutIndex twin")
+            self.assertEqual(
+                (getattr(twin, "INDEXED", None), getattr(twin, "STORE", None)),
+                (False, NO_INDEX),
+                "the twin does not read the store without the index",
+            )
 
 
 if __name__ == "__main__":

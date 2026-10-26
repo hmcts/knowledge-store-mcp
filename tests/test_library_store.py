@@ -100,6 +100,7 @@ class RelationshipsContract(harness.Contract):
         record moving, or a library that stops naming the layer by its directory -
         either way the tests below would no longer describe what they say."""
         manifest = json.loads((self.STORE / "knowledge/store-manifest.json").read_text("utf-8"))
+        # Moves with the pin; tests/test_library_generation.py asserts the literal "0.19.0".
         self.assertEqual(manifest["library_version"], VERSION)
         relationships = manifest["layers"]["relationships"]
         self.assertEqual(relationships["paths"], ["knowledge/relationships/"])
