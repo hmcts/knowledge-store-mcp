@@ -795,9 +795,9 @@ MINIMUM_STANDARD_RECORDS: dict[str, dict] = {
                 "state": "not_determinable",
             },
             "no_secrets": {
-                "evidence": [],
-                "reason": "no files in the content set",
-                "state": "not_determinable",
+                "evidence": [{"path": "deploy/signing.pem", "rule": "key-file"}],
+                "reason": "pattern scan of the current tree found these; values are not recorded and history is not scanned",
+                "state": "absent",
             },
             "owner": {
                 "evidence": [

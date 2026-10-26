@@ -538,13 +538,18 @@ default store does not write the layer, so there it is absent (section 9.4).
 |---|---|---|---|---|---|---|---|
 | ledger-service | absent | absent | not_determinable | not_determinable | absent | not_determinable | not_determinable |
 | payments-api | present | present | not_determinable | present | present | not_determinable | not_determinable |
-| reporting-worker | absent | absent | not_determinable | not_determinable | not_determinable | not_determinable | not_determinable |
+| reporting-worker | absent | absent | absent | not_determinable | not_determinable | not_determinable | not_determinable |
 
 - **payments-api's one secret-scan finding** is
   `{"line": 4, "path": "config/application.yml", "rule": "key-name"}`: a location
   and a rule. The value is in no file of the store. A `key-name` finding is a
   setting named for a secret, not a committed value, so the point is
   `not_determinable` with that finding as its evidence: evidence is not absence.
+- **reporting-worker's one secret-scan finding** is
+  `{"path": "deploy/signing.pem", "rule": "key-file"}`: a path and a rule, with no
+  line, because the writer reports a file named as a private key by its name and
+  never opens it. That makes the point `absent`. The fixture's `deploy/signing.pem`
+  is an empty tracked file; there is no key content anywhere.
 - **ledger-service's `security_contact` is `absent`** with four citations: the
   three places a SECURITY.md could be, each not found, and
   `example-org/.github`, the organisation's public `.github` repository, which

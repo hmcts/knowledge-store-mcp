@@ -614,6 +614,9 @@ class TrapTest(FixtureStoreCase):
             "| payments-api | present | present | not_determinable | present | present | "
             "not_determinable | not_determinable |",
             "`example-org/.github`",
+            '`{"path": "deploy/signing.pem", "rule": "key-file"}`',
+            "| reporting-worker | absent | absent | absent | not_determinable | "
+            "not_determinable | not_determinable | not_determinable |",
         )
         self.assertFalse((self.root / layer).exists())
         root = build(Path(tempfile.mkdtemp(dir=self.root.parent)) / "s", minimum_standard=True)
@@ -649,6 +652,10 @@ class TrapTest(FixtureStoreCase):
         )
         worker = _json(root, f"{layer}/by-repo/reporting-worker.json")
         self.assertIsNone(worker["settings_read_at"])
+        self.assertEqual(
+            worker["points"]["no_secrets"]["evidence"],
+            [{"path": "deploy/signing.pem", "rule": "key-file"}],
+        )
         for rel in files:
             self.assertNotIn(b"fixture-not-a-secret", (root / layer / rel).read_bytes())
 

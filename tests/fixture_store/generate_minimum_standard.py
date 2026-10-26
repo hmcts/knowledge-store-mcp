@@ -96,6 +96,9 @@ CLONES: dict[str, tuple[dict[str, str], list[str]]] = {
                 "  - uses: gitleaks/gitleaks-action@v2\n"
             ),
             "renovate.json": "{}\n",
+            # Named for a private key and empty: the writer reports a key file by its
+            # name alone and never opens it.
+            "deploy/signing.pem": "",
         },
         [],
     ),
@@ -127,8 +130,7 @@ def settings(stage) -> dict:
     }
 
 
-def records(library_src: Path, work: Path, snapshot: dict) -> dict[str, dict]:
-    sys.path.insert(0, str(library_src))
+def records(work: Path, snapshot: dict) -> dict[str, dict]:
     writer = importlib.import_module("knowledgestore.build_minimum_standard")
     contract = importlib.import_module("knowledgestore.minimum_standard")
     snapshot = {**snapshot, "format": contract.format_stamp()}
@@ -158,7 +160,7 @@ def main() -> int:
     sys.path.insert(0, str(library_src))
     snapshot = settings(importlib.import_module("knowledgestore.build_minimum_standard_settings"))
     with tempfile.TemporaryDirectory() as tmp:
-        made = records(library_src, Path(tmp), snapshot)
+        made = records(Path(tmp), snapshot)
     status = 0
     if snapshot != MINIMUM_STANDARD_SETTINGS:
         print(json.dumps({"MINIMUM_STANDARD_SETTINGS": snapshot}, indent=2, sort_keys=True))
