@@ -15,31 +15,9 @@ import unittest
 from pathlib import Path
 
 from library_store.generate import NO_INDEX, OUT, REQUIREMENTS
+from library_store.harness import LIBRARY_LAYERS
 
 MANIFEST = "knowledge/store-manifest.json"
-
-# Every layer v0.19.0's manifest names: its 18 `LAYERS` and `deployments`.
-LIBRARY_LAYERS = (
-    "graph",
-    "labels",
-    "provenance",
-    "repository_manifest",
-    "context",
-    "content_files",
-    "history",
-    "intent",
-    "ticket_descriptions",
-    "ticket_tracker",
-    "summaries",
-    "topics",
-    "deep_dives",
-    "semantic",
-    "explorer",
-    "relationships",
-    "minimum_standard",
-    "index",
-    "deployments",
-)
 
 
 def _manifest(store: Path = OUT) -> dict:

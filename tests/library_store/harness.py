@@ -33,6 +33,31 @@ from library_store.generate import INPUTS, NO_INDEX, OUT
 NOW = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
 SHAS: dict[str, str] = json.loads(INPUTS.read_text("utf-8"))["shas"]
 
+# Every layer v0.19.0's manifest names: its 18 `LAYERS` and `deployments`. The
+# one test-side list: `pipeline.py` keeps its own `EXPECTED`, since it runs in
+# the frozen environment and imports nothing from here.
+LIBRARY_LAYERS = (
+    "graph",
+    "labels",
+    "provenance",
+    "repository_manifest",
+    "context",
+    "content_files",
+    "history",
+    "intent",
+    "ticket_descriptions",
+    "ticket_tracker",
+    "summaries",
+    "topics",
+    "deep_dives",
+    "semantic",
+    "explorer",
+    "relationships",
+    "minimum_standard",
+    "index",
+    "deployments",
+)
+
 
 class LibraryStoreCase(unittest.TestCase):
     """A session over `STORE`, with its index cache in a fresh directory, so no
@@ -49,8 +74,16 @@ class LibraryStoreCase(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, {"XDG_CACHE_HOME": str(cache)})
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.session = store.Session(lambda: store.open_store(self.STORE, cache), lambda: NOW)
-        self.addCleanup(lambda: self.session.current()[0].close())
+        opened: list[store.Store] = []
+
+        def factory() -> store.Store:
+            loaded = store.open_store(self.STORE, cache)
+            opened.append(loaded)
+            return loaded
+
+        # Closes each store the session opened, and never opens one to close it.
+        self.addCleanup(lambda: [loaded.close() for loaded in opened])
+        self.session = store.Session(factory, lambda: NOW)
 
     @property
     def reader(self) -> str:

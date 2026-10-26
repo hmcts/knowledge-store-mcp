@@ -49,8 +49,8 @@ GITHUB_RESPONSES = HERE / "github_responses.json"
 
 # Layers the manifest must mark present, in the `layers` table: every one
 # v0.19.0 names, its 18 `LAYERS` and `deployments`. Kept in step with
-# `LIBRARY_LAYERS` in tests/test_library_generation.py, which asserts the same
-# list over the committed store. `index` is absent, and must be, under
+# `LIBRARY_LAYERS` in tests/library_store/harness.py, which the generation and
+# graph tests assert over the committed stores. `index` is absent, and must be, under
 # `--no-index`.
 EXPECTED = (
     "graph",

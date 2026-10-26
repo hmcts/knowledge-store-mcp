@@ -32,7 +32,7 @@ from typing import Any
 from knowledgestore_mcp import tools_graph
 from library_store import harness
 from library_store.generate import SUMMARY_REFUNDS
-from library_store.harness import SHAS
+from library_store.harness import LIBRARY_LAYERS, SHAS
 
 ALPHA = "https://github.com/example-org/alpha-lib/blob/" + SHAS["alpha-lib"]
 BETA = "https://github.com/example-org/beta-app/blob/" + SHAS["beta-app"]
@@ -112,29 +112,6 @@ TOTAL = {
     "url": f"{ALPHA}/{SCHEMA_FILE}#L16",
 }
 
-# Every layer v0.19.0 writes, each present in `store/`.
-LAYERS = (
-    "content_files",
-    "context",
-    "deep_dives",
-    "deployments",
-    "explorer",
-    "graph",
-    "history",
-    "index",
-    "intent",
-    "labels",
-    "minimum_standard",
-    "provenance",
-    "relationships",
-    "repository_manifest",
-    "semantic",
-    "summaries",
-    "ticket_descriptions",
-    "ticket_tracker",
-    "topics",
-)
-
 
 def known(name: str) -> dict:
     """A repository the graph holds nodes for."""
@@ -179,7 +156,7 @@ class GraphContract(harness.Contract):
         schema not read from the library's `meta` table, provenance shas or dates
         mis-read, or `stale_days` not counted from `sources_as_of`."""
         info = tools_graph.store_info(self.session)
-        layers = {name: {"present": True} for name in LAYERS}
+        layers = {name: {"present": True} for name in LIBRARY_LAYERS}
         if self.INDEXED:
             index = {"schema": "1.0", "fallback": None}
         else:
@@ -403,10 +380,11 @@ class GraphContract(harness.Contract):
         )
 
     def test_no_graphify_keyword_node_remains_for_the_schema(self):
-        """Catches: graphify's own nodes for a schema file's JSON keywords left
-        beside the json-schema stage's, so a search for `$defs` or `properties`
-        answers with keyword noise from the schema file, or with graphify's node
-        for the file itself (labelled `refund.schema.json`) beside the schema's."""
+        """Catches, after a graphify upgrade and regeneration: graphify's own nodes
+        for a recognised schema file - its JSON keywords, or the file itself -
+        left beside the json-schema layer's. At 0.9.93 graphify emits no node for
+        a schema document (`json_config._is_config_json`), so today this pins
+        that state."""
         for text, expected in (
             ("$defs", []),
             ("properties", []),
