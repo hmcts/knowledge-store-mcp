@@ -415,21 +415,29 @@ class GraphContract(harness.Contract):
 
     def test_a_community_pages_its_members_by_its_cursor(self):
         """Catches: `cursor` not followed over a community's members, so a page
-        repeats or drops one, or a later page loses the label and summary. Which
-        nodes graphify clusters with `refund` is its choice, so the pages are
-        held to the whole listing, which must hold `refund` and `RefundHandler`."""
+        repeats or drops one, or a later page loses the label and summary.
+        graphify chooses which nodes it clusters with `refund`, so the hand-derived
+        part is `refund` and `RefundHandler`, the members the community test above
+        pins. The pages are one member each, as many as `total`, with no member
+        twice, and they reassemble the unpaged listing."""
         refunds = self._community_of(REFUND["id"])
         whole = [item["id"] for item in tools_graph.community(self.session, refunds)["items"]]
-        self.assertIn(REFUND["id"], whole)
-        self.assertIn(REFUND_HANDLER["id"], whole)
         found = harness.pages(
             lambda **paging: tools_graph.community(self.session, refunds, **paging)
         )
-        self.assertEqual(
-            [[item["id"] for item in page["items"]] for page in found],
-            [[member] for member in whole],
-        )
-        self.assertEqual({page["community"]["label"] for page in found}, {"Refunds"})
+        paged = [item["id"] for page in found for item in page["items"]]
+        self.assertEqual(len(found), found[0]["total"])
+        self.assertEqual([len(page["items"]) for page in found], [1] * len(found))
+        self.assertEqual(len(paged), len(set(paged)), "a member on two pages")
+        self.assertLessEqual({REFUND["id"], REFUND_HANDLER["id"]}, set(paged))
+        self.assertEqual(paged, whole)
+        header = {
+            "id": refunds,
+            "label": "Refunds",
+            "summary": SUMMARY_REFUNDS,
+            "summary_as_of": SOURCES_AS_OF,
+        }
+        self.assertEqual([page["community"] for page in found], [header] * len(found))
 
     # --- the json-schema layer ------------------------------------------------------
 

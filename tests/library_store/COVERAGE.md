@@ -51,20 +51,20 @@ where the library's output cannot produce the case.
 | `community` | `cursor` | `test_library_graph.GraphWithIndex.test_a_community_pages_its_members_by_its_cursor` | |
 | `repo_answer` | — | `test_library_store.RelationshipsWithIndex.test_a_repository_with_no_edges_is_in_the_estate_and_answered_empty` | |
 | `repo_answer` | `repo` | `test_library_store.RelationshipsWithIndex.test_dependents_and_dependencies_return_the_library_edge`, `test_library_store.RelationshipsWithIndex.test_a_repository_with_no_edges_is_in_the_estate_and_answered_empty` | |
-| `repo_answer` | `cursor` | `test_library_store.RelationshipsWithIndex.test_repo_answer_over_the_cap_pages_the_library_file` (one page and a refused foreign cursor; see the note below) | |
+| `repo_answer` | `cursor` | `test_library_store.RelationshipsWithIndex.test_repo_answer_over_the_cap_pages_the_library_file` (one page and a refused foreign cursor) | **Open.** No page 2: beta-app's by-repo file holds one edge. Following a second page needs a second edge in one by-repo file, which is a generator input. Meanwhile `test_tools_relationships.RepoAnswerTest.test_the_oversize_file_pages_and_reassembles_to_its_exact_bytes` covers it. |
 | `dependents` | — | `test_library_store.RelationshipsWithIndex.test_dependents_and_dependencies_return_the_library_edge` | |
 | `dependents` | `target` | `test_library_store.RelationshipsWithIndex.test_dependents_and_dependencies_return_the_library_edge` | |
 | `dependents` | `kind` | `test_library_store.RelationshipsWithIndex.test_a_kind_keeps_the_edges_and_targets_of_that_kind`, `test_library_store.RelationshipsWithIndex.test_a_kind_the_library_does_not_list_is_refused_with_its_kinds` | |
 | `dependents` | `ref_prefix_not` | `test_library_store.RelationshipsWithIndex.test_ref_prefix_not_keeps_a_consumer_by_the_refs_the_library_pinned` | |
 | `dependents` | `transitive` | `test_library_store.RelationshipsWithIndex.test_dependents_and_dependencies_return_the_library_edge` | |
-| `dependents` | `max_depth` | `test_library_store.RelationshipsWithIndex.test_max_depth_bounds_the_walk_and_names_what_lies_beyond` (one hop; see the note below) | |
-| `dependents` | `cursor` | `test_library_store.RelationshipsWithIndex.test_dependents_take_only_their_own_cursor` (one page and a refused foreign cursor; see the note below) | |
+| `dependents` | `max_depth` | `test_library_store.RelationshipsWithIndex.test_max_depth_bounds_the_walk_and_names_what_lies_beyond` (one hop) | **Open.** No cut: the chain is one hop. A cut needs a generator input, a repository that depends on beta-app. Meanwhile `test_tools_relationships.DependentsTest.test_the_three_hop_chain_with_paths_and_the_cycle_once` covers it. |
+| `dependents` | `cursor` | `test_library_store.RelationshipsWithIndex.test_dependents_take_only_their_own_cursor` (one page and a refused foreign cursor) | **Open.** No page 2: alpha-lib has one consumer. A second page needs a generator input, a second consumer of alpha-lib. |
 | `dependencies` | — | `test_library_store.RelationshipsWithIndex.test_dependents_and_dependencies_return_the_library_edge` | |
 | `dependencies` | `repo` | `test_library_store.RelationshipsWithIndex.test_dependents_and_dependencies_return_the_library_edge` | |
 | `dependencies` | `kind` | `test_library_store.RelationshipsWithIndex.test_a_kind_keeps_the_edges_and_targets_of_that_kind`, `test_library_store.RelationshipsWithIndex.test_a_kind_the_library_does_not_list_is_refused_with_its_kinds` | |
 | `dependencies` | `cursor` | `test_library_store.RelationshipsWithIndex.test_dependencies_page_the_edge_and_the_target_outside_by_their_cursor` | |
 | `tickets` | — | `test_library_tickets.TicketsWithIndex.test_tickets_for_a_file_list_the_landed_ticket` | |
-| `tickets` | `repo` | `test_library_tickets.TicketsWithIndex.test_tickets_for_a_file_list_the_landed_ticket` | |
+| `tickets` | `repo` | `test_library_tickets.TicketsWithIndex.test_tickets_for_a_repository_are_every_file_s_tickets_there` | |
 | `tickets` | `path` | `test_library_tickets.TicketsWithIndex.test_tickets_for_a_file_list_the_landed_ticket`, `test_library_tickets.TicketsWithIndex.test_tickets_keep_a_branch_only_ticket_apart_with_its_branch` | |
 | `tickets` | `cursor` | `test_library_tickets.TicketsWithIndex.test_tickets_page_both_lists_by_their_cursor` | |
 | `ticket` | — | `test_library_tickets.TicketsWithIndex.test_ticket_has_its_files_record_and_tracker_record` | |
@@ -83,19 +83,9 @@ where the library's output cannot produce the case.
 Each library store test pages at a cap of one byte (`harness.pages`), so every
 page holds one item. This gives a hand-derived page count.
 
-**What the estate cannot show.** alpha-lib has one consumer and beta-app's
-by-repo file holds one edge, so the `dependents` and `repo_answer` listings are
-one page. Their library tests check the paged form and refuse a cursor from
-another listing, but follow no second page. The dependency chain is also one
-hop, so `max_depth` is checked at its bound, not as a cut. Following a second
-page needs a second consumer of alpha-lib, and a cut needs a repository that
-depends on beta-app. Both are generator inputs. Until they exist, the fixture
-covers these cases:
-
-- `test_tools_relationships.RepoAnswerTest.test_the_oversize_file_pages_and_reassembles_to_its_exact_bytes`
-  follows a second page;
-- `test_tools_relationships.DependentsTest.test_the_three_hop_chain_with_paths_and_the_cycle_once`
-  walks more than one hop.
+**Open** marks every gap that needs a generator input and a regeneration. Search for
+`**Open.**` to list them all. Each Open row still cites the library test that runs
+as far as the estate allows, plus the fixture test that covers the rest.
 
 ## Layer fields
 
@@ -122,6 +112,7 @@ covers these cases:
 | `labels` keyed by community | `test_library_graph.GraphWithIndex.test_community_has_its_label_members_and_summary`, `test_library_graph.GraphWithIndex.test_a_community_without_a_summary` | |
 | `summaries` keyed by community | `test_library_graph.GraphWithIndex.test_community_has_its_label_members_and_summary`, `test_library_graph.GraphWithIndex.test_a_community_without_a_summary` | |
 | relationships by-repo `depends_on`, `depended_on_by`, `commit`; edge `kinds`, `references`, `refs_pinned`, `refs_unpinned`, `examples` | `test_library_store.RelationshipsWithIndex.test_dependents_and_dependencies_return_the_library_edge`, `test_library_store.RelationshipsWithIndex.test_a_repository_with_no_edges_is_in_the_estate_and_answered_empty`, `test_library_store.RelationshipsWithIndex.test_repo_answer_over_the_cap_pages_the_library_file` | |
+| `dependents(transitive=True)` `cycles`, over the library's `depended_on_by` edges | none | **Open.** The invented estate has no loop. Covering this needs a generator input, two repositories that depend on each other, and a regeneration. Meanwhile `test_tools_relationships.DependentsTest.test_a_longer_loop_is_one_cycle` covers it. |
 | relationships `kinds.json` | `test_library_store.RelationshipsWithIndex.test_a_kind_the_library_does_not_list_is_refused_with_its_kinds` | |
 | registry `unresolved_targets_outside_estate` | `test_library_graph.GraphWithIndex.test_find_repo_answers_a_target_outside_the_estate`, `test_library_store.RelationshipsWithIndex.test_ref_prefix_not_keeps_a_consumer_by_the_refs_the_library_pinned` | |
 | only by-repo files are repositories | `test_library_store.RelationshipsWithIndex.test_only_by_repo_files_are_repositories` | |
@@ -142,6 +133,6 @@ The library never writes these cases, so only the synthetic fixture covers them.
 | Case | Fixture test | Why library output cannot produce it |
 |---|---|---|
 | a secret value inside a finding | `test_tools_minimum_standard.EvidenceNotVerdictTest.test_a_secret_finding_is_a_rule_a_path_and_a_line_and_never_a_value` | v0.19.0 records where a finding is and which rule it broke, never the value |
-| a dependency cycle | `test_tools_relationships.DependentsTest.test_a_repository_depending_on_itself_is_a_cycle`, `test_tools_relationships.DependentsTest.test_a_longer_loop_is_one_cycle` | the invented estate has no loop; one would be a generator input, not yet asked for |
+| a repository depending on itself | `test_tools_relationships.DependentsTest.test_a_repository_depending_on_itself_is_a_cycle` | the library's relationships stage treats a self-reference as a self-reference, not an edge, and places it nowhere (`relationships.py` `_Resolver`, `_check_conservation`). It never writes a repository among its own dependents. |
 | a by-repo link escaping the store | `test_tools_relationships.EscapingLinkTest.test_a_by_repo_link_outside_the_store_is_skipped_and_counted` | the library writes files, not symlinks |
 | a damaged full-text table | `test_tools_graph.DamagedIndexTest.test_a_damaged_full_text_table_falls_back_to_the_graph_and_says_why` | the library writes a sound index |

@@ -94,10 +94,12 @@ class LibraryStoreCase(unittest.TestCase):
 def pages(call: Callable[..., dict[str, Any]], most: int = 20) -> list[dict[str, Any]]:
     """Every page of a listing at a cap of one byte, so each page holds one item:
     `call(cursor=..., cap_bytes=...)` from no cursor, following each `next_page`.
-    Stops after `most` pages, so a cursor that never advances fails rather than
-    loops."""
+    Raises after `most` pages with a cursor still pending, so a cursor that never
+    advances fails loudly rather than looping or truncating the listing."""
     found = [call(cursor=None, cap_bytes=1)]
-    while found[-1]["next_page"] is not None and len(found) < most:
+    while found[-1]["next_page"] is not None:
+        if len(found) >= most:
+            raise AssertionError(f"still a next_page after {most} pages")
         found.append(call(cursor=found[-1]["next_page"], cap_bytes=1))
     return found
 

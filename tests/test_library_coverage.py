@@ -7,7 +7,8 @@ with no row, a row with no test, or a row citing a test that no longer exists
 fails here, so the map cannot claim coverage the suite does not have.
 
 The map cites each library contract in its `WithIndex` form; `both_modes`
-makes a `WithoutIndex` twin of every one, and that twin is checked too.
+makes a `WithoutIndex` twin of every one. The guard checks that the twin exists
+and that each form reads the store its name claims.
 """
 
 import re
@@ -15,6 +16,7 @@ import unittest
 from pathlib import Path
 
 from knowledgestore_mcp import server
+from library_store.generate import NO_INDEX, OUT
 
 COVERAGE = Path(__file__).resolve().parent / "library_store" / "COVERAGE.md"
 
@@ -57,16 +59,19 @@ def _library_ids(cell: str) -> list[str]:
     return [found for found in TEST_ID.findall(cell) if found.startswith("test_library_")]
 
 
-def _loads(name: str) -> bool:
-    """Whether `name` resolves to that one test, not to the loader's stand-in for
-    a name it could not find. (A `both_modes` class's own name differs from the
+def _loads(name: str) -> unittest.TestCase | None:
+    """The one test `name` resolves to, or None for the loader's stand-in for a
+    name it could not find. (A `both_modes` class's own name differs from the
     module attribute the map cites, so the method name is what is compared.)"""
     tests = list(unittest.defaultTestLoader.loadTestsFromName(name))
-    return (
+    if (
         len(tests) == 1
+        and isinstance(tests[0], unittest.TestCase)
         and type(tests[0]).__name__ != "_FailedTest"
-        and getattr(tests[0], "_testMethodName", None) == name.rsplit(".", 1)[1]
-    )
+        and tests[0]._testMethodName == name.rsplit(".", 1)[1]
+    ):
+        return tests[0]
+    return None
 
 
 class CoverageMapTest(unittest.TestCase):
@@ -111,10 +116,22 @@ class CoverageMapTest(unittest.TestCase):
         self.assertTrue(cited)
         for name in cited:
             with self.subTest(test=name):
-                self.assertTrue(_loads(name), "does not resolve to a test")
+                test = _loads(name)
+                self.assertIsNotNone(test, "does not resolve to a test")
                 if "WithIndex." in name:
-                    twin = name.replace("WithIndex.", "WithoutIndex.")
-                    self.assertTrue(_loads(twin), f"no twin {twin}")
+                    # Each form must read the store its name claims.
+                    self.assertEqual(
+                        (getattr(test, "INDEXED", None), getattr(test, "STORE", None)),
+                        (True, OUT),
+                        "the cited form does not read the indexed store",
+                    )
+                    twin = _loads(name.replace("WithIndex.", "WithoutIndex."))
+                    self.assertIsNotNone(twin, "no WithoutIndex twin")
+                    self.assertEqual(
+                        (getattr(twin, "INDEXED", None), getattr(twin, "STORE", None)),
+                        (False, NO_INDEX),
+                        "the twin does not read the store without the index",
+                    )
 
 
 if __name__ == "__main__":

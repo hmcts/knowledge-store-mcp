@@ -306,6 +306,38 @@ class TicketsContract(harness.Contract):
             },
         )
 
+    def test_tickets_for_a_repository_are_every_file_s_tickets_there(self):
+        """Catches: `repo` not used to filter when no `path` is given, so alpha-lib's
+        and delta-deploy's rows join beta-app's, or the repository's rows are lost.
+        beta-app's commits are DEMO-1 on `package.json` and `src/pay.ts`, DEMO-3
+        on its four ownership files, and DEMO-4 on `src/pay.ts` only on its
+        branch. Each link is one commit, and items order by ticket, then path."""
+        found = tools_tickets.tickets(self.session, "beta-app")
+        self.assertEqual(found["repository"], known("beta-app"))
+        self.assertEqual(
+            found["landed"],
+            [
+                {"ticket": "DEMO-1", "path": "package.json", "commits": 1},
+                {"ticket": "DEMO-1", "path": "src/pay.ts", "commits": 1},
+                {"ticket": "DEMO-3", "path": ".github/CODEOWNERS", "commits": 1},
+                {"ticket": "DEMO-3", "path": ".github/dependabot.yml", "commits": 1},
+                {"ticket": "DEMO-3", "path": ".github/workflows/codeql.yml", "commits": 1},
+                {"ticket": "DEMO-3", "path": "SECURITY.md", "commits": 1},
+            ],
+        )
+        self.assertEqual(
+            found["proposed"],
+            [
+                {
+                    "ticket": "DEMO-4",
+                    "path": "src/pay.ts",
+                    "commits": 1,
+                    "branches": ["feature/DEMO-4-retry"],
+                }
+            ],
+        )
+        self.assertEqual(found["totals"], {"landed": 6, "proposed": 1})
+
     def test_tickets_keep_a_branch_only_ticket_apart_with_its_branch(self):
         """Catches: the ticket layer's per-file `proposed` map, or the index's
         `landed` flag, not read, so DEMO-4 - only ever on beta-app's
