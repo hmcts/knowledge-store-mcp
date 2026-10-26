@@ -161,7 +161,13 @@ DELTA_VALUES = "replicas: 2\n"
 # tracker denies, with the file's final content, and so the graph and the
 # deployments layer, unchanged.
 DELTA_VALUES_FIRST = "replicas: 1\n"
+# A setting named for a secret: the scan records a `key-name` finding, a name and
+# not a committed value, so on its own it leaves `no_secrets` undetermined.
 DELTA_APPLICATION = "password: fixture-not-a-secret\n"
+# An empty file named as a private key is: the scan finds it by its name among the
+# tracked files and never opens it, so `no_secrets` is `absent` with a `key-file`
+# finding that has no line. Empty, so nothing key-like is committed.
+DELTA_SIGNING_KEY = ""
 
 # Each repository's commits on `main`, oldest first: (subject, date, files).
 # A file mapped to None is deleted. Dates are distinct and in October 2026.
@@ -212,6 +218,7 @@ COMMITS = {
             {
                 "ansible/group_vars/prd/beta-app_values.yaml.j2": DELTA_VALUES,
                 "config/application.yml": DELTA_APPLICATION,
+                "deploy/signing.pem": DELTA_SIGNING_KEY,
             },
         ),
     ],

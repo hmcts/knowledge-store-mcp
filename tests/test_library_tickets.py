@@ -10,7 +10,8 @@ writes, before the store is read:
   again (3 October, so that link counts two commits), and on beta-app's
   `package.json` and `src/pay.ts` (5 October); DEMO-2 on alpha-lib's schema
   (2 October); DEMO-3 on beta-app's four ownership files (6 October) and
-  delta-deploy's two files (8 October); DEMO-5 on delta-deploy's values file
+  delta-deploy's three files (8 October; its empty `deploy/signing.pem` is
+  tracked, so it is linked like any other file); DEMO-5 on delta-deploy's values file
   (7 October, before DEMO-3 rewrote it). DEMO-4 is only on beta-app's branch
   `feature/DEMO-4-retry` (7 October, `src/pay.ts`), so it is `proposed`. Every
   other link is one commit.
@@ -424,7 +425,7 @@ class TicketsContract(harness.Contract):
                 "tracker_note": None,
                 "reach": True,
                 "reach_note": None,
-                "totals": {"landed": 6, "proposed": 0},
+                "totals": {"landed": 7, "proposed": 0},
                 "landed": [
                     {"repository": "beta-app", "path": ".github/CODEOWNERS", "commits": 1},
                     {"repository": "beta-app", "path": ".github/dependabot.yml", "commits": 1},
@@ -440,9 +441,10 @@ class TicketsContract(harness.Contract):
                         "commits": 1,
                     },
                     {"repository": "delta-deploy", "path": "config/application.yml", "commits": 1},
+                    {"repository": "delta-deploy", "path": "deploy/signing.pem", "commits": 1},
                 ],
                 "proposed": [],
-                "total": 6,
+                "total": 7,
                 "page": 1,
                 "next_page": None,
             },

@@ -1,5 +1,5 @@
 {
- "digest": "17c94e6770014f47",
+ "digest": "621807ed0e2b5560",
  "extra_layers": {
   "answers": {
    "description": "Written journeys and findings.",
@@ -40,7 +40,7 @@
     "newest": "2026-10-08T09:00:00Z",
     "oldest": "2026-10-08T09:00:00Z"
    },
-   "digest": "03e338b67c12d0c1",
+   "digest": "27b02a2cf4930634",
    "paths": [
     "knowledge/deep-dives/dives.json"
    ],
@@ -52,14 +52,14 @@
    "present": true
   },
   "explorer": {
-   "digest": "ce7e2657aaef23ff",
+   "digest": "06cd34fd5fedceed",
    "paths": [
     "graphify-out/explorer.html"
    ],
    "present": true
   },
   "graph": {
-   "digest": "3a407a3dcd2841b8",
+   "digest": "531b75f1cfa7aa25",
    "paths": [
     "graphify-out/graph.json.gz",
     "graphify-out/graph.json"
@@ -68,14 +68,14 @@
    "source_urls": true
   },
   "history": {
-   "digest": "a5e97e90cac524eb",
+   "digest": "421a17c5187a2524",
    "paths": [
     "knowledge/git-history/"
    ],
    "present": true
   },
   "index": {
-   "digest": "2e7aa3e0d2a2ace7",
+   "digest": "586f6fe31df3d42b",
    "paths": [
     "knowledge/index/store.sqlite.gz",
     "knowledge/index/store.sqlite"
@@ -83,7 +83,7 @@
    "present": true
   },
   "intent": {
-   "digest": "fdfb6338d84da991",
+   "digest": "4bd7d0c947ec746d",
    "paths": [
     "knowledge/intent/file-tickets.json.gz"
    ],
@@ -98,7 +98,7 @@
    "present": true
   },
   "minimum_standard": {
-   "digest": "7c694be2e2846b1c",
+   "digest": "91ccc2e9a67effbe",
    "paths": [
     "knowledge/minimum-standard/"
    ],
@@ -106,14 +106,14 @@
    "recognised": true
   },
   "provenance": {
-   "digest": "8509d71d24e421da",
+   "digest": "0142982889c2e97b",
    "paths": [
     "knowledge/provenance.json"
    ],
    "present": true
   },
   "relationships": {
-   "digest": "35339478e44a3752",
+   "digest": "b56fcd391863db40",
    "paths": [
     "knowledge/relationships/"
    ],
@@ -122,7 +122,7 @@
    "unresolved_conflicts": 0
   },
   "repository_manifest": {
-   "digest": "9a8af098e3415715",
+   "digest": "277f971c8352a9e6",
    "paths": [
     "knowledge/repository-manifest.md"
    ],
@@ -140,7 +140,7 @@
     "newest": "2026-10-08T09:00:00Z",
     "oldest": "2026-10-08T09:00:00Z"
    },
-   "digest": "fc572c16b9bac30b",
+   "digest": "ea0da0764e1e9df4",
    "paths": [
     "knowledge/summaries/communities.json"
    ],
@@ -165,7 +165,7 @@
     "newest": "2026-10-08T09:00:00Z",
     "oldest": "2026-10-08T09:00:00Z"
    },
-   "digest": "625f6c15908e75c3",
+   "digest": "8d9fe7d2797fddcf",
    "paths": [
     "knowledge/topics/briefs.json"
    ],

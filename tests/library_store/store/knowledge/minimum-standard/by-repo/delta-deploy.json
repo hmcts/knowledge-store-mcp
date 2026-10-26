@@ -1,6 +1,6 @@
 {
   "as_of": {
-    "commit": "a093504bce01a3108dc51de8e27decacb26fca5a",
+    "commit": "3e4623914bbfc716d90a21ff592a8d2db3550ee7",
     "date": "2026-10-08T09:00:00Z"
   },
   "format": {
@@ -69,10 +69,14 @@
           "line": 1,
           "path": "config/application.yml",
           "rule": "key-name"
+        },
+        {
+          "path": "deploy/signing.pem",
+          "rule": "key-file"
         }
       ],
-      "reason": "only secret-looking setting names were found; no committed value was confirmed",
-      "state": "not_determinable"
+      "reason": "pattern scan of the current tree found these; values are not recorded and history is not scanned",
+      "state": "absent"
     },
     "owner": {
       "evidence": [
@@ -127,7 +131,7 @@
     "unmaintained": {
       "evidence": [
         {
-          "commit": "a093504bce01a3108dc51de8e27decacb26fca5a",
+          "commit": "3e4623914bbfc716d90a21ff592a8d2db3550ee7",
           "date": "2026-10-08T09:00:00Z",
           "reason": "last commit"
         }

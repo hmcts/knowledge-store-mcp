@@ -46,12 +46,12 @@
     },
     "delta-deploy": {
       "as_of": {
-        "commit": "a093504bce01a3108dc51de8e27decacb26fca5a",
+        "commit": "3e4623914bbfc716d90a21ff592a8d2db3550ee7",
         "date": "2026-10-08T09:00:00Z"
       },
       "points": {
         "hygiene": "absent",
-        "no_secrets": "not_determinable",
+        "no_secrets": "absent",
         "owner": "absent",
         "patching": "not_determinable",
         "secure_by_design": "not_determinable",

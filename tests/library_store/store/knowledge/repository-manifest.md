@@ -6,7 +6,7 @@ This manifest describes the source repositories represented by the combined Grap
 |---|---:|---|---|---|
 | `alpha-lib` | 3 | 2026-10-03 (`18e25097`) | [History](git-history/alpha-lib/index.md) | `https://github.com/example-org/alpha-lib.git` |
 | `beta-app` | 3 | 2026-10-06 (`085f0da7`) | [History](git-history/beta-app/index.md) | `https://github.com/example-org/beta-app.git` |
-| `delta-deploy` | 2 | 2026-10-08 (`a093504b`) | [History](git-history/delta-deploy/index.md) | `https://github.com/example-org/delta-deploy.git` |
+| `delta-deploy` | 2 | 2026-10-08 (`3e462391`) | [History](git-history/delta-deploy/index.md) | `https://github.com/example-org/delta-deploy.git` |
 
 The repositories themselves are cloned into `repositories/` during graph generation and are not committed to this parent repository.
 
