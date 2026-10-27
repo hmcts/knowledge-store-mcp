@@ -18,7 +18,7 @@ knowledge-store-mcp = "knowledgestore_mcp.cli:main"
 
 [dependency-groups]
 # Installed by `uv sync`, which CI runs with --frozen.
-dev = ["ruff==0.16.10", "pyright==1.1.414"]
+dev = ["ruff==0.17.2", "pyright==1.1.414"]
 
 [tool.hatch.version]
 source = "vcs"
