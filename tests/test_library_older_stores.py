@@ -1,0 +1,271 @@
+"""Older stores stay readable: every tool over stores older library releases wrote.
+
+Real stores lag the library. One in use is manifest format 1.3, built before the
+`json-schema` stage and before #510, while the contract stores move with each
+release. These tests serve the frozen stores in `library_store/frozen/` - the
+same inputs as the main store, built by v0.18.3 and by v0.19.0 (`generate.py
+--release`) - over the wire, in both read modes, so a server change that reads
+only the newest release's shapes, or refuses an older format, fails here.
+
+What each release has, derived from its own source before the store is read:
+
+- **v0.18.3** writes manifest format 1.3 (`store_manifest.FORMAT`). Its
+  `LAYERS` are the 17 from `graph` to `index`, with no `minimum_standard`, and
+  the manifest adds `deployments`: 18 names. Its `cli.STAGES` have no
+  `json-schema` and no `minimum-standard*`, so the graph holds no
+  `jsonschema:` node and the manifest does not name `minimum_standard` at all.
+- **v0.19.0** writes format 1.4, which adds `minimum_standard`: the 19 names
+  of `harness.LIBRARY_LAYERS`. It has `json-schema`, so the schema's root and
+  every definition and property under it are nodes, one per JSON pointer of
+  `generate.ALPHA_SCHEMA`.
+
+Literals are written only where the inputs and the release's source settle
+them: the format, the layer names, a node id graphify 0.9.93 gives every
+release alike, the JSON pointers, the repositories. Where a value depends on a
+release's choices the tests do not re-derive - which node anchors `provided_by`,
+which community holds a node - they assert invariants: it is served, it is read
+the right way round, it is in the provider's repository. Nothing is read back
+from a store as an expected value.
+"""
+
+import json
+import tempfile
+import unittest
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from mcp import Client
+from mcp_types import TextContent
+
+from knowledgestore_mcp import server
+from knowledgestore_mcp.server import KnowledgeStoreServer
+from library_store.generate import frozen
+from library_store.harness import LIBRARY_LAYERS, NOW, SHAS
+
+REPOSITORIES = ["alpha-lib", "beta-app", "delta-deploy", "eta-portal"]
+
+# graphify 0.9.93's id for `refund` in alpha-lib's `src/refund.ts`, under the
+# merge prefix: the same in every release, which all run that graphify.
+REFUND = "alpha-lib::src_refund_refund"
+# The `packages` stage's node for the package alpha-lib publishes, in every
+# release since before v0.18.3: `<provider>::pkg:<name>`.
+PACKAGE = "alpha-lib::pkg:@example/alpha-lib"
+# The json-schema stage's ids for `generate.ALPHA_SCHEMA`: the root, then each
+# definition and property, by JSON pointer.
+SCHEMA = "alpha-lib::jsonschema:schemas/refund.schema.json#"
+SCHEMA_NODES = [
+    SCHEMA,
+    SCHEMA + "/$defs/credit",
+    SCHEMA + "/$defs/money",
+    SCHEMA + "/$defs/money/properties/amount",
+    SCHEMA + "/properties/requestedOn",
+    SCHEMA + "/properties/total",
+]
+SCHEMA_URL = (
+    "https://github.com/example-org/alpha-lib/blob/"
+    + SHAS["alpha-lib"]
+    + "/schemas/refund.schema.json"
+)
+
+# One call per tool, with arguments every release's store answers. `community`
+# is given the community `node` reports for `REFUND`, filled in at run time.
+CALLS: dict[str, dict[str, Any]] = {
+    "store_info": {},
+    "find_repo": {"name": "alpha-lib"},
+    "search": {"text": "refund"},
+    "node": {"id": REFUND},
+    "neighbours": {"id": REFUND},
+    "community": {},
+    "repo_answer": {"repo": "alpha-lib"},
+    "dependents": {"target": "alpha-lib"},
+    "dependencies": {"repo": "beta-app"},
+    "tickets": {"repo": "alpha-lib"},
+    "ticket": {"key": "DEMO-1"},
+    "answers": {"query": "refund"},
+    "minimum_standard": {},
+}
+
+
+@dataclass(frozen=True)
+class Release:
+    """What a release's store holds, from that release's source."""
+
+    version: str
+    format: dict[str, int]
+    layers: tuple[str, ...]
+    json_schema: bool
+
+
+V0_18_3 = Release(
+    "0.18.3",
+    {"major": 1, "minor": 3},
+    tuple(name for name in LIBRARY_LAYERS if name != "minimum_standard"),
+    json_schema=False,
+)
+V0_19_0 = Release("0.19.0", {"major": 1, "minor": 4}, LIBRARY_LAYERS, json_schema=True)
+
+
+class OlderStoreCase(unittest.IsolatedAsyncioTestCase):
+    """The server over one frozen store, called over the wire in-process."""
+
+    RELEASE: Release
+    STORE: Path
+    INDEXED: bool
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.cache = Path(tmp.name).resolve() / "cache"
+
+    async def calls(self, *requests: tuple[str, dict[str, Any]]) -> list[tuple[dict, bool]]:
+        """Each request's decoded answer and whether it is an error result, from
+        one server over `STORE`."""
+        served = KnowledgeStoreServer(self.STORE, self.cache, clock=lambda: NOW)
+        self.addCleanup(served.close)
+        found = []
+        async with Client(served.server, mode="legacy") as client:
+            for tool, arguments in requests:
+                result = await client.call_tool(tool, arguments)
+                self.assertEqual(len(result.content), 1)
+                block = result.content[0]
+                assert isinstance(block, TextContent)
+                found.append((json.loads(block.text), bool(result.is_error)))
+        return found
+
+    async def call(self, tool: str, arguments: dict[str, Any]) -> dict:
+        """One answer, which must not be an error result."""
+        [(answer, is_error)] = await self.calls((tool, arguments))
+        self.assertFalse(is_error, answer)
+        return answer
+
+
+# The mixin is `OlderStoreCase` to the type checker and `object` at run time, so
+# it is never collected and run on its own, with no store (as `harness.Contract`).
+if TYPE_CHECKING:
+    Contract = OlderStoreCase
+else:
+    Contract = object
+
+
+class OlderStoreContract(Contract):
+    """The contract each frozen store keeps, made into test classes by `_forms`."""
+
+    def test_the_manifest_records_the_release_and_its_layers(self):
+        """Catches: a frozen store regenerated by another release, or by a
+        pipeline that ran a stage the release lacks or skipped one it has, so
+        these tests no longer describe the older store a real estate holds."""
+        manifest = json.loads((self.STORE / "knowledge/store-manifest.json").read_text("utf-8"))
+        self.assertEqual(manifest["library_version"], self.RELEASE.version)
+        self.assertEqual(manifest["format"], self.RELEASE.format)
+        self.assertEqual(
+            {name: layer["present"] for name, layer in manifest["layers"].items()},
+            {name: self.INDEXED or name != "index" for name in self.RELEASE.layers},
+        )
+
+    async def test_every_tool_answers_without_an_error(self):
+        """Catches: any tool failing on an older store - a read that assumes the
+        newest release's layers, fields or format, so a real store that lags the
+        library is answered with an error; and a tool added with no call here."""
+        self.assertEqual(sorted(CALLS), sorted(server.BY_NAME))
+        node = await self.call("node", CALLS["node"])
+        self.assertEqual(node["node"]["id"], REFUND)
+        requests = [
+            (tool, {"id": node["node"]["community"]} if tool == "community" else arguments)
+            for tool, arguments in CALLS.items()
+        ]
+        for (tool, _), (answer, is_error) in zip(requests, await self.calls(*requests)):
+            with self.subTest(tool=tool):
+                self.assertFalse(is_error, answer)
+                self.assertEqual(answer["store"]["library_version"], self.RELEASE.version)
+
+    async def test_store_info_reads_every_layer_and_leaves_none_unread(self):
+        """Catches: an older store's layers reported unread or unrecognised, as a
+        layer from a newer minor is; or a layer the release never wrote - v0.18.3's
+        `minimum_standard` - invented as present, unread or failing rather than
+        left out, as the store's manifest leaves it."""
+        answer = await self.call("store_info", {})
+        self.assertEqual(answer["unread"], [])
+        self.assertEqual(answer["store"]["format"], self.RELEASE.format)
+        self.assertEqual(
+            answer["layers"],
+            {name: {"present": self.INDEXED or name != "index"} for name in self.RELEASE.layers},
+        )
+        self.assertEqual(answer["index"]["fallback"] is None, self.INDEXED)
+
+    async def test_minimum_standard_reads_absent_or_answers(self):
+        """Catches: a store without the minimum-standard layer answered with an
+        error, or as unrecognised, rather than as absent (v0.18.3); or a v0.19.0
+        layer, written before the `now=` seam, not read for every repository."""
+        answer = await self.call("minimum_standard", {})
+        if "minimum_standard" in self.RELEASE.layers:
+            self.assertEqual([item["repository"] for item in answer["items"]], REPOSITORIES)
+            self.assertEqual(answer["store"]["layers_used"], ["minimum_standard"])
+        else:
+            self.assertEqual(answer["items"], [])
+            self.assertEqual(
+                answer["searched"], "searched no layer; the minimum_standard layer is absent"
+            )
+            self.assertEqual(answer["store"]["layers_used"], [])
+
+    async def test_a_package_is_provided_by_a_node_in_its_repository(self):
+        """Catches: the `provided_by` edge read only where v0.19.1 anchors it, so a
+        store whose release anchored it elsewhere loses it, or it is read the wrong
+        way round. Whatever node the release chose, the package node leads out to
+        exactly one, in the provider's repository, and that node is served."""
+        found = await self.call("neighbours", {"id": PACKAGE, "relation": "provided_by"})
+        self.assertEqual(found["node"]["id"], PACKAGE)
+        self.assertEqual(
+            [(item["depth"], item["via"]) for item in found["items"]],
+            [(1, [{"from": PACKAGE, "relation": "provided_by", "direction": "out"}])],
+        )
+        target = found["items"][0]["node"]
+        self.assertEqual(target["repo"], "alpha-lib")
+        served = await self.call("node", {"id": target["id"]})
+        self.assertEqual(served["node"]["id"], target["id"])
+
+    async def test_json_schema_nodes_are_served_where_the_release_wrote_them(self):
+        """Catches: JSON Schema nodes not served from a release that wrote them
+        (v0.19.0), or a store from one that did not (v0.18.3) answered with an
+        error rather than "no such node"."""
+        answers = await self.calls(*(("node", {"id": node_id}) for node_id in SCHEMA_NODES))
+        for node_id, (answer, is_error) in zip(SCHEMA_NODES, answers):
+            with self.subTest(node=node_id):
+                self.assertFalse(is_error, answer)
+                if self.RELEASE.json_schema:
+                    self.assertEqual(answer["node"]["id"], node_id)
+                    self.assertEqual(answer["node"]["url"].split("#")[0], SCHEMA_URL)
+                else:
+                    self.assertIsNone(answer["node"])
+
+
+def _forms(release: Release) -> tuple[type, type]:
+    """`OlderStoreContract` over `release`'s frozen stores: with its index, and
+    without, where the graph answers."""
+    stores = frozen(release.version)
+    tag = release.version.replace(".", "_")
+    return (
+        type(
+            f"V{tag}Indexed",
+            (OlderStoreContract, OlderStoreCase),
+            {"RELEASE": release, "STORE": stores.store, "INDEXED": True, "__module__": __name__},
+        ),
+        type(
+            f"V{tag}Unindexed",
+            (OlderStoreContract, OlderStoreCase),
+            {
+                "RELEASE": release,
+                "STORE": stores.no_index,
+                "INDEXED": False,
+                "__module__": __name__,
+            },
+        ),
+    )
+
+
+V0_18_3Indexed, V0_18_3Unindexed = _forms(V0_18_3)
+V0_19_0Indexed, V0_19_0Unindexed = _forms(V0_19_0)
+
+
+if __name__ == "__main__":
+    unittest.main()

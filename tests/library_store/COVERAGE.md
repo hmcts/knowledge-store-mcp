@@ -138,3 +138,26 @@ The library never writes these cases, so only the synthetic fixture covers them.
 | a repository depending on itself | `test_tools_relationships.DependentsTest.test_a_repository_depending_on_itself_is_a_cycle` | the library's relationships stage treats a self-reference as a self-reference, not an edge, and places it nowhere (`relationships.py` `_Resolver`, `_check_conservation`). It never writes a repository among its own dependents. |
 | a by-repo link escaping the store | `test_tools_relationships.EscapingLinkTest.test_a_by_repo_link_outside_the_store_is_skipped_and_counted` | the library writes files, not symlinks |
 | a damaged full-text table | `test_tools_graph.DamagedIndexTest.test_a_damaged_full_text_table_falls_back_to_the_graph_and_says_why` | the library writes a sound index |
+
+## Older stores
+
+Real stores lag the library, so the server must keep reading stores that older
+releases wrote. `frozen/v0.18.3/` (manifest format 1.3, before `json-schema` and
+`minimum_standard`) and `frozen/v0.19.0/` hold stores built from the same inputs
+by those releases (`generate.py --release`). `test_library_older_stores` serves
+each one over the wire, with its index and without it. It makes four classes,
+`V0_18_3Indexed`, `V0_18_3Unindexed`, `V0_19_0Indexed` and `V0_19_0Unindexed`.
+The rows cite the `V0_18_3Indexed` form.
+
+| Claim | Test |
+|---|---|
+| the frozen manifest is the release's own: version, format and which layers it records | `test_library_older_stores.V0_18_3Indexed.test_the_manifest_records_the_release_and_its_layers` |
+| every tool answers without `isError`, and a new tool fails until it is called here | `test_library_older_stores.V0_18_3Indexed.test_every_tool_answers_without_an_error` |
+| `store_info` reports no `unread` layer, and a layer the release never wrote is left out | `test_library_older_stores.V0_18_3Indexed.test_store_info_reads_every_layer_and_leaves_none_unread` |
+| `minimum_standard` reads absent where the release has no layer, and answers where it has one | `test_library_older_stores.V0_18_3Indexed.test_minimum_standard_reads_absent_or_answers` |
+| `provided_by` is served out to one node in the provider's repository, whichever node the release anchored it on | `test_library_older_stores.V0_18_3Indexed.test_a_package_is_provided_by_a_node_in_its_repository` |
+| JSON Schema nodes are served where the release wrote them, and an older store answers "no such node" without an error | `test_library_older_stores.V0_18_3Indexed.test_json_schema_nodes_are_served_where_the_release_wrote_them` |
+
+On these inputs, all three releases anchor `provided_by` on `alpha-lib::package`.
+So the `provided_by` row catches a read that drops or reverses the edge. It
+cannot catch a read that only follows v0.19.1's choice of anchor.
