@@ -16,8 +16,21 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # One job definition, two interpreters. The matrix entry's `name` is the whole
+  # check name, so the 3.14 entry reports exactly "Lint and tests", the check
+  # branch protection requires, and a plain matrix (which would rename it
+  # "Lint and tests (3.14)") is avoided. The floor entry reports separately and
+  # is not required. 3.14 is what .python-version names; 3.13 is requires-python.
   tests:
-    name: Lint and tests
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Lint and tests
+            python: "3.14"
+          - name: Lint and tests on the Python floor
+            python: "3.13"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -41,6 +54,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
+          python-version: ${{ matrix.python }}
 
       # --frozen installs exactly what uv.lock resolves. The dev tools live in
       # [dependency-groups] dev, which uv sync installs by default. --no-build
