@@ -206,7 +206,7 @@ A plural parameter is a JSON array: call `minimum_standard` with `repos: ["repo-
 
 The server looks again on every call, so a clone registered or pulled after the client started is picked up on the next question. Reconnecting is only needed if it is not.
 
-**The tools never appear, and no error is shown.** `uvx` could not find Python 3.13 or later and could not download one: uv has `UV_PYTHON_DOWNLOADS=never` or `UV_PYTHON_PREFERENCE=only-system` set, or the machine cannot reach python-build-standalone. Claude Code shows only that the server's tools are missing. Install Python 3.13 or later, or allow uv's managed Pythons (unset those variables, and allow the network route), then reconnect the server.
+**The tools never appear, and no error is shown.** `uvx` could not find Python 3.13 or later and could not download one: uv has `UV_PYTHON_DOWNLOADS=never` or `UV_PYTHON_PREFERENCE=only-system` set (the `python-downloads` and `python-preference` settings in `uv.toml` or `pyproject.toml`, and the `--no-python-downloads` flag, have the same effect), or the machine cannot reach python-build-standalone. Claude Code shows only that the server's tools are missing. Install Python 3.13 or later, or allow uv's managed Pythons (unset those variables, and allow the network route), then reconnect the server.
 
 **The server fails to start.** Only a wrong configuration stops it, and its reason is on stderr (exit status 2): a `--store-id` that is not a valid id, two clones in the locations file with the same `store.id`, a manifest in a format major version this server does not read, or a layer that points outside the store. Fix the configuration; waiting or pulling will not help.
 

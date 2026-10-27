@@ -65,6 +65,12 @@ jobs:
         if: steps.project.outputs.present == 'true'
         run: uv sync --frozen --no-build
 
+      # A pin that silently failed must turn the job red, not test the wrong Python.
+      - name: Check the interpreter
+        if: steps.project.outputs.present == 'true'
+        run: |
+          uv run --no-sync --no-build python -c "import sys; v='%d.%d' % sys.version_info[:2]; print(sys.version); assert v == '${{ matrix.python }}', v"
+
       - name: Ruff lint
         if: steps.project.outputs.present == 'true'
         run: uv run --no-sync --no-build ruff check . --output-format=github
