@@ -19,6 +19,24 @@ writes, before the store is read:
   directly under a property is a `references` edge from it; one inside an
   `allOf` member is an `extends` edge from the definition holding the `allOf`
   (`json_schema._on_combinator`, `_visit`).
+- The package node is the `packages` stage's: `<provider repo>::pkg:<name>`,
+  labelled by the package name, kind `package`, in the manifest that declares
+  it, with no line (`build_package_edges._package_node`). Its `provided_by` edge
+  runs from it to `_anchor_under(reps, repo, prefix, manifest)` (v0.19.1, #510):
+  `reps[(repo, manifest)]`, the lowest node id whose `source_file` is the
+  manifest, if graphify gave that file any node; else the lowest id among the
+  repository's non-JSON files under the manifest's directory; else no edge.
+  The first case applies. graphify extracts alpha-lib's `package.json`
+  (`extractors/json_config.extract_json`): a file node, `_make_id` of the path
+  remapped to its stem, `package`, labelled with the file name on line 1; a
+  node per key, `_make_id(stem, ...)`, so `package_name`, `package_version`,
+  `package_dependencies`, `package_dependencies_beta_app`; and `ref_beta_app`
+  for the dependency. `package` is a prefix of every `package_*` id and sorts
+  before `ref_*`, so it is the lowest. The `pkg:` node shares the manifest's
+  `source_file`, but it is not in `reps`: `main` strips the stage's old layer
+  before `_add_package_layer` computes `reps`, and the new node is appended
+  after. (It would lose anyway: `package` sorts before `pkg:`.) With the merge
+  prefix, the target is `alpha-lib::package`.
 - Lines are counted in the clone text; urls are `source_urls`' form,
   `https://github.com/example-org/<repo>/blob/<sha>/<path>#L<line>`, with the
   sha from `inputs.json`.
@@ -135,6 +153,24 @@ TOTAL = {
     "url": f"{ALPHA}/{SCHEMA_FILE}#L16",
 }
 
+# alpha-lib's package, which beta-app depends on, and the manifest that declares it.
+PACKAGE = {
+    "id": "alpha-lib::pkg:@example/alpha-lib",
+    "label": "@example/alpha-lib",
+    "repo": "alpha-lib",
+    "kind": "package",
+    "file": "package.json",
+    "url": f"{ALPHA}/package.json",
+}
+PACKAGE_JSON = {
+    "id": "alpha-lib::package",
+    "label": "package.json",
+    "repo": "alpha-lib",
+    "kind": "",
+    "file": "package.json",
+    "url": f"{ALPHA}/package.json#L1",
+}
+
 
 def known(name: str) -> dict:
     """A repository the graph holds nodes for."""
@@ -147,7 +183,7 @@ class GraphContract(harness.Contract):
         return {
             "id": "library-contract-store",
             "format": {"major": 1, "minor": 4},
-            "library_version": "0.19.0",
+            "library_version": "0.19.1",
             "sources_as_of": SOURCES_AS_OF,
             "index": "present" if self.INDEXED else "absent: graph read whole",
             "layers_used": layers_used,
@@ -389,6 +425,27 @@ class GraphContract(harness.Contract):
             [[CREDIT], [MONEY], [REQUESTED_ON], [TOTAL]],
         )
         self.assertEqual([self._without_community(page["node"]) for page in found], [SCHEMA] * 4)
+
+    def test_a_package_is_provided_by_its_manifest(self):
+        """Catches: the `packages` stage's `provided_by` edge not read, or read the
+        wrong way round, so the `@example/alpha-lib` package node does not lead out
+        to the `package.json` that declares it; or an anchor on a JSON Schema node,
+        which v0.19.1 (#510) never writes, read as the provider."""
+        found = tools_graph.neighbours(self.session, PACKAGE["id"], relation="provided_by")
+        self.assertEqual(self._without_community(found["node"]), PACKAGE)
+        self.assertEqual(
+            [
+                (item["depth"], self._without_community(item["node"]), item["via"])
+                for item in found["items"]
+            ],
+            [
+                (
+                    1,
+                    PACKAGE_JSON,
+                    [{"from": PACKAGE["id"], "relation": "provided_by", "direction": "out"}],
+                )
+            ],
+        )
 
     # --- community ----------------------------------------------------------------
 

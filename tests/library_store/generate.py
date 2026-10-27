@@ -34,9 +34,9 @@ The pins: `VERSION` and `GRAPHIFY` here; every other package, and the
 partitioner, interpreter and git the store was made with, in `requirements.txt`.
 Move a pin, regenerate, run `--check`, then the tests.
 
-One stand-in remains: `pipeline.py` rebinds the clock that
-`minimum-standard-settings` reads, because v0.19.0 has no seam for it. It moves
-to the library's `now=` seam when v0.19.1 ships.
+No library code is replaced: `pipeline.py` stands in for the IO edges only,
+through the library's own seams, and gives `minimum-standard-settings` a fixed
+clock through its `now=` seam.
 
 CI runs the tests over the committed output and never runs this script.
 `COVERAGE.md` is the claim of what those tests cover, and
@@ -53,11 +53,11 @@ from pathlib import Path
 
 # The release the committed store came from. The tests check the manifest's
 # `library_version` against it, so the record cannot drift from the bytes.
-VERSION = "0.19.0"
+VERSION = "0.19.1"
 GRAPHIFY = "0.9.93"
 LIBRARY = f"git+https://github.com/hmcts/knowledge-store-builder@v{VERSION}"
 # The interpreter the frozen environment was compiled for.
-PYTHON = "3.13"
+PYTHON = "3.14"
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "store"
