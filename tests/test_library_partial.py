@@ -28,6 +28,22 @@ the store is read:
   `no-index/`. `sources_as_of` and the provenance are the main store's: the same
   four clones at the same commits.
 
+A repository that left the estate: `generate.RETIRED`'s `zeta-archive` was
+synced and its history exported, then dropped from `config/repositories.txt`
+and its clone deleted (`pipeline.py --retire`). The build's own `sync` writes
+provenance for the four alone, but `export-history` never prunes, and v0.19.1's
+`intent` indexes every `git-history/*/commits.ndjson` it finds
+(`build_intent_index.main`), so the ticket layer holds zeta-archive's one
+commit: `DEMO-2: archive the refund exports`, landing `exports/refunds.csv`
+once. The index builder lists every repository with a node or a ticket
+(`store_index._fill`), so the library's own `repos` names it. The server
+follows the library, as `tests/fixture_store/DESIGN.md` 6.4 decides: a
+repository only the ticket layer names is "in the estate" in both modes, listed
+(so no `graph_nodes` or `cloned_at` note), with no graph node and no provenance
+record. The root cause is upstream, in the library's `intent` stage indexing a
+history directory the estate no longer names; that is being raised with the
+library.
+
 The server reports each layer's `present` as the manifest records it, so `null`
 stays `null`: a layer it knows, absent or unknown, is never `unread`. Answers
 come from the written answers alone, since the topic briefs and deep dives were
@@ -147,6 +163,36 @@ class PartialContract(harness.Contract):
         self.assertEqual(found["matches"], 2)
         self.assertNotIn("not_read", found)
         self.assertEqual(found["store"]["layers_used"], ["answers", "ownership_notes"])
+
+    def test_a_retired_repository_the_ticket_layer_names_is_in_the_estate(self):
+        """Catches: a repository the library's ticket layer and index name - here
+        one retired from the estate, whose history outlived it - answered
+        differently by the two read modes (DESIGN.md 6.4): dropped from the
+        estate without the index, or with it, so `find_repo` says "not in the
+        estate" and `tickets` loses its `DEMO-2` row in one mode only; or given a
+        graph node or a provenance record it does not have."""
+        known = {
+            "answer": "in the estate",
+            "exact": "zeta-archive",
+            "matched_case_insensitively": False,
+        }
+        found = tools_graph.find_repo(self.session, "zeta-archive")
+        self.assertEqual({k: v for k, v in found.items() if k != "store"}, known)
+        self.assertEqual(found["store"]["layers_used"], [self.reader])
+        tickets = tools_tickets.tickets(self.session, "zeta-archive")
+        self.assertEqual(tickets["repository"], known)
+        self.assertEqual(
+            tickets["landed"], [{"ticket": "DEMO-2", "path": "exports/refunds.csv", "commits": 1}]
+        )
+        self.assertEqual(
+            (tickets["proposed"], tickets["totals"]), ([], {"landed": 1, "proposed": 0})
+        )
+        # No graph node: graphify never saw its clone.
+        nodes = tools_graph.search(self.session, "refunds", repo="zeta-archive")
+        self.assertEqual((nodes["matches"], nodes["items"]), (0, []))
+        # No provenance record: the build's own `sync` ran without it.
+        provenance = tools_graph.store_info(self.session)["items"]
+        self.assertNotIn("zeta-archive", [item["repository"] for item in provenance])
 
 
 PartialContractIndexed, PartialContractUnindexed = harness.partial_modes(PartialContract)
