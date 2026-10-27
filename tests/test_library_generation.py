@@ -10,11 +10,13 @@ the generator's inputs and the frozen environment it runs in.
 import gzip
 import json
 import re
+import sqlite3
+import tempfile
 import unittest
 
 from pathlib import Path
 
-from library_store.generate import NO_INDEX, OUT, REQUIREMENTS
+from library_store.generate import NO_INDEX, OUT, PARTIAL, REQUIREMENTS, RETIRED
 from library_store.harness import LIBRARY_LAYERS
 
 MANIFEST = "knowledge/store-manifest.json"
@@ -89,6 +91,63 @@ class LibraryGenerationTest(unittest.TestCase):
             {name: layer["present"] for name, layer in bare["extra_layers"].items()},
             {name: layer["present"] for name, layer in full["extra_layers"].items()},
         )
+
+
+GRAPH = "graphify-out/graph.json.gz"
+INDEX = "knowledge/index/store.sqlite.gz"
+
+
+def _graph_nodes(store: Path, repo: str) -> int:
+    """The committed graph's nodes whose `repo` is `repo`."""
+    with gzip.open(store / GRAPH, "rt", encoding="utf-8") as stream:
+        return sum(1 for node in json.load(stream)["nodes"] if node.get("repo") == repo)
+
+
+def _index_rows(store: Path, repo: str) -> tuple[list[str] | None, int]:
+    """The committed index's `files` rows for `repo` (None when `repos` does not
+    list it) and the nodes on them."""
+    with tempfile.TemporaryDirectory() as tmp:
+        plain = Path(tmp) / "store.sqlite"
+        with gzip.open(store / INDEX, "rb") as packed:
+            plain.write_bytes(packed.read())
+        connection = sqlite3.connect(plain)
+        try:
+            listed = connection.execute("SELECT k FROM repos WHERE name = ?", (repo,)).fetchone()
+            if listed is None:
+                return None, 0
+            files = [
+                path
+                for (path,) in connection.execute(
+                    "SELECT path FROM files WHERE repo = ? ORDER BY path", listed
+                )
+            ]
+            (nodes,) = connection.execute(
+                "SELECT count(*) FROM nodes JOIN files ON nodes.file = files.k WHERE files.repo = ?",
+                listed,
+            ).fetchone()
+        finally:
+            connection.close()
+    return files, nodes
+
+
+class PartialStoreInputTest(unittest.TestCase):
+    def test_the_retired_repository_has_ticket_rows_and_no_node(self):
+        """Catches: the partial store regenerated without its retired repository
+        reaching the ticket layer - `--retire` not run, or its history pruned -
+        or with a clone graphify extracted, so the server tests over it no
+        longer read a repository only the ticket layer names. The index's
+        `repos` lists each `RETIRED` repository for its tickets alone: its file
+        rows are the files its commits landed, with no node on them, and the
+        graph read whole holds none. alpha-lib, read the same way, has nodes,
+        so a zero is not a blind read."""
+        for name, commits in RETIRED.items():
+            landed = sorted({path for _, _, files in commits for path in files})
+            with self.subTest(repo=name):
+                self.assertEqual(_index_rows(PARTIAL.store, name), (landed, 0))
+                self.assertEqual(_graph_nodes(PARTIAL.store, name), 0)
+                self.assertEqual(_graph_nodes(PARTIAL.no_index, name), 0)
+        self.assertGreater(_index_rows(PARTIAL.store, "alpha-lib")[1], 0)
+        self.assertGreater(_graph_nodes(PARTIAL.no_index, "alpha-lib"), 0)
 
 
 if __name__ == "__main__":
