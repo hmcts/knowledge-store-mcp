@@ -7,11 +7,11 @@ Every expected record is derived by hand, before the store is read, from what
 `build_minimum_standard_settings.py` (what the snapshot records):
 
 - The snapshot is `github_responses.json`'s answers, read at 2026-10-20 (the
-  clock `pipeline.py` passes to the stage's `now=` seam). alpha-lib, beta-app and eta-portal are not
-  archived, on `main`, with secret scanning and Dependabot alerts on;
-  alpha-lib's and eta-portal's `main` is protected and beta-app's is not.
-  Every call for delta-deploy is 404, so each of its five settings is unread
-  (`null`). `example-org/.github` is private, so the
+  clock `pipeline.py` passes to the stage's `now=` seam). alpha-lib, beta-app
+  and eta-portal are not archived, on `main`, with secret scanning and
+  Dependabot alerts on; alpha-lib's and eta-portal's `main` is protected and
+  beta-app's is not. Every call for delta-deploy is 404, so each of its five
+  settings is unread (`null`). `example-org/.github` is private, so the
   organisation supplies no default security policy.
 - `owner`: the first CODEOWNERS found; beta-app's `* @example-org/payments-team`
   names a root owner. `security_contact`: the first SECURITY.md found; beta-app's
