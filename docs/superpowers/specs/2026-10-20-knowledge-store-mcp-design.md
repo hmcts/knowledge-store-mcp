@@ -75,7 +75,7 @@ Installing a plugin puts no command on the asker's machine, so the client config
 }
 ```
 
-**What the machine needs: `uv`, and nothing else.** `uvx` builds the server into an isolated environment from the tagged source. If no installed Python satisfies the package's `requires-python` (3.11 or newer), uv downloads a managed Python first: automatic downloads are uv's default (`python-downloads = "automatic"`). A machine that forbids them (`--no-python-downloads`, or `UV_PYTHON_DOWNLOADS=never`) needs Python 3.11 or newer installed instead.
+**What the machine needs: `uv`, and nothing else.** `uvx` builds the server into an isolated environment from the tagged source. If no installed Python satisfies the package's `requires-python` (3.13 or newer), uv downloads a managed Python first: automatic downloads are uv's default (`python-downloads = "automatic"`). A machine that forbids them (`--no-python-downloads`, or `UV_PYTHON_DOWNLOADS=never`) needs Python 3.13 or newer installed instead.
 
 **First run and offline use.** The first launch needs network access: uv fetches the tag from GitHub, the dependencies from PyPI and, if needed, a Python, all into uv's cache. Later launches run from that cache. With no network, uv tries to refresh the tag, fails, and falls back to the cached checkout, so the server still starts. Do not add `--offline` to the arguments: with a tag, uv then refuses to resolve the tag at all, even when it is cached (checked with uv 0.12). `uv cache clean` removes the cached environment, and the next launch needs the network again.
 
