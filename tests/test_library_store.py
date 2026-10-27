@@ -18,7 +18,7 @@ sorted by repository. A walk of alpha-lib's dependents reaches beta-app at one
 hop and eta-portal at two. Git shas come from `library_store/inputs.json`, which
 the generator wrote from the clones it made.
 
-The kinds are v0.19.0's four built-in kinds (`relationships.BUILTIN`), since
+The kinds are v0.19.1's four built-in kinds (`relationships.BUILTIN`), since
 the store registers none of its own (`config/relationship-kinds.json` is not
 written): `kinds.json` lists each, sorted, whether a reference met it or not.
 """
@@ -85,7 +85,7 @@ GAMMA = {
     "outside_estate": True,
 }
 
-# v0.19.0's built-in kinds, as `kinds.json` lists them and a refusal quotes them.
+# v0.19.1's built-in kinds, as `kinds.json` lists them and a refusal quotes them.
 KINDS = "helm_chart, maven_artifact, npm_package, terraform_module"
 
 
@@ -100,7 +100,7 @@ class RelationshipsContract(harness.Contract):
         record moving, or a library that stops naming the layer by its directory -
         either way the tests below would no longer describe what they say."""
         manifest = json.loads((self.STORE / "knowledge/store-manifest.json").read_text("utf-8"))
-        # Moves with the pin; tests/test_library_generation.py asserts the literal "0.19.0".
+        # Moves with the pin; tests/test_library_generation.py asserts the literal "0.19.1".
         self.assertEqual(manifest["library_version"], VERSION)
         relationships = manifest["layers"]["relationships"]
         self.assertEqual(relationships["paths"], ["knowledge/relationships/"])

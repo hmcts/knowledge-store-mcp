@@ -18,9 +18,10 @@ writes every other authored input (topic, deep-dive and answers Markdown) too.
 
 Only the IO edges are stood in for, through the library's own seams:
 `fetch_tickets.main(opener=, sleep=, today=)` answers each request with the
-status and body `tracker_responses.json` gives it, and `build_minimum_standard_settings.main(runner=)`
-answers each `gh api` path from `github_responses.json`. A request either file
-does not hold raises, so a stage cannot read an unexpected one as "nothing".
+status and body `tracker_responses.json` gives it, and
+`build_minimum_standard_settings.main(runner=, now=)` answers each `gh api` path
+from `github_responses.json` and reads a fixed clock. A request either file does
+not hold raises, so a stage cannot read an unexpected one as "nothing".
 
 `--no-index` skips the `index` stage and nothing else.
 
@@ -48,7 +49,7 @@ TRACKER_RESPONSES = HERE / "tracker_responses.json"
 GITHUB_RESPONSES = HERE / "github_responses.json"
 
 # Layers the manifest must mark present, in the `layers` table: every one
-# v0.19.0 names, its 18 `LAYERS` and `deployments`. Kept in step with
+# v0.19.1 names, its 18 `LAYERS` and `deployments`. Kept in step with
 # `LIBRARY_LAYERS` in tests/library_store/harness.py, which the generation and
 # graph tests assert over the committed stores. `index` is absent, and must be, under
 # `--no-index`.
@@ -135,24 +136,15 @@ sys.exit(fetch_tickets.main([], opener=opener, sleep=lambda seconds: None, today
 # body, 204 with none, 404 as `gh` reports it (exit 1, GitHub's error JSON on
 # stdout). Any other call raises.
 #
-# The clock: the stage stamps `read_at` with `datetime.now()`, and v0.19.0 gives
-# it no seam for that, so the stamp - copied into every minimum-standard file
-# and the manifest's digests - would differ on every run. Here, for this one
-# call only, the module's `datetime` is rebound to one whose `now()` is fixed,
-# and restored afterwards. It stands in for a missing clock seam: a library
-# issue has been raised, and this moves to the seam once one is released.
+# The clock: the stage stamps `read_at` from its `now=` seam, and the stamp is
+# copied into every minimum-standard file and the manifest's digests, so the
+# seam is given a fixed instant and every run writes the same bytes.
 MINIMUM_STANDARD_SETTINGS = """\
 import json, subprocess, sys
 from datetime import datetime, timezone
 from knowledgestore import build_minimum_standard_settings
 
 READ_AT = datetime(2026, 10, 20, tzinfo=timezone.utc)
-
-
-class FixedClock(datetime):
-    @classmethod
-    def now(cls, tz=None):
-        return READ_AT.astimezone(tz) if tz is not None else READ_AT
 
 responses = json.loads(open(sys.argv[1], encoding="utf-8").read())
 
@@ -167,13 +159,7 @@ def runner(arguments):
     return json.dumps(answer["body"]) if answer["status"] == 200 else ""
 
 
-original = build_minimum_standard_settings.datetime
-build_minimum_standard_settings.datetime = FixedClock
-try:
-    status = build_minimum_standard_settings.main(runner=runner)
-finally:
-    build_minimum_standard_settings.datetime = original
-sys.exit(status)
+sys.exit(build_minimum_standard_settings.main(runner=runner, now=lambda: READ_AT))
 """
 
 # The agent-authored summaries `generate.py` writes, keyed by anchor node id;
@@ -309,7 +295,7 @@ def fetch_tickets(root: Path) -> None:
 
 
 def minimum_standard_settings(root: Path) -> None:
-    """The real `minimum-standard-settings`, through its `runner` seam."""
+    """The real `minimum-standard-settings`, through its `runner` and `now` seams."""
     _run(root, [sys.executable, "-c", MINIMUM_STANDARD_SETTINGS, str(GITHUB_RESPONSES)])
 
 

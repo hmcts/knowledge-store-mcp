@@ -1,5 +1,5 @@
 {
- "digest": "db965767fd61e6f8",
+ "digest": "3fb3338fdf246b25",
  "extra_layers": {
   "answers": {
    "description": "Written journeys and findings.",
@@ -75,7 +75,7 @@
    "present": true
   },
   "index": {
-   "digest": "31a7a6fd648eff73",
+   "digest": "4ebe900a6de57b7d",
    "paths": [
     "knowledge/index/store.sqlite.gz",
     "knowledge/index/store.sqlite"
@@ -172,7 +172,7 @@
    "present": true
   }
  },
- "library_version": "0.19.0",
+ "library_version": "0.19.1",
  "sources_as_of": "2026-10-08T09:00:00Z",
  "store": {
   "github_org": "example-org",

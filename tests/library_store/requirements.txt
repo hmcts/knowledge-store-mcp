@@ -1,10 +1,10 @@
-# The frozen environment tests/library_store/pipeline.py runs in (Python 3.13).
+# The frozen environment tests/library_store/pipeline.py runs in (Python 3.14).
 # Compiled, hashes off, from exactly these two requirements:
 #
-#   hmcts-knowledge-store-builder[semantic,deploy] @ git+https://github.com/hmcts/knowledge-store-builder@v0.19.0
+#   hmcts-knowledge-store-builder[semantic,deploy] @ git+https://github.com/hmcts/knowledge-store-builder@v0.19.1
 #   graphifyy[terraform,sql]==0.9.93
 #
-# with `uv pip compile requirements.in --python-version 3.13`. Recompile when the
+# with `uv pip compile requirements.in --python-version 3.14`. Recompile when the
 # library or graphify pin moves; never add or remove a package by hand.
 #
 # graspologic did not resolve (nothing here requires it), so graphify partitions
@@ -15,7 +15,7 @@
 # on; generate.py --check prints each line beside its own when the store does not
 # reproduce. git made every commit and the library's stages read them through it,
 # so how it writes a date reaches the store: 2.55's `%cI` gives UTC as `Z`.
-# interpreter: 3.13.15 darwin arm64
+# interpreter: 3.14.7 darwin arm64
 # git: 2.55.0
 #
 anyio==4.15.1
@@ -43,7 +43,7 @@ h11==0.16.0
     # via httpcore
 hf-xet==1.7.0
     # via huggingface-hub
-hmcts-knowledge-store-builder @ git+https://github.com/hmcts/knowledge-store-builder@eb7cc812f97907d7811c9655b08a9a8d8464a117
+hmcts-knowledge-store-builder @ git+https://github.com/hmcts/knowledge-store-builder@a97b281c5c9e7b2a1dafd3702143f257335b4803
     # via -r requirements.in
 httpcore==1.0.9
     # via httpx

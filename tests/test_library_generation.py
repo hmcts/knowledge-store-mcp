@@ -30,7 +30,7 @@ class LibraryGenerationTest(unittest.TestCase):
         another manifest format, without the record moving - every contract test
         would then describe a release nobody pinned."""
         manifest = _manifest()
-        self.assertEqual(manifest["library_version"], "0.19.0")
+        self.assertEqual(manifest["library_version"], "0.19.1")
         self.assertEqual(manifest["format"], {"major": 1, "minor": 4})
 
     def test_every_node_has_a_community(self):
@@ -62,7 +62,7 @@ class LibraryGenerationTest(unittest.TestCase):
         manifest = _manifest()
         layers = manifest["layers"]
         # The same names as `EXPECTED` in library_store/pipeline.py, which refuses
-        # to finish a build without them: v0.19.0's 18 layers plus `deployments`.
+        # to finish a build without them: v0.19.1's 18 layers plus `deployments`.
         # Keep the two in step.
         self.assertEqual(sorted(layers), sorted(LIBRARY_LAYERS))
         for name in LIBRARY_LAYERS:

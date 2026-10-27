@@ -272,7 +272,7 @@ class TicketsContract(harness.Contract):
         return {
             "id": "library-contract-store",
             "format": {"major": 1, "minor": 4},
-            "library_version": "0.19.0",
+            "library_version": "0.19.1",
             "sources_as_of": SOURCES_AS_OF,
             "index": "present" if self.INDEXED else "absent: graph read whole",
             "layers_used": sorted(layers_used),
