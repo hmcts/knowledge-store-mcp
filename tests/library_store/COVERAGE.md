@@ -123,6 +123,7 @@ schema's `allOf` were added for the paging, depth, cycle and `extends` rows.
 | `ticket_tracker` `fetched` (resolved and unresolved), `absent`, `denied`; `checked`; text fields; `comments_truncated` | `test_library_tickets.TicketsWithIndex.test_ticket_has_its_files_record_and_tracker_record`, `test_library_tickets.TicketsWithIndex.test_ticket_an_unresolved_tracker_record`, `test_library_tickets.TicketsWithIndex.test_ticket_the_tracker_records_absent`, `test_library_tickets.TicketsWithIndex.test_ticket_the_tracker_denied` | |
 | `topics`, `deep_dives` (`title`, `html`, `source`; `_metadata` skipped) | `test_library_tickets.TicketsWithIndex.test_answers_from_every_library_answer_layer`, `test_library_tickets.TicketsWithIndex.test_an_answer_query_nothing_matches` | |
 | `answers` extra layer `as_of`, `commit` | `test_library_tickets.TicketsWithIndex.test_answers_from_every_library_answer_layer` | |
+| answer `html`: a fenced code block and a `mermaid` fence, as the library renders them | `test_library_tickets.TicketsWithIndex.test_an_answer_keeps_its_fenced_code_and_mermaid_diagram_intact` | |
 | `ownership_notes` extra layer in the relationships directory | `test_library_tickets.TicketsWithIndex.test_answers_from_the_extra_layer_in_the_relationships_directory` | |
 | `minimum_standard` records: each point's state, evidence and reason; v0.19.1 hygiene items | `test_library_minimum_standard.MinimumStandardWithIndex.test_the_whole_layer_is_each_repository_s_record`, `test_library_minimum_standard.MinimumStandardWithIndex.test_an_unprotected_branch_is_cited_under_hygiene_and_keeps_it_from_present`, `test_library_minimum_standard.MinimumStandardWithIndex.test_an_unreadable_setting_is_not_determinable_and_names_the_setting`, `test_library_minimum_standard.MinimumStandardWithIndex.test_a_live_repository_is_not_judged_unmaintained_and_cites_its_last_commit` | |
 | `minimum_standard` secret findings (key file, key name; never a value) | `test_library_minimum_standard.MinimumStandardWithIndex.test_a_secret_finding_is_where_and_which_rule_never_the_value` | v0.19.1 writes no value. `test_tools_minimum_standard.EvidenceNotVerdictTest.test_a_secret_finding_is_a_rule_a_path_and_a_line_and_never_a_value` covers the filter that drops one |
@@ -156,10 +157,27 @@ The rows cite the `V0_18_3Indexed` form.
 | `dependents` and `ticket` answer with what the inputs put there, not just without an error | `test_library_older_stores.V0_18_3Indexed.test_dependents_and_a_ticket_answer_from_the_inputs` |
 | `store_info` reports no `unread` layer, and a layer the release never wrote is left out | `test_library_older_stores.V0_18_3Indexed.test_store_info_reads_every_layer_and_leaves_none_unread` |
 | `minimum_standard` reads absent where the release has no layer, and answers where it has one | `test_library_older_stores.V0_18_3Indexed.test_minimum_standard_reads_absent_or_answers` |
-| `provided_by` is served out to one node in the provider's repository, whichever node the release anchored it on | `test_library_older_stores.V0_18_3Indexed.test_a_package_is_provided_by_a_node_in_its_repository` |
+| `provided_by` is served out to exactly the node the release anchored it on: alpha-lib's lowest node, `index`, in both releases, where v0.19.1 takes the manifest's | `test_library_older_stores.V0_18_3Indexed.test_a_package_is_provided_by_the_node_its_release_anchored` |
 | JSON Schema nodes are served where the release wrote them, and an older store answers "no such node" without an error | `test_library_older_stores.V0_18_3Indexed.test_json_schema_nodes_are_served_where_the_release_wrote_them` |
 
-On these inputs, all three releases anchor `provided_by` on `alpha-lib::package`.
-So the `provided_by` row catches a read that drops or reverses the edge. It
-cannot yet catch a read that only follows v0.19.1's choice of anchor. That
-catch arrives with Task 5's discriminating alpha-lib input.
+alpha-lib's root `index.ts` gives it a node, `index`, whose id sorts below the
+manifest's `package`. So v0.18.3 and v0.19.0 anchor `provided_by` on
+`alpha-lib::index` and v0.19.1 on `alpha-lib::package`, and the `provided_by` row
+catches a read that follows only v0.19.1's anchor as well as one that drops or
+reverses the edge.
+
+## Partial store
+
+Real stores are rarely whole. `partial/store/` and `partial/no-index/` are the
+main pin over the same estate with `generate.PARTIAL_SKIP`'s stages not run
+(`minimum-standard-settings`, `minimum-standard`, `topics`, `deepdive`,
+`deployments`) and the history kept off the store's git by a root `.gitignore`.
+`test_library_partial` serves both, as `PartialContractIndexed` and
+`PartialContractUnindexed`. The rows cite the `Indexed` form.
+
+| Claim | Test |
+|---|---|
+| the library writes each unbuilt layer in its own shape: `minimum_standard` `present: false` with `recognised: null`, `topics` and `deep_dives` `present: false`, `deployments` `present: null`, `history` `local_only` | `test_library_partial.PartialContractIndexed.test_the_manifest_writes_each_unbuilt_layer_in_the_library_s_shape` |
+| `store_info` reports each as recorded, a `null` as `null`, and none `unread` | `test_library_partial.PartialContractIndexed.test_store_info_reports_each_unbuilt_layer_absent_and_none_unread` |
+| `minimum_standard` answers that the layer is absent | `test_library_partial.PartialContractIndexed.test_minimum_standard_answers_that_the_layer_is_absent` |
+| `answers` reads the written answers alone when the briefs and dives were never built | `test_library_partial.PartialContractIndexed.test_answers_come_from_the_written_answers_alone` |

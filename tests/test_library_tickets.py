@@ -14,8 +14,8 @@ writes, before the store is read:
   tracked, so it is linked like any other file); DEMO-5 on delta-deploy's values file
   (7 October, before DEMO-3 rewrote it). DEMO-4 is only on beta-app's branch
   `feature/DEMO-4-retry` (7 October, `src/pay.ts`), so it is `proposed`. DEMO-7
-  lands on alpha-lib's `package.json` (4 October) and DEMO-6 on eta-portal's
-  (5 October). Every other link is one commit.
+  lands on alpha-lib's `package.json` and `index.ts` (4 October) and DEMO-6 on
+  eta-portal's `package.json` (5 October). Every other link is one commit.
 - A record's descriptions (`d`, at most two) are the subjects less their key,
   kept when at least 12 characters: "retry" and "ownership" are too short. `d`
   ranks by count, then length, ties in history order (alpha-lib before
@@ -33,7 +33,11 @@ writes, before the store is read:
   subset (`build_topic_briefs.markdown_to_html`): `#` is `<h2>`, `##` is `<h3>`,
   and each name in `config/repositories.txt` becomes a link to
   `https://github.com/example-org/<name>` unless it follows a `/`. No ticket
-  browse URL is set, so ticket keys stay text.
+  browse URL is set, so ticket keys stay text. A ```` ``` ```` fence is
+  `_fence_block`'s: `<pre><code class="language-<word>">`, its lines joined by a
+  newline and escaped with `html.escape(quote=False)`, and nothing inside it
+  rendered or linked. `how-refunds-work` ends with a `ts` fence and a `mermaid`
+  one.
 - `how-refunds-work` is dated by its `date:` and never committed; the store's
   own repository commits `who-approves-refunds` alone, as `pipeline.py` does,
   on 2026-10-19, which `answers-layer` writes with `+00:00` for UTC. That
@@ -70,6 +74,21 @@ def link(repo: str) -> str:
 
 ALPHA, BETA = link("alpha-lib"), link("beta-app")
 
+# The answer's two fences, as `_fence_block` renders each: the language a class,
+# the lines joined by a newline, `&`, `<` and `>` escaped and nothing else - no
+# quote, no Markdown, and no repository link inside a fence.
+FENCED_CODE = (
+    '<pre><code class="language-ts">'
+    "const owed = refund(amount); // amount &gt; 0 &amp;&amp; owed &lt; 0, in beta-app"
+    "</code></pre>"
+)
+MERMAID = (
+    '<pre><code class="language-mermaid">'
+    "flowchart LR\n"
+    '  pay["beta-app: PaymentService.pay"] --&gt; refund["alpha-lib: refund"]'
+    "</code></pre>"
+)
+
 HOW_REFUNDS_WORK = {
     "layer": "answers",
     "id": "how-refunds-work",
@@ -81,6 +100,7 @@ HOW_REFUNDS_WORK = {
         f"<p>A refund is the negative of the amount paid. {ALPHA}'s <code>refund</code> "
         f"function computes it, and {BETA} calls it through the "
         "<code>@example/alpha-lib</code> package.</p>"
+        f"{FENCED_CODE}{MERMAID}"
     ),
     "as_of": "2026-10-18",
     "commit": None,
@@ -158,12 +178,14 @@ ALPHA_DIVE = {
         "and the <code>credit</code> definition extends.</li>"
         f"<li><code>package.json</code>: the package name, version 1.2.0 and a dependency "
         f"on {BETA}.</li>"
+        "<li><code>index.ts</code>: the package's entry point, whose <code>currency</code> "
+        "function names the currency, GBP.</li>"
         "</ul>"
         "<h3>History</h3>"
         "<p>Four commits on <code>main</code>. DEMO-1 added the handler and the package "
         "manifest on 1 October 2026; DEMO-2 added the schema the next day, DEMO-1 "
         "returned on 3 October with a note on rounding, and DEMO-7 added the dependency "
-        f"on {BETA} on 4 October. Nothing has changed it since.</p>"
+        f"on {BETA} and the entry point on 4 October. Nothing has changed it since.</p>"
         "<h3>Who depends on it</h3>"
         f"<p>{BETA} declares <code>@example/alpha-lib</code> in its "
         "<code>package.json</code> and imports <code>refund</code> in "
@@ -702,6 +724,19 @@ class TicketsContract(harness.Contract):
                 "next_page": None,
             },
         )
+
+    def test_an_answer_keeps_its_fenced_code_and_mermaid_diagram_intact(self):
+        """Catches: an answer's `html` reshaped on the way out - a fence's `<pre>`
+        or language class stripped, its newline collapsed, its escaped `&gt;`
+        unescaped into markup, or a repository name inside it linked - so a
+        mermaid diagram no longer renders, or code reads as prose. A word only
+        the diagram holds finds the answer: fences are searched like prose."""
+        found = tools_tickets.answers(self.session, "flowchart")
+        self.assertEqual(found["matches"], 1)
+        self.assertEqual(found["items"], [HOW_REFUNDS_WORK])
+        text = found["items"][0]["text"]
+        self.assertTrue(text.endswith(FENCED_CODE + MERMAID), text)
+        self.assertEqual((text.count("<pre>"), text.count("</pre>")), (2, 2))
 
     def test_answers_from_the_extra_layer_in_the_relationships_directory(self):
         """Catches: the store's extra layer kept beside the library's relationships

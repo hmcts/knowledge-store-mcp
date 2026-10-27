@@ -1,8 +1,8 @@
 """Regenerate `store/` and `no-index/`: stores knowledge-store-builder's own stages
 wrote, at the release named in `VERSION`, with the graph graphify `GRAPHIFY`
-extracted.
+extracted; and `partial/`, the same release with some stages not run.
 
-    uv run python tests/library_store/generate.py           # rebuild both
+    uv run python tests/library_store/generate.py           # rebuild main and partial
     uv run python tests/library_store/generate.py --check   # rebuild everything elsewhere, compare
     uv run python tests/library_store/generate.py --release v0.18.3 [--out DIR]
 
@@ -14,8 +14,8 @@ and `git` on PATH, and network access: the first run builds the frozen
 environment `requirements.txt` names, and every run, `--check` included,
 downloads the embedding model (about 90 MB) into the build's own cache.
 
-This script writes the inputs - four git repositories, their bare remotes, the
-store's `config/`, one extra layer, and what an agent authors in a real build
+This script writes the inputs - four git repositories and `RETIRED`'s one, their
+bare remotes, the store's `config/`, one extra layer, and what an agent authors in a real build
 (a community summary, a topic brief, a deep dive, two written answers) - into a
 fresh temporary directory, then runs `pipeline.py` inside the frozen
 environment, which runs the library's real stages in their documented order. It
@@ -39,6 +39,15 @@ Move a pin, regenerate, run `--check`, then the tests.
 No library code is replaced at `VERSION`: `pipeline.py` stands in for the IO
 edges only, through the library's own seams, and gives `minimum-standard-settings`
 a fixed clock through its `now=` seam.
+
+The partial store: `partial/store/` and `partial/no-index/` are built at `VERSION`
+from the same inputs with `PARTIAL_SKIP`'s stages not run, the history layer
+kept off the store's git by a root `.gitignore`, and one repository, `RETIRED`,
+synced and exported and then dropped from the estate before the build, so its
+history is all that is left of it. Real stores carry each of these shapes: a
+layer never built, one built only on the builder's machine, and a ticket layer
+that knows a repository the estate no longer holds. `test_library_partial`
+serves them.
 
 Frozen stores: `frozen/v<release>/` holds `store/` and `no-index/` built by an
 older release in `RELEASES`, from the same inputs, so they differ from the main
@@ -88,6 +97,21 @@ PIPELINE = HERE / "pipeline.py"
 FROZEN = HERE / "frozen"
 RELEASES = ("0.18.3", "0.19.0")
 
+# The partial store: the main pin over the same estate, with the stages real
+# stores often have not run skipped (`pipeline.py --skip`, which the main pin
+# accepts only as an explicit list), its history kept off the store's git by a
+# root `.gitignore`, so the manifest records it `local_only`, and `RETIRED`
+# synced, exported and retired before the build.
+PARTIAL_DIR = HERE / "partial"
+PARTIAL_SKIP = (
+    "minimum-standard-settings",
+    "minimum-standard",
+    "topics",
+    "deepdive",
+    "deployments",
+)
+PARTIAL_GITIGNORE = "knowledge/git-history/\n"
+
 ORG = "example-org"
 # `inputs.json`'s key for the store repository's commit of the committed answer.
 STORE_ANSWERS_COMMIT = "store_answers_commit"
@@ -129,6 +153,18 @@ export class RefundHandler {
 # and graphify sees no new symbol: a second DEMO-1 commit on one file, so a link
 # counts two commits.
 ALPHA_REFUND_ROUNDED = ALPHA_REFUND + "// Amounts are refunded in whole pence.\n"
+# The package's entry point, at the clone's root, so graphify 0.9.93 gives its file
+# node the bare stem `index` (`extractors/base._file_stem`, `ids.make_id`) and its
+# function `index_currency`. `index` sorts below `package`, the manifest's node, so
+# the releases' `provided_by` anchors differ: v0.18.3 and v0.19.0 take the lowest
+# node id under the package's directory (`alpha-lib::index`), v0.19.1 (#510) the
+# manifest's own node (`alpha-lib::package`). No symbol here names a refund, so no
+# search for "refund" finds it.
+ALPHA_INDEX = """\
+export function currency(): string {
+  return "GBP";
+}
+"""
 # `credit` extends `money` through `allOf`, so the json-schema stage writes an
 # `extends` edge. It shares line 6 with the `$defs` it opens, so every line the
 # other nodes sit on is unchanged.
@@ -258,7 +294,7 @@ COMMITS = {
         (
             "DEMO-7: alpha reads app constants",
             "2026-10-04T09:00:00+00:00",
-            {"package.json": ALPHA_PACKAGE_WITH_APP},
+            {"package.json": ALPHA_PACKAGE_WITH_APP, "index.ts": ALPHA_INDEX},
         ),
     ],
     "beta-app": [
@@ -311,6 +347,22 @@ BRANCHES = {
 }
 
 REPOSITORIES_TXT = "".join(f"{name}|https://github.com/{ORG}/{name}.git|main\n" for name in COMMITS)
+
+# A repository that left the estate: the partial store's pipeline syncs it and
+# exports its history, then drops it from `config/repositories.txt` and deletes
+# its clone, as an operator retires one (`pipeline.py --retire`). Its history
+# directory stays, since `export-history` never prunes, so the ticket layer
+# knows it and nothing else does. Never in `REPOSITORIES_TXT`, and its sha is not
+# recorded: no test reads it. DEMO-2, so the tracker is asked for no new key.
+RETIRED = {
+    "zeta-archive": [
+        (
+            "DEMO-2: archive the refund exports",
+            "2026-09-15T09:00:00+00:00",
+            {"exports/refunds.csv": "id,amount\n"},
+        ),
+    ],
+}
 
 # A layer the store owns, declared in `extra_layers` and kept beside the library's
 # relationships files: it must never be read as a repository.
@@ -388,13 +440,14 @@ refund schema.
 - `src/refund.ts`: the `refund` function and the `RefundHandler` class whose `handle` method calls it.
 - `schemas/refund.schema.json`: the Refund JSON Schema, with a `money` definition that the `total` property refers to and the `credit` definition extends.
 - `package.json`: the package name, version 1.2.0 and a dependency on beta-app.
+- `index.ts`: the package's entry point, whose `currency` function names the currency, GBP.
 
 ## History
 
 Four commits on `main`. DEMO-1 added the handler and the package manifest on
 1 October 2026; DEMO-2 added the schema the next day, DEMO-1 returned on
 3 October with a note on rounding, and DEMO-7 added the dependency on beta-app
-on 4 October. Nothing has changed it since.
+and the entry point on 4 October. Nothing has changed it since.
 
 ## Who depends on it
 
@@ -418,6 +471,15 @@ date: 2026-10-18
 
 A refund is the negative of the amount paid. alpha-lib's `refund` function
 computes it, and beta-app calls it through the `@example/alpha-lib` package.
+
+```ts
+const owed = refund(amount); // amount > 0 && owed < 0, in beta-app
+```
+
+```mermaid
+flowchart LR
+  pay["beta-app: PaymentService.pay"] --> refund["alpha-lib: refund"]
+```
 """
 ANSWER_WHO_APPROVES_REFUNDS = """\
 # Who approves refunds?
@@ -475,10 +537,10 @@ def _commit(repo: Path, subject: str, date: str, files: dict[str, str]) -> None:
 
 
 def _sources(tmp: Path) -> dict[str, str]:
-    """Each repository built in `sources/`, pushed bare to `remotes/`. Returns
-    each one's `main` sha."""
+    """Each repository, the estate's and `RETIRED`, built in `sources/`, pushed
+    bare to `remotes/`. Returns each estate repository's `main` sha."""
     shas = {}
-    for name, commits in COMMITS.items():
+    for name, commits in {**COMMITS, **RETIRED}.items():
         repo = tmp / "sources" / name
         repo.mkdir(parents=True)
         _git(repo, "init", "-q", "-b", "main")
@@ -497,13 +559,16 @@ def _sources(tmp: Path) -> dict[str, str]:
             check=True,
             env=_git_env(),
         )
-    return shas
+    return {name: sha for name, sha in shas.items() if name in COMMITS}
 
 
-def _store_inputs(root: Path, shas: dict[str, str]) -> None:
+def _store_inputs(root: Path, shas: dict[str, str], gitignore: str = "") -> None:
     """The store's configuration and authored inputs, in the store root; the
     summaries JSON beside it, where `pipeline.py` reads it. `shas` are the clones'
-    HEADs, which the deep dive names."""
+    HEADs, which the deep dive names. `gitignore`, when given, is the store root's
+    `.gitignore`."""
+    if gitignore:
+        _write(root / ".gitignore", gitignore)
     _write(root / "config" / "repositories.txt", REPOSITORIES_TXT)
     _write(root / "config" / "store-extra-layers.json", EXTRA_LAYERS_JSON)
     _write(root / "config" / "products.json", PRODUCTS_JSON)
@@ -547,12 +612,15 @@ def _isolated_home(tmp: Path) -> dict[str, str]:
 @dataclass(frozen=True)
 class Build:
     """One release's pair of stores: the frozen environment it runs in, and where
-    its `store/` and `no-index/` are committed."""
+    its `store/` and `no-index/` are committed. `flags` go to `pipeline.py` for
+    both, and `gitignore` is the store root's `.gitignore` (the partial store's)."""
 
     version: str
     requirements: Path
     store: Path
     no_index: Path
+    flags: tuple[str, ...] = ()
+    gitignore: str = ""
 
     @property
     def library(self) -> str:
@@ -566,6 +634,19 @@ class Build:
 
 
 MAIN = Build(VERSION, REQUIREMENTS, OUT, NO_INDEX)
+PARTIAL = Build(
+    VERSION,
+    REQUIREMENTS,
+    PARTIAL_DIR / "store",
+    PARTIAL_DIR / "no-index",
+    flags=(
+        *(flag for stage in PARTIAL_SKIP for flag in ("--skip", stage)),
+        *(flag for name in RETIRED for flag in ("--retire", name)),
+        "--local-only",
+        "history",
+    ),
+    gitignore=PARTIAL_GITIGNORE,
+)
 
 
 def frozen(version: str, out: Path | None = None) -> Build:
@@ -682,12 +763,12 @@ def build(tmp: Path, release: Build) -> tuple[dict[Path, Path], dict[str, str], 
     shas = _sources(tmp)
     built = {}
     for target, parent, flags in (
-        (release.store, tmp / "full", ()),
-        (release.no_index, tmp / "bare", ("--no-index",)),
+        (release.store, tmp / "full", release.flags),
+        (release.no_index, tmp / "bare", ("--no-index", *release.flags)),
     ):
         root = parent / "store"
         root.mkdir(parents=True)
-        _store_inputs(root, shas)
+        _store_inputs(root, shas, release.gitignore)
         _pipeline(tmp, root, release.requirements, *flags)
         stamped = _library_version(root)
         if stamped != release.version:
@@ -773,9 +854,9 @@ def _check(tmp: Path, release: Build) -> list[str]:
 
 
 def _write_release(tmp: Path, release: Build) -> int:
-    """Build `release` and write its two stores. A frozen release writes no
-    `inputs.json`: its inputs are the main store's, so it refuses unless its clones
-    and answer commit are the ones recorded there."""
+    """Build `release` and write its two stores. Only `MAIN` writes `inputs.json`:
+    the partial and frozen stores' inputs are the main store's, so each refuses
+    unless its clones and answer commit are the ones recorded there."""
     built, shas, answer_commit = build(tmp, release)
     recorded = _inputs_json(shas, answer_commit)
     if release is not MAIN and (not INPUTS.is_file() or INPUTS.read_text("utf-8") != recorded):
@@ -818,9 +899,16 @@ def main(argv: list[str]) -> int:
         try:
             if not check:
                 assert release is not None
-                return _write_release(tmp, release)
+                if release is not MAIN:
+                    return _write_release(tmp, release)
+                # The main pin's two builds: the partial store's inputs are the
+                # main store's, so it follows the `inputs.json` MAIN writes.
+                return _write_release(tmp / "main", MAIN) or _write_release(
+                    tmp / "partial", PARTIAL
+                )
             differing = []
-            for index, each in enumerate([MAIN, *(frozen(version) for version in RELEASES)]):
+            builds = [MAIN, PARTIAL, *(frozen(version) for version in RELEASES)]
+            for index, each in enumerate(builds):
                 differing += _check(tmp / str(index), each)
         except subprocess.CalledProcessError as failed:
             print(f"generation failed, nothing written: {failed}", file=sys.stderr)

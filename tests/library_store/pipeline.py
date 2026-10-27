@@ -1,6 +1,7 @@
 """The library's stages over a store root, in the order its docs give.
 
-    python pipeline.py <root> [--no-index]
+    python pipeline.py <root> [--no-index] [--skip <stage>]... [--retire <name>]...
+                           [--local-only <layer>]...
 
 Runs inside the frozen environment `generate.py` builds from `requirements.txt`,
 so `knowledgestore` and `graphify` here are the pinned releases; `generate.py`
@@ -23,7 +24,18 @@ status and body `tracker_responses.json` gives it, and
 from `github_responses.json` and reads a fixed clock. A request either file does
 not hold raises, so a stage cannot read an unexpected one as "nothing".
 
-`--no-index` skips the `index` stage. A step that runs a stage the installed
+`--no-index` skips the `index` stage. `--skip <stage>` skips every step that
+runs that library stage, on any release, the main pin included: an explicit
+list, as the partial store asks for, never inferred. A skipped stage must be one
+the release has, so a misspelt one refuses rather than skipping nothing, and its
+layer (`LAYER_STAGES`) must then be absent. `--retire <name>` first syncs and
+exports the history of a repository `config/repositories.txt` does not name, then
+drops it from the list and deletes its clone, as an operator retires one; the
+history directory stays, because `export-history` never prunes. `--local-only
+<layer>` expects that layer on disk but kept off the store's git (the manifest's
+`local_only`), as a `.gitignore` the caller wrote makes it.
+
+A step that runs a stage the installed
 release does not have - an older frozen release, as `generate.py --release`
 builds - is skipped too: which stages a release has is read from its own
 `knowledgestore.cli.STAGES`, never assumed. v0.18.3 has no `json-schema` and no
@@ -46,9 +58,11 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 # The main store's pin. This file runs as a script from its own directory, so
@@ -91,8 +105,15 @@ EXPECTED = (
 # The store's own layers, from `config/store-extra-layers.json`.
 EXPECTED_EXTRA = ("answers", "ownership_notes")
 INDEX = "index"
-# The layers a release can only have when it has the stage that writes them.
-LAYER_STAGES = {"minimum_standard": "minimum-standard"}
+# The layers a release can only have when it has, and runs, the stage that
+# writes them. `deployments` is a flag in the graph rather than a file: with its
+# stage not run, nothing records `deployments.pairs`, so the manifest says `null`.
+LAYER_STAGES = {
+    "minimum_standard": "minimum-standard",
+    "topics": "topics",
+    "deep_dives": "deepdive",
+    "deployments": "deployments",
+}
 
 # Hand-written community labels: the community holding each anchor node gets
 # the label; every other community is "Other <n>". Node ids are graphify's
@@ -512,17 +533,39 @@ def answers_layer(root: Path) -> None:
     )
 
 
-def verify(root: Path, stages: frozenset[str], index: bool = True) -> None:
+def verify(
+    root: Path,
+    stages: frozenset[str],
+    index: bool = True,
+    skipped: frozenset[str] = frozenset(),
+    local_only: frozenset[str] = frozenset(),
+) -> None:
     """Refuse a store missing an expected layer or a community on any node, or,
     built without its index, one that has an index. A layer whose stage the
-    release lacks is not expected."""
+    release lacks is not expected; one whose stage was skipped must not be
+    present; one asked to be local only must be on disk and not present."""
     manifest = json.loads((root / MANIFEST).read_text("utf-8"))
     layers = manifest.get("layers", {})
     extra = manifest.get("extra_layers", {})
+    run = stages - skipped
+    unbuilt = [name for name in EXPECTED if LAYER_STAGES.get(name, "") in skipped]
+    built = [name for name in unbuilt if layers.get(name, {}).get("present") is True]
+    if built:
+        raise Refused("layers present although their stage was skipped: " + ", ".join(built))
+    wrong = [
+        name
+        for name in sorted(local_only)
+        if layers.get(name, {}).get("present") is not False
+        or layers.get(name, {}).get("local_only") is not True
+    ]
+    if wrong:
+        raise Refused("layers not recorded local only: " + ", ".join(wrong))
     wanted = [
         name
         for name in EXPECTED
-        if (index or name != INDEX) and (name not in LAYER_STAGES or LAYER_STAGES[name] in stages)
+        if (index or name != INDEX)
+        and (name not in LAYER_STAGES or LAYER_STAGES[name] in run)
+        and name not in local_only
     ]
     missing = [name for name in wanted if not layers.get(name, {}).get("present")]
     missing += [name for name in EXPECTED_EXTRA if not extra.get(name, {}).get("present")]
@@ -582,19 +625,84 @@ STEPS: list[Callable[..., None]] = [
 ]
 
 
+def retire(root: Path, name: str) -> None:
+    """Sync `name` and export its history with the library's own stages, then drop
+    it from `config/repositories.txt` and delete its clone, as an operator retires
+    a repository. The build's own `sync` then records provenance without it, and
+    its history directory stays: `export-history` writes, never prunes."""
+    listed = root / "config/repositories.txt"
+    estate = listed.read_text("utf-8")
+    if name in _clones(root):
+        raise Refused(f"{name} is in config/repositories.txt, so it cannot be retired")
+    listed.write_text(estate + f"{name}|https://github.com/{ORG}/{name}.git|main\n", "utf-8")
+    try:
+        stage("sync")(root)
+        stage("export-history")(root)
+    finally:
+        listed.write_text(estate, "utf-8")
+    shutil.rmtree(root / "repositories" / name)
+
+
+@dataclass(frozen=True)
+class Arguments:
+    root: Path
+    index: bool
+    skipped: frozenset[str]
+    retired: tuple[str, ...]
+    local_only: frozenset[str]
+
+
+USAGE = (
+    "usage: pipeline.py <root> [--no-index] [--skip <stage>]... [--retire <name>]... "
+    "[--local-only <layer>]..."
+)
+
+
+def arguments(argv: list[str]) -> Arguments | None:
+    """The command line, or None when it is not `USAGE`'s shape."""
+    if not argv or argv[0].startswith("--"):
+        return None
+    index, valued = True, {"--skip": [], "--retire": [], "--local-only": []}
+    rest = argv[1:]
+    while rest:
+        flag, rest = rest[0], rest[1:]
+        if flag == "--no-index" and index:
+            index = False
+        elif flag in valued and rest and not rest[0].startswith("--"):
+            valued[flag].append(rest[0])
+            rest = rest[1:]
+        else:
+            return None
+    return Arguments(
+        Path(argv[0]).resolve(),
+        index,
+        frozenset(valued["--skip"]),
+        tuple(valued["--retire"]),
+        frozenset(valued["--local-only"]),
+    )
+
+
 def main(argv: list[str]) -> int:
-    if not argv or argv[1:] not in ([], ["--no-index"]):
-        print("usage: pipeline.py <root> [--no-index]", file=sys.stderr)
+    parsed = arguments(argv)
+    if parsed is None:
+        print(USAGE, file=sys.stderr)
         return 2
-    root = Path(argv[0]).resolve()
-    index = argv[1:] != ["--no-index"]
+    root, index, skipped = parsed.root, parsed.index, parsed.skipped
     try:
         version, stages = release_stages(root)
+        unknown = sorted(skipped - stages)
+        if unknown:
+            raise Refused(f"asked to skip {', '.join(unknown)}, which {version} does not have")
+        for name in parsed.retired:
+            retire(root, name)
         for step in STEPS:
             if step is INDEX_STEP and not index:
                 print("$ (skipped: --no-index) knowledgestore index", flush=True)
                 continue
             needed = NEEDS.get(step)
+            if needed is not None and needed in skipped:
+                print(f"$ (skipped: --skip {needed})", flush=True)
+                continue
             if needed is not None and needed not in stages:
                 # Skipping is for frozen older releases only: on the main pin, a
                 # missing stage is a rename or removal to act on, not to skip.
@@ -606,7 +714,7 @@ def main(argv: list[str]) -> int:
                 labels(root, stages)
             else:
                 step(root)
-        verify(root, stages, index)
+        verify(root, stages, index, skipped, parsed.local_only)
     except Refused as refused:
         print(f"pipeline refused: {refused}", file=sys.stderr)
         return 1

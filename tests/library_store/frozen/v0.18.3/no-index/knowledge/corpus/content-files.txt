@@ -20,6 +20,7 @@ knowledge/relationships/ownership-notes.json
 knowledge/repository-manifest.md
 knowledge/telemetry.json
 knowledge_context.md
+repositories/alpha-lib/index.ts
 repositories/alpha-lib/package.json
 repositories/alpha-lib/schemas/refund.schema.json
 repositories/alpha-lib/src/refund.ts
