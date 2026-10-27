@@ -96,8 +96,8 @@ CLONES: dict[str, tuple[dict[str, str], list[str]]] = {
                 "  - uses: gitleaks/gitleaks-action@v2\n"
             ),
             "renovate.json": "{}\n",
-            # Named for a private key and empty: the writer reports a key file by its
-            # name alone and never opens it.
+            # Named for a private key and empty: the writer reads it for BEGIN
+            # labels, finds no boundary, and keeps a `.pem` with none as a key file.
             "deploy/signing.pem": "",
         },
         [],

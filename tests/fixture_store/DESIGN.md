@@ -547,9 +547,11 @@ default store does not write the layer, so there it is absent (section 9.4).
   `not_determinable` with that finding as its evidence: evidence is not absence.
 - **reporting-worker's one secret-scan finding** is
   `{"path": "deploy/signing.pem", "rule": "key-file"}`: a path and a rule, with no
-  line, because the writer reports a file named as a private key by its name and
-  never opens it. That makes the point `absent`. The fixture's `deploy/signing.pem`
-  is an empty tracked file; there is no key content anywhere.
+  line, because a key file is reported as a whole file, not a line. The writer
+  matches the name, then reads a PEM-style file's BEGIN boundary labels; a `.pem` or
+  `.key` file with no boundary is kept as a key file, because a key is the costlier
+  miss. That makes the point `absent`. The fixture's `deploy/signing.pem` is an
+  empty tracked file, so it has no boundary; there is no key content anywhere.
 - **ledger-service's `security_contact` is `absent`** with four citations: the
   three places a SECURITY.md could be, each not found, and
   `example-org/.github`, the organisation's public `.github` repository, which
@@ -586,7 +588,7 @@ settings snapshot it reads is made by the settings stage's own
 its `runner` seam; only `read_at` is the fixture's, because the stage takes it
 from the clock. The script exits 0 only when the records and the snapshot equal
 `build.py`'s. The summary is composed as the writer's `main` composes it. The
-source is knowledge-store-builder v0.19.0 (`eb7cc81`): `build_minimum_standard.py`
-sha256 `8851a60240eb168f...`, `build_minimum_standard_settings.py`
-`c2b8244a837687ad...`, `minimum_standard.py` `dba480b459170e47...`. Re-run the
+source is knowledge-store-builder v0.19.1 (`a97b281`): `build_minimum_standard.py`
+sha256 `31ede57e4a48bd0c...`, `build_minimum_standard_settings.py`
+`d6fa7f96e76ad8a1...`, `minimum_standard.py` `dba480b459170e47...`. Re-run the
 script against a later library and transcribe again if it exits 1.

@@ -38,7 +38,7 @@ VERDICTS = {"pass", "passed", "passes", "score", "scores", "compliant", "verdict
 
 # DESIGN.md 11: payments-api's one secret-scan finding, a location and a rule.
 PAYMENTS_FINDING = {"line": 4, "path": "config/application.yml", "rule": "key-name"}
-# DESIGN.md 11: reporting-worker's key file, named and never opened, so it has no line.
+# DESIGN.md 11: reporting-worker's key file, reported as a whole file, so it has no line.
 KEY_FILE_FINDING = {"path": "deploy/signing.pem", "rule": "key-file"}
 
 UNSTAMPED = (
