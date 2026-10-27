@@ -1,11 +1,12 @@
 """Older stores stay readable: every tool over stores older library releases wrote.
 
-Real stores lag the library. One in use is manifest format 1.3, built before the
-`json-schema` stage and before #510, while the contract stores move with each
-release. These tests serve the frozen stores in `library_store/frozen/` - the
-same inputs as the main store, built by v0.18.3 and by v0.19.0 (`generate.py
---release`) - over the wire, in both read modes, so a server change that reads
-only the newest release's shapes, or refuses an older format, fails here.
+Real stores can lag the library by a format minor: manifest format 1.3, built
+before the `json-schema` stage and before #510, is one such, while the contract
+stores move with each release. These tests serve the frozen stores in
+`library_store/frozen/` - the same inputs as the main store, built by v0.18.3
+and by v0.19.0 (`generate.py --release`) - over the wire, in both read modes,
+so a server change that reads only the newest release's shapes, or refuses an
+older format, fails here.
 
 What each release has, derived from its own source before the store is read:
 
@@ -20,6 +21,17 @@ What each release has, derived from its own source before the store is read:
   names, frozen in `V0_19_0`. It has `json-schema`, so the schema's root and
   every definition and property under it are nodes, one per JSON pointer of
   `generate.ALPHA_SCHEMA`.
+- In both, `provided_by` runs from the package node to `_anchor_under(reps,
+  repo, prefix)` (`build_package_edges`, the same function at both tags): the
+  lowest id among the representatives of alpha-lib's files whose path starts
+  with the manifest's directory. alpha-lib's `package.json` is at its root, so
+  the prefix is "" and every file counts. graphify 0.9.93 gives the root
+  `index.ts` the bare stem `index` (`extractors/base._file_stem`), so its file
+  node is `index`, which sorts below `package`, `pkg:`, `ref_*` and `src_*`.
+  No `jsonschema:` id competes: v0.18.3 has no `json-schema` stage, and in
+  v0.19.0 `packages` runs before it. So both anchor on `alpha-lib::index`,
+  where v0.19.1 (#510) takes the manifest's own node, `alpha-lib::package`
+  (`test_library_graph`).
 - In both, `beta-app` alone declares `@example/alpha-lib`, so it is alpha-lib's
   one dependent, and DEMO-1's commits landed `package.json` and `src/refund.ts`
   (twice) in alpha-lib and `package.json` and `src/pay.ts` in beta-app
@@ -27,18 +39,16 @@ What each release has, derived from its own source before the store is read:
 
 Literals are written only where the inputs and the release's source settle
 them: the format, the layer names, a node id graphify 0.9.93 gives every
-release alike, the JSON pointers, the repositories. Where a value depends on a
-release's choices the tests do not re-derive - which node anchors `provided_by`,
-which community holds a node - they assert invariants: it is served, it is read
-the right way round, it is in the provider's repository. Nothing is read back
-from a store as an expected value.
+release alike, the `provided_by` anchor each release's rule picks, the JSON
+pointers, the repositories. Which community holds a node is graphify's choice,
+so no test names one. Nothing is read back from a store as an expected value.
 """
 
 import json
 import tempfile
 import unittest
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from mcp import Client
@@ -57,6 +67,9 @@ REFUND = "alpha-lib::src_refund_refund"
 # The `packages` stage's node for the package alpha-lib publishes, in every
 # release since before v0.18.3: `<provider>::pkg:<name>`.
 PACKAGE = "alpha-lib::pkg:@example/alpha-lib"
+# graphify 0.9.93's file node for alpha-lib's root `index.ts`: the lowest id in
+# alpha-lib, where v0.18.3 and v0.19.0 anchor `provided_by`.
+INDEX = "alpha-lib::index"
 # The json-schema stage's ids for `generate.ALPHA_SCHEMA`: the root, then each
 # definition and property, by JSON pointer.
 SCHEMA = "alpha-lib::jsonschema:schemas/refund.schema.json#"
@@ -101,6 +114,10 @@ class Release:
     format: dict[str, int]
     layers: tuple[str, ...]
     json_schema: bool
+    # The node `provided_by` leads to from alpha-lib's package (see above), and
+    # the file graphify made it for: a file node is labelled with its file name.
+    provided_by: str
+    provided_by_file: str
 
 
 # v0.18.3's `store_manifest.LAYERS`, in its order, then `deployments`.
@@ -128,6 +145,8 @@ V0_18_3 = Release(
         "deployments",
     ),
     json_schema=False,
+    provided_by=INDEX,
+    provided_by_file="index.ts",
 )
 # v0.19.0's `store_manifest.LAYERS`, in its order, then `deployments`.
 V0_19_0 = Release(
@@ -155,6 +174,8 @@ V0_19_0 = Release(
         "deployments",
     ),
     json_schema=True,
+    provided_by=INDEX,
+    provided_by_file="index.ts",
 )
 
 # DEMO-1's landed files, from `generate.COMMITS`: the same in every release.
@@ -278,23 +299,30 @@ class OlderStoreContract(Contract):
             )
             self.assertEqual(answer["store"]["layers_used"], [])
 
-    async def test_a_package_is_provided_by_a_node_in_its_repository(self):
-        """Catches: the `provided_by` edge dropped or read the wrong way round, or a
-        target that is not served or not in alpha-lib. Whatever node the release
-        chose, the package node leads out to exactly one, in the provider's
-        repository, and that node is served. On these inputs every release anchors
-        on the same node, so a read that follows only v0.19.1's anchor passes here;
-        that bite arrives with Task 5's discriminating alpha-lib input."""
+    async def test_a_package_is_provided_by_the_node_its_release_anchored(self):
+        """Catches: the `provided_by` edge dropped or read the wrong way round, or
+        a read that follows only v0.19.1's anchor - the manifest's own node - so
+        the edge an older release anchored on alpha-lib's lowest code node,
+        `index`, is lost; or that node not served. The package node leads out to
+        exactly the node the release's own rule picks."""
         found = await self.call("neighbours", {"id": PACKAGE, "relation": "provided_by"})
         self.assertEqual(found["node"]["id"], PACKAGE)
         self.assertEqual(
-            [(item["depth"], item["via"]) for item in found["items"]],
-            [(1, [{"from": PACKAGE, "relation": "provided_by", "direction": "out"}])],
+            [(item["depth"], item["node"]["id"], item["via"]) for item in found["items"]],
+            [
+                (
+                    1,
+                    self.RELEASE.provided_by,
+                    [{"from": PACKAGE, "relation": "provided_by", "direction": "out"}],
+                )
+            ],
         )
-        target = found["items"][0]["node"]
-        self.assertEqual(target["repo"], "alpha-lib")
-        served = await self.call("node", {"id": target["id"]})
-        self.assertEqual(served["node"]["id"], target["id"])
+        served = await self.call("node", {"id": self.RELEASE.provided_by})
+        file = self.RELEASE.provided_by_file
+        self.assertEqual(
+            (served["node"]["repo"], served["node"]["file"], served["node"]["label"]),
+            ("alpha-lib", file, PurePosixPath(file).name),
+        )
 
     async def test_json_schema_nodes_are_served_where_the_release_wrote_them(self):
         """Catches: JSON Schema nodes not served from a release that wrote them

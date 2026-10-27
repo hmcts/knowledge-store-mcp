@@ -2,7 +2,7 @@
  "how-refunds-work": {
   "as_of": "2026-10-18",
   "commit": null,
-  "html": "<h2>How do refunds work?</h2><p>A refund is the negative of the amount paid. <a href=\"https://github.com/example-org/alpha-lib\" target=\"_blank\" rel=\"noopener\">alpha-lib</a>'s <code>refund</code> function computes it, and <a href=\"https://github.com/example-org/beta-app\" target=\"_blank\" rel=\"noopener\">beta-app</a> calls it through the <code>@example/alpha-lib</code> package.</p>",
+  "html": "<h2>How do refunds work?</h2><p>A refund is the negative of the amount paid. <a href=\"https://github.com/example-org/alpha-lib\" target=\"_blank\" rel=\"noopener\">alpha-lib</a>'s <code>refund</code> function computes it, and <a href=\"https://github.com/example-org/beta-app\" target=\"_blank\" rel=\"noopener\">beta-app</a> calls it through the <code>@example/alpha-lib</code> package.</p><pre><code class=\"language-ts\">const owed = refund(amount); // amount &gt; 0 &amp;&amp; owed &lt; 0, in beta-app</code></pre><pre><code class=\"language-mermaid\">flowchart LR\n  pay[\"beta-app: PaymentService.pay\"] --&gt; refund[\"alpha-lib: refund\"]</code></pre>",
   "source": "docs/answers/how-refunds-work.md",
   "title": "How do refunds work?"
  },
