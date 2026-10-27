@@ -10,14 +10,20 @@ only the newest release's shapes, or refuses an older format, fails here.
 What each release has, derived from its own source before the store is read:
 
 - **v0.18.3** writes manifest format 1.3 (`store_manifest.FORMAT`). Its
-  `LAYERS` are the 17 from `graph` to `index`, with no `minimum_standard`, and
-  the manifest adds `deployments`: 18 names. Its `cli.STAGES` have no
-  `json-schema` and no `minimum-standard*`, so the graph holds no
-  `jsonschema:` node and the manifest does not name `minimum_standard` at all.
-- **v0.19.0** writes format 1.4, which adds `minimum_standard`: the 19 names
-  of `harness.LIBRARY_LAYERS`. It has `json-schema`, so the schema's root and
+  `store_manifest.LAYERS` are 17, from `graph` to `index`, with no
+  `minimum_standard`, and `compute` adds `deployments`: 18 names, frozen in
+  `V0_18_3`. Its `cli.STAGES` have no `json-schema` and no
+  `minimum-standard*`, so the graph holds no `jsonschema:` node and the
+  manifest does not name `minimum_standard` at all.
+- **v0.19.0** writes format 1.4. Its `store_manifest.LAYERS` add
+  `minimum_standard` after `relationships`: 18, and with `deployments` 19
+  names, frozen in `V0_19_0`. It has `json-schema`, so the schema's root and
   every definition and property under it are nodes, one per JSON pointer of
   `generate.ALPHA_SCHEMA`.
+- In both, `beta-app` alone declares `@example/alpha-lib`, so it is alpha-lib's
+  one dependent, and DEMO-1's commits landed `package.json` and `src/refund.ts`
+  (twice) in alpha-lib and `package.json` and `src/pay.ts` in beta-app
+  (`generate.COMMITS`).
 
 Literals are written only where the inputs and the release's source settle
 them: the format, the layer names, a node id graphify 0.9.93 gives every
@@ -41,7 +47,7 @@ from mcp_types import TextContent
 from knowledgestore_mcp import server
 from knowledgestore_mcp.server import KnowledgeStoreServer
 from library_store.generate import frozen
-from library_store.harness import LIBRARY_LAYERS, NOW, SHAS
+from library_store.harness import NOW, SHAS
 
 REPOSITORIES = ["alpha-lib", "beta-app", "delta-deploy", "eta-portal"]
 
@@ -97,13 +103,67 @@ class Release:
     json_schema: bool
 
 
+# v0.18.3's `store_manifest.LAYERS`, in its order, then `deployments`.
 V0_18_3 = Release(
     "0.18.3",
     {"major": 1, "minor": 3},
-    tuple(name for name in LIBRARY_LAYERS if name != "minimum_standard"),
+    (
+        "graph",
+        "labels",
+        "provenance",
+        "repository_manifest",
+        "context",
+        "content_files",
+        "history",
+        "intent",
+        "ticket_descriptions",
+        "ticket_tracker",
+        "summaries",
+        "topics",
+        "deep_dives",
+        "semantic",
+        "explorer",
+        "relationships",
+        "index",
+        "deployments",
+    ),
     json_schema=False,
 )
-V0_19_0 = Release("0.19.0", {"major": 1, "minor": 4}, LIBRARY_LAYERS, json_schema=True)
+# v0.19.0's `store_manifest.LAYERS`, in its order, then `deployments`.
+V0_19_0 = Release(
+    "0.19.0",
+    {"major": 1, "minor": 4},
+    (
+        "graph",
+        "labels",
+        "provenance",
+        "repository_manifest",
+        "context",
+        "content_files",
+        "history",
+        "intent",
+        "ticket_descriptions",
+        "ticket_tracker",
+        "summaries",
+        "topics",
+        "deep_dives",
+        "semantic",
+        "explorer",
+        "relationships",
+        "minimum_standard",
+        "index",
+        "deployments",
+    ),
+    json_schema=True,
+)
+
+# DEMO-1's landed files, from `generate.COMMITS`: the same in every release.
+DEMO_1_LANDED = [
+    {"commits": 1, "path": "package.json", "repository": "alpha-lib"},
+    {"commits": 2, "path": "src/refund.ts", "repository": "alpha-lib"},
+    {"commits": 1, "path": "package.json", "repository": "beta-app"},
+    {"commits": 1, "path": "src/pay.ts", "repository": "beta-app"},
+]
 
 
 class OlderStoreCase(unittest.IsolatedAsyncioTestCase):
@@ -179,6 +239,16 @@ class OlderStoreContract(Contract):
                 self.assertFalse(is_error, answer)
                 self.assertEqual(answer["store"]["library_version"], self.RELEASE.version)
 
+    async def test_dependents_and_a_ticket_answer_from_the_inputs(self):
+        """Catches: an older store's relationships or intent layers read as empty
+        rather than failing - every tool answering, with nothing in the answer:
+        alpha-lib's one dependent, beta-app, or DEMO-1's landed files lost."""
+        dependents = await self.call("dependents", {"target": "alpha-lib"})
+        self.assertEqual([item["repository"] for item in dependents["items"]], ["beta-app"])
+        ticket = await self.call("ticket", {"key": "DEMO-1"})
+        self.assertEqual(ticket["landed"], DEMO_1_LANDED)
+        self.assertEqual(ticket["proposed"], [])
+
     async def test_store_info_reads_every_layer_and_leaves_none_unread(self):
         """Catches: an older store's layers reported unread or unrecognised, as a
         layer from a newer minor is; or a layer the release never wrote - v0.18.3's
@@ -209,10 +279,12 @@ class OlderStoreContract(Contract):
             self.assertEqual(answer["store"]["layers_used"], [])
 
     async def test_a_package_is_provided_by_a_node_in_its_repository(self):
-        """Catches: the `provided_by` edge read only where v0.19.1 anchors it, so a
-        store whose release anchored it elsewhere loses it, or it is read the wrong
-        way round. Whatever node the release chose, the package node leads out to
-        exactly one, in the provider's repository, and that node is served."""
+        """Catches: the `provided_by` edge dropped or read the wrong way round, or a
+        target that is not served or not in alpha-lib. Whatever node the release
+        chose, the package node leads out to exactly one, in the provider's
+        repository, and that node is served. On these inputs every release anchors
+        on the same node, so a read that follows only v0.19.1's anchor passes here;
+        that bite arrives with Task 5's discriminating alpha-lib input."""
         found = await self.call("neighbours", {"id": PACKAGE, "relation": "provided_by"})
         self.assertEqual(found["node"]["id"], PACKAGE)
         self.assertEqual(

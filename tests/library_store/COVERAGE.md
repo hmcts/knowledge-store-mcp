@@ -153,6 +153,7 @@ The rows cite the `V0_18_3Indexed` form.
 |---|---|
 | the frozen manifest is the release's own: version, format and which layers it records | `test_library_older_stores.V0_18_3Indexed.test_the_manifest_records_the_release_and_its_layers` |
 | every tool answers without `isError`, and a new tool fails until it is called here | `test_library_older_stores.V0_18_3Indexed.test_every_tool_answers_without_an_error` |
+| `dependents` and `ticket` answer with what the inputs put there, not just without an error | `test_library_older_stores.V0_18_3Indexed.test_dependents_and_a_ticket_answer_from_the_inputs` |
 | `store_info` reports no `unread` layer, and a layer the release never wrote is left out | `test_library_older_stores.V0_18_3Indexed.test_store_info_reads_every_layer_and_leaves_none_unread` |
 | `minimum_standard` reads absent where the release has no layer, and answers where it has one | `test_library_older_stores.V0_18_3Indexed.test_minimum_standard_reads_absent_or_answers` |
 | `provided_by` is served out to one node in the provider's repository, whichever node the release anchored it on | `test_library_older_stores.V0_18_3Indexed.test_a_package_is_provided_by_a_node_in_its_repository` |
@@ -160,4 +161,5 @@ The rows cite the `V0_18_3Indexed` form.
 
 On these inputs, all three releases anchor `provided_by` on `alpha-lib::package`.
 So the `provided_by` row catches a read that drops or reverses the edge. It
-cannot catch a read that only follows v0.19.1's choice of anchor.
+cannot yet catch a read that only follows v0.19.1's choice of anchor. That
+catch arrives with Task 5's discriminating alpha-lib input.
