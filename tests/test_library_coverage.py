@@ -7,7 +7,9 @@ with no row, a row with no test, or a row citing a test that no longer exists
 fails here, so the map cannot claim coverage the suite does not have.
 
 The map cites each library contract in its `WithIndex` form; `both_modes`
-makes a `WithoutIndex` twin of every one. The guard checks that the twin exists
+makes a `WithoutIndex` twin of every one. The older-store and partial-store
+contracts are cited in their `Indexed` form, with an `Unindexed` twin over the
+same build's store without the index. The guard checks that the twin exists
 and that each form reads the store its name claims.
 """
 
@@ -16,7 +18,7 @@ import unittest
 from pathlib import Path
 
 from knowledgestore_mcp import server
-from library_store.generate import NO_INDEX, OUT
+from library_store.generate import NO_INDEX, OUT, PARTIAL, Build, frozen
 
 COVERAGE = Path(__file__).resolve().parent / "library_store" / "COVERAGE.md"
 
@@ -24,6 +26,8 @@ COVERAGE = Path(__file__).resolve().parent / "library_store" / "COVERAGE.md"
 TEST_ID = re.compile(r"`(test_\w+\.\w+\.test_\w+)`")
 NAME = re.compile(r"^`(\w+)`$")
 TOOL_ROW = "—"
+# `test_library_older_stores.V0_18_3Indexed`: the frozen release it reads.
+OLDER_FORM = re.compile(r"^test_library_older_stores\.V(\d+)_(\d+)_(\d+)Indexed\.")
 
 
 def _section(heading: str) -> list[list[str]]:
@@ -137,18 +141,36 @@ class CoverageMapTest(unittest.TestCase):
         self.assertIsNotNone(test, "does not resolve to a test")
         if "WithIndex." in name:
             # Each form must read the store its name claims.
-            self.assertEqual(
-                (getattr(test, "INDEXED", None), getattr(test, "STORE", None)),
-                (True, OUT),
-                "the cited form does not read the indexed store",
-            )
-            twin = _loads(name.replace("WithIndex.", "WithoutIndex."))
-            self.assertIsNotNone(twin, "no WithoutIndex twin")
-            self.assertEqual(
-                (getattr(twin, "INDEXED", None), getattr(twin, "STORE", None)),
-                (False, NO_INDEX),
-                "the twin does not read the store without the index",
-            )
+            self._assert_twin(name, "WithIndex.", "WithoutIndex.", (OUT, NO_INDEX))
+        elif "Indexed." in name:
+            self._assert_twin(name, "Indexed.", "Unindexed.", self._build_of(name))
+
+    def _build_of(self, name: str) -> tuple[Path, Path]:
+        """The (indexed, unindexed) stores an `…Indexed` form's module and name
+        claim: the partial store, or the frozen release its name spells."""
+        build: Build | None = None
+        if name.startswith("test_library_partial."):
+            build = PARTIAL
+        elif older := OLDER_FORM.match(name):
+            build = frozen(".".join(older.groups()))
+        self.assertIsNotNone(build, "an `Indexed` form outside the partial and older stores")
+        assert build is not None
+        return build.store, build.no_index
+
+    def _assert_twin(self, name: str, form: str, twin_form: str, stores: tuple[Path, Path]) -> None:
+        test = _loads(name)
+        self.assertEqual(
+            (getattr(test, "INDEXED", None), getattr(test, "STORE", None)),
+            (True, stores[0]),
+            "the cited form does not read the indexed store",
+        )
+        twin = _loads(name.replace(form, twin_form))
+        self.assertIsNotNone(twin, f"no {twin_form.rstrip('.')} twin")
+        self.assertEqual(
+            (getattr(twin, "INDEXED", None), getattr(twin, "STORE", None)),
+            (False, stores[1]),
+            "the twin does not read the store without the index",
+        )
 
 
 if __name__ == "__main__":

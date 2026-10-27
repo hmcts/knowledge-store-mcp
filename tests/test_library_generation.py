@@ -147,6 +147,7 @@ class PartialStoreInputTest(unittest.TestCase):
                 self.assertEqual(_graph_nodes(PARTIAL.store, name), 0)
                 self.assertEqual(_graph_nodes(PARTIAL.no_index, name), 0)
         self.assertGreater(_index_rows(PARTIAL.store, "alpha-lib")[1], 0)
+        self.assertGreater(_graph_nodes(PARTIAL.store, "alpha-lib"), 0)
         self.assertGreater(_graph_nodes(PARTIAL.no_index, "alpha-lib"), 0)
 
 

@@ -9,9 +9,9 @@ An MCP server that answers questions from a knowledge store on local disk.
 
 One server, one set of tools, wherever the question is asked. Each front door below launches the same stdio server against a local clone of the store, so an answer in Copilot and an answer in Claude Code come from the same thirteen read-only tools.
 
-A plural parameter is a JSON array: call `minimum_standard` with `repos: ["repo-a", "repo-b"]`, up to 100 names. A comma-separated string is still accepted, for callers on v0.2.1.
+A plural parameter is a JSON array: call `minimum_standard` with `repos: ["repo-a", "repo-b"]`, up to 100 names. A comma-separated string is still accepted, for older callers.
 
-Every example launches the server with `uvx` at the `v0.1.0` release tag. That route is **confirmed**, decided on 2026-10-22; the spec's [Installation](docs/superpowers/specs/2026-10-20-knowledge-store-mcp-design.md#installation) section says what it needs and why it pins a tag. Replace `<id>` with the store's `store.id`. Askers need [`uv`](https://docs.astral.sh/uv/) installed, and Python 3.13 or later, which uv downloads itself unless it is told not to (see Troubleshooting).
+Every example launches the server with `uvx` at a release tag, `<release>`. `<release>` is the latest tag on the [releases page](https://github.com/hmcts/knowledge-store-mcp/releases/latest). That route is **confirmed**, decided on 2026-10-22; the spec's [Installation](docs/superpowers/specs/2026-10-20-knowledge-store-mcp-design.md#installation) section says what it needs and why it pins a tag. Replace `<id>` with the store's `store.id`. Askers need [`uv`](https://docs.astral.sh/uv/) installed, and Python 3.13 or later, which uv downloads itself unless it is told not to (see Troubleshooting).
 
 `--store-id` finds the asker's clone through `~/.config/knowledge-store/locations`, which holds one absolute clone path per line. The `knowledge-store` skill writes that entry on first clone; anyone else adds the line by hand.
 
@@ -24,7 +24,7 @@ The store's plugin declares the server, in `.mcp.json` at the plugin root:
   "mcpServers": {
     "knowledge-store": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0",
+      "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@<release>",
                "knowledge-store-mcp", "--store-id", "<id>"]
     }
   }
@@ -43,7 +43,7 @@ Commit `.vscode/mcp.json` to the repository askers work in. VS Code's own format
     "knowledge-store": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0",
+      "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@<release>",
                "knowledge-store-mcp", "--store-id", "<id>"]
     }
   }
@@ -57,7 +57,7 @@ On a Copilot Business or Copilot Enterprise plan, an organisation or enterprise 
 Add the server to your user configuration, `~/.copilot/mcp-config.json`:
 
 ```bash
-copilot mcp add knowledge-store -- uvx --from git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0 knowledge-store-mcp --store-id <id>
+copilot mcp add knowledge-store -- uvx --from git+https://github.com/hmcts/knowledge-store-mcp@<release> knowledge-store-mcp --store-id <id>
 ```
 
 To share it with everyone working in a repository, commit `.github/mcp.json` instead. The CLI does not read `.vscode/mcp.json`, and it loads a repository's configuration only once you have trusted the folder:
@@ -68,7 +68,7 @@ To share it with everyone working in a repository, commit `.github/mcp.json` ins
     "knowledge-store": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0",
+      "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@<release>",
                "knowledge-store-mcp", "--store-id", "<id>"],
       "tools": ["*"]
     }
@@ -102,7 +102,7 @@ The coding agent works on a fresh runner, so setup steps clone the store and ins
            uses: astral-sh/setup-uv@v10.3.0
          # Builds the server into uv's cache now, so a failure shows in this step's log.
          - name: Fetch the server
-           run: uvx --from git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0 knowledge-store-mcp --version
+           run: uvx --from git+https://github.com/hmcts/knowledge-store-mcp@<release> knowledge-store-mcp --version
    ```
 
 3. **The MCP configuration**, in the repository's settings (Settings → Copilot → MCP servers). `KNOWLEDGE_STORE_PATH` names the clone, so no locations file is needed:
@@ -113,7 +113,7 @@ The coding agent works on a fresh runner, so setup steps clone the store and ins
        "knowledge-store": {
          "type": "stdio",
          "command": "uvx",
-         "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@v0.1.0",
+         "args": ["--from", "git+https://github.com/hmcts/knowledge-store-mcp@<release>",
                   "knowledge-store-mcp"],
          "env": { "KNOWLEDGE_STORE_PATH": "/home/runner/knowledge-store" },
          "tools": ["*"]
@@ -231,7 +231,7 @@ knowledge-store-builder's `knowledgestore answers` scores Claude Code transcript
 - **Hand-written:** the inputs in `generate.py` (clone contents, commit messages, `config/`, agent-authored summaries and answers) and the tracker and GitHub answers in `tracker_responses.json` and `github_responses.json`. **Library output:** everything under `store/` and `no-index/`. Never edit those by hand.
 - **Pins:** library v0.19.1 and graphify 0.9.93 in `generate.py`; every other package, and the partitioner, interpreter and git the stores were made with, in `requirements.txt`.
 - **Seams only:** every IO edge is stood in for through the library's own seams: `fetch-tickets` through `opener=`, `sleep=` and `today=`, and `minimum-standard-settings` through `runner=` and a fixed `now=` clock.
-- **Older stores:** `tests/library_store/frozen/` holds the same two stores built by older releases, v0.18.3 (manifest format 1.3, before `json-schema` and `minimum_standard`) and v0.19.0. Each has its own `requirements.txt`. `test_library_older_stores` checks that every tool still reads them. The pipeline skips each stage a release lacks, reading the release's own `cli.STAGES`. v0.19.0 has no `now=` seam, so for that release only, the stage module's `datetime` is rebound to the fixed clock. Rebuild one with `generate.py --release v0.18.3`, and only when its release is dropped from support or its requirements are recompiled. `--check` covers them all.
+- **Older stores:** `tests/library_store/frozen/` holds the same two stores built by older releases, v0.18.3 (manifest format 1.3, before `json-schema` and `minimum_standard`) and v0.19.0. Each has its own `requirements.txt`. `test_library_older_stores` checks that every tool still reads them. The pipeline skips each stage a release lacks, reading the release's own `cli.STAGES`. v0.19.0 has no `now=` seam, so for that release only, the stage module's `datetime` is rebound to the fixed clock. Rebuild one with `generate.py --release v0.18.3`, and only when its requirements are recompiled or the shared inputs in `generate.py` change. When a release is dropped from support, remove it from `RELEASES` and delete its directory under `frozen/` rather than rebuild it. `--check` covers them all.
 - **Partial store:** `tests/library_store/partial/` holds the same pair built at v0.19.1 with the stages real stores often have not run skipped (`minimum-standard-settings`, `minimum-standard`, `topics`, `deepdive`, `deployments`), the git history kept local by a root `.gitignore`, and one repository, `zeta-archive`, retired from the estate after its history was exported. `generate.py` builds it alongside `store/` and `no-index/`, passing the skips to `pipeline.py --skip` explicitly; the pipeline still refuses a stage missing from the main pin. `test_library_partial` reads the library's absent-layer shapes through every affected tool.
 - **Coverage:** `tests/library_store/COVERAGE.md` is the claim of what is covered, and `test_library_coverage` fails when a tool, argument or cited test is missing from it.
 - **CI** runs the tests over the committed output. It never runs the generator.

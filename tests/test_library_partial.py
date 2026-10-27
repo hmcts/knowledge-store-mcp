@@ -197,6 +197,10 @@ class PartialContract(harness.Contract):
         self.assertEqual(zeta["repository"], known)
         # The id graphify's scheme would give `exports/refunds.csv` had it been
         # extracted (`_file_stem`, `make_id`, the merge prefix): never served.
+        # graphify 0.9.93 extracts no `.csv` (none of `detect.py`'s extension
+        # sets names it), so this holds even for a cloned repository: it guards
+        # only against a node appearing by some other route. The scoped search
+        # above, with its control, is what shows graphify never saw the clone.
         self.assertIsNone(tools_graph.node(self.session, "zeta-archive::exports_refunds")["node"])
         # No provenance record: the build's own `sync` ran without it.
         provenance = tools_graph.store_info(self.session)["items"]
