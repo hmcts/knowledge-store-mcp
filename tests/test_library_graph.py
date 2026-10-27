@@ -36,7 +36,11 @@ writes, before the store is read:
   `source_file`, but it is not in `reps`: `main` strips the stage's old layer
   before `_add_package_layer` computes `reps`, and the new node is appended
   after. (It would lose anyway: `package` sorts before `pkg:`.) With the merge
-  prefix, the target is `alpha-lib::package`.
+  prefix, the target is `alpha-lib::package`. alpha-lib's root `index.ts` has
+  the lower id, `index` (graphify's bare stem for a top-level file), and the
+  rule before #510 - the lowest id under the manifest's directory - picks it,
+  as the v0.18.3 and v0.19.0 stores do (`test_library_older_stores`); v0.19.1
+  takes the manifest's node first, so `index` never competes.
 - Lines are counted in the clone text; urls are `source_urls`' form,
   `https://github.com/example-org/<repo>/blob/<sha>/<path>#L<line>`, with the
   sha from `inputs.json`.
@@ -430,9 +434,9 @@ class GraphContract(harness.Contract):
         """Catches: the `packages` stage's `provided_by` edge not read, or read the
         wrong way round, so the `@example/alpha-lib` package node does not lead out
         to the `package.json` that declares it; or an anchor on a JSON Schema node,
-        which v0.19.1 (#510) never writes, read as the provider. On these inputs
-        v0.19.0's rule picks the same node, so this pins the server's read of the
-        edge and its target, not the library's #510 change."""
+        which v0.19.1 (#510) never writes, read as the provider. It pins #510 too:
+        a store whose `provided_by` still follows v0.19.0's rule leads to
+        alpha-lib's lowest node, `index`, not to the manifest."""
         found = tools_graph.neighbours(self.session, PACKAGE["id"], relation="provided_by")
         self.assertEqual(self._without_community(found["node"]), PACKAGE)
         self.assertEqual(

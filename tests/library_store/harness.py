@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from unittest import mock
 
 from knowledgestore_mcp import store
-from library_store.generate import INPUTS, NO_INDEX, OUT
+from library_store.generate import INPUTS, NO_INDEX, OUT, PARTIAL
 
 # The session's clock: 18 days and 3 hours after the newest input commit.
 NOW = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
@@ -110,17 +110,28 @@ else:
     Contract = object
 
 
+def _modes(mixin: type, stores: tuple[Path, Path], names: tuple[str, str]) -> tuple[type, type]:
+    """`mixin`'s tests as two test classes, over the indexed store and the one
+    built without its index, named `mixin`'s name plus each of `names`."""
+
+    def form(store: Path, name: str, indexed: bool) -> type:
+        return type(
+            f"{mixin.__name__}{name}",
+            (mixin, LibraryStoreCase),
+            {"STORE": store, "INDEXED": indexed, "__module__": mixin.__module__},
+        )
+
+    return form(stores[0], names[0], True), form(stores[1], names[1], False)
+
+
 def both_modes(mixin: type) -> tuple[type, type]:
     """`mixin`'s tests as two test classes: over `store/`, with its index, and over
     `no-index/`, where the graph answers."""
-    with_index = type(
-        f"{mixin.__name__}WithIndex",
-        (mixin, LibraryStoreCase),
-        {"STORE": OUT, "INDEXED": True, "__module__": mixin.__module__},
-    )
-    without_index = type(
-        f"{mixin.__name__}WithoutIndex",
-        (mixin, LibraryStoreCase),
-        {"STORE": NO_INDEX, "INDEXED": False, "__module__": mixin.__module__},
-    )
-    return with_index, without_index
+    return _modes(mixin, (OUT, NO_INDEX), ("WithIndex", "WithoutIndex"))
+
+
+def partial_modes(mixin: type) -> tuple[type, type]:
+    """`mixin`'s tests over the partial store (`generate.PARTIAL`), with its index
+    and without: `…Indexed` and `…Unindexed`, so the coverage guard never takes
+    them for a `WithIndex` class over `store/`."""
+    return _modes(mixin, (PARTIAL.store, PARTIAL.no_index), ("Indexed", "Unindexed"))
