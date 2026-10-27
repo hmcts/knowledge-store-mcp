@@ -3,7 +3,8 @@ wrote, at the release named in `VERSION`, with the graph graphify `GRAPHIFY`
 extracted.
 
     uv run python tests/library_store/generate.py           # rebuild both
-    uv run python tests/library_store/generate.py --check   # rebuild elsewhere, compare
+    uv run python tests/library_store/generate.py --check   # rebuild everything elsewhere, compare
+    uv run python tests/library_store/generate.py --release v0.18.3 [--out DIR]
 
 The library is not a dependency of this repository: it is not on PyPI, its
 internal feed needs credentials CI does not hold, and installing it from git
@@ -35,9 +36,22 @@ The pins: `VERSION` and `GRAPHIFY` here; every other package, and the
 partitioner, interpreter and git the store was made with, in `requirements.txt`.
 Move a pin, regenerate, run `--check`, then the tests.
 
-No library code is replaced: `pipeline.py` stands in for the IO edges only,
-through the library's own seams, and gives `minimum-standard-settings` a fixed
-clock through its `now=` seam.
+No library code is replaced at `VERSION`: `pipeline.py` stands in for the IO
+edges only, through the library's own seams, and gives `minimum-standard-settings`
+a fixed clock through its `now=` seam.
+
+Frozen stores: `frozen/v<release>/` holds `store/` and `no-index/` built by an
+older release in `RELEASES`, from the same inputs, so they differ from the main
+store only by what that release does; real stores lag the library, and the tests
+in `test_library_older_stores` keep the server reading them. Each records its own
+`requirements.txt`, compiled the same way as the main one for that tag and run
+on the same `PYTHON`. `pipeline.py` skips each stage the release does not have,
+reading its own `cli.STAGES`, and gives v0.19.0, which has no `now=` seam, its
+fixed clock by rebinding the stage module's `datetime` for the one call: the one
+place library code is replaced, and only for that release. `--release` rebuilds
+one (into `--out`, by default its own directory); regenerate one only when its
+release is dropped from support or its requirements are recompiled. `--check`
+covers every one.
 
 CI runs the tests over the committed output and never runs this script.
 `COVERAGE.md` is the claim of what those tests cover, and
@@ -50,13 +64,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 # The release the committed store came from. The tests check the manifest's
 # `library_version` against it, so the record cannot drift from the bytes.
 VERSION = "0.19.1"
 GRAPHIFY = "0.9.93"
-LIBRARY = f"git+https://github.com/hmcts/knowledge-store-builder@v{VERSION}"
 # The interpreter the frozen environment was compiled for.
 PYTHON = "3.14"
 
@@ -66,6 +80,13 @@ NO_INDEX = HERE / "no-index"
 INPUTS = HERE / "inputs.json"
 REQUIREMENTS = HERE / "requirements.txt"
 PIPELINE = HERE / "pipeline.py"
+
+# Older releases whose stores are kept, frozen, beside the main one: v0.18.3
+# writes manifest format 1.3, before `json-schema` and `minimum_standard`;
+# v0.19.0 is the release the main store moved from. Each lives under
+# `frozen/v<release>/`.
+FROZEN = HERE / "frozen"
+RELEASES = ("0.18.3", "0.19.0")
 
 ORG = "example-org"
 # `inputs.json`'s key for the store repository's commit of the committed answer.
@@ -523,7 +544,39 @@ def _isolated_home(tmp: Path) -> dict[str, str]:
     }
 
 
-def _uv_run() -> list[str]:
+@dataclass(frozen=True)
+class Build:
+    """One release's pair of stores: the frozen environment it runs in, and where
+    its `store/` and `no-index/` are committed."""
+
+    version: str
+    requirements: Path
+    store: Path
+    no_index: Path
+
+    @property
+    def library(self) -> str:
+        return f"git+https://github.com/hmcts/knowledge-store-builder@v{self.version}"
+
+    @property
+    def name(self) -> str:
+        """The stores' directory, relative to this one, for messages."""
+        parent = self.store.parent
+        return "" if parent == HERE else f"{parent.relative_to(HERE).as_posix()}/"
+
+
+MAIN = Build(VERSION, REQUIREMENTS, OUT, NO_INDEX)
+
+
+def frozen(version: str, out: Path | None = None) -> Build:
+    """The frozen release `version`, its stores under `out` (by default its own
+    directory); its requirements are always its own directory's."""
+    home = FROZEN / f"v{version}"
+    where = out or home
+    return Build(version, home / "requirements.txt", where / "store", where / "no-index")
+
+
+def _uv_run(requirements: Path) -> list[str]:
     return [
         "uv",
         "run",
@@ -531,13 +584,13 @@ def _uv_run() -> list[str]:
         "--python",
         PYTHON,
         "--with-requirements",
-        str(REQUIREMENTS),
+        str(requirements),
     ]
 
 
-def _recorded(field: str) -> str:
-    """The `# <field>:` line of requirements.txt's header."""
-    for line in REQUIREMENTS.read_text("utf-8").splitlines():
+def _recorded(requirements: Path, field: str) -> str:
+    """The `# <field>:` line of a requirements file's header."""
+    for line in requirements.read_text("utf-8").splitlines():
         if line.startswith(f"# {field}:"):
             return line.removeprefix(f"# {field}:").strip()
     return "not recorded"
@@ -550,12 +603,12 @@ def _running_git() -> str:
     return done.stdout.strip().removeprefix("git version ") or "unknown"
 
 
-def _running_interpreter(tmp: Path) -> str:
+def _running_interpreter(tmp: Path, requirements: Path) -> str:
     script = (
         "import platform, sys; print(platform.python_version(), sys.platform, platform.machine())"
     )
     done = subprocess.run(
-        [*_uv_run(), "python", "-c", script],
+        [*_uv_run(requirements), "python", "-c", script],
         text=True,
         stdout=subprocess.PIPE,
         env={**os.environ, **_isolated_home(tmp)},
@@ -563,7 +616,7 @@ def _running_interpreter(tmp: Path) -> str:
     return done.stdout.strip() or "unknown"
 
 
-def _pipeline(tmp: Path, root: Path, *flags: str) -> None:
+def _pipeline(tmp: Path, root: Path, requirements: Path, *flags: str) -> None:
     """Run `pipeline.py` in the frozen environment. git's `insteadOf` sends every
     `https://github.com/example-org/` URL to the bare remotes, so the real `sync`
     clones offline from the URLs `config/repositories.txt` names."""
@@ -575,7 +628,7 @@ def _pipeline(tmp: Path, root: Path, *flags: str) -> None:
         "PYTHONHASHSEED": "0",
         **_isolated_home(tmp),
     }
-    command = [*_uv_run(), "python", str(PIPELINE), str(root), *flags]
+    command = [*_uv_run(requirements), "python", str(PIPELINE), str(root), *flags]
     subprocess.run(command, cwd=root, env=env, check=True)
 
 
@@ -615,21 +668,32 @@ def _answer_commit(root: Path) -> str:
     return _git(root, "log", "-1", "--format=%H", "--", COMMITTED_ANSWER).strip()
 
 
-def build(tmp: Path) -> tuple[dict[Path, Path], dict[str, str], str]:
-    """Inputs and every stage, in `tmp`, twice: the whole pipeline, and the same
-    inputs without `index`. Returns each built root by the directory it is
-    committed to, each clone's `main` sha, and the store's own commit of the
-    answer dated by its commit, which both runs make identically."""
+def _library_version(root: Path) -> str:
+    manifest = json.loads((root / "knowledge/store-manifest.json").read_text("utf-8"))
+    return manifest.get("library_version") or ""
+
+
+def build(tmp: Path, release: Build) -> tuple[dict[Path, Path], dict[str, str], str]:
+    """Inputs and every stage, in `tmp`, twice, in `release`'s frozen environment:
+    the whole pipeline, and the same inputs without `index`. Returns each built
+    root by the directory it is committed to, each clone's `main` sha, and the
+    store's own commit of the answer dated by its commit, which both runs make
+    identically. Refuses a store whose manifest names another release."""
     shas = _sources(tmp)
     built = {}
     for target, parent, flags in (
-        (OUT, tmp / "full", ()),
-        (NO_INDEX, tmp / "bare", ("--no-index",)),
+        (release.store, tmp / "full", ()),
+        (release.no_index, tmp / "bare", ("--no-index",)),
     ):
         root = parent / "store"
         root.mkdir(parents=True)
         _store_inputs(root, shas)
-        _pipeline(tmp, root, *flags)
+        _pipeline(tmp, root, release.requirements, *flags)
+        stamped = _library_version(root)
+        if stamped != release.version:
+            raise subprocess.CalledProcessError(
+                1, "pipeline", f"built by {stamped!r}, not {release.version}"
+            )
         built[target] = root
     commits = {_answer_commit(root) for root in built.values()}
     if len(commits) != 1 or "" in commits:
@@ -680,44 +744,88 @@ def _differences(built: Path, committed: Path) -> list[str]:
     return sorted(differing)
 
 
+USAGE = "usage: generate.py [--check | --release <tag> [--out <dir>]]"
+
+
+def _check(tmp: Path, release: Build) -> list[str]:
+    """Build `release` in `tmp` and name each file that differs from what is
+    committed, `inputs.json` included; print the interpreter and git beside the
+    recorded ones when any does."""
+    built, shas, answer_commit = build(tmp, release)
+    differing = []
+    for target, root in built.items():
+        fresh = tmp / "out" / target.name
+        _export(root, fresh)
+        where = target.relative_to(HERE).as_posix()
+        differing += [f"{where}/{rel}" for rel in _differences(fresh, target)]
+    if not INPUTS.is_file() or INPUTS.read_text("utf-8") != _inputs_json(shas, answer_commit):
+        differing.append(f"{INPUTS.name} (from {release.library})")
+    for rel in differing:
+        print(f"differs: {rel}")
+    if differing:
+        print(f"recorded interpreter: {_recorded(release.requirements, 'interpreter')}")
+        print(f"this build's interpreter: {_running_interpreter(tmp, release.requirements)}")
+        print(f"recorded git: {_recorded(release.requirements, 'git')}")
+        print(f"this build's git: {_running_git()}")
+    else:
+        print(f"{release.name}store/ and {release.name}no-index/ reproduce from {release.library}")
+    return differing
+
+
+def _write_release(tmp: Path, release: Build) -> int:
+    """Build `release` and write its two stores. A frozen release writes no
+    `inputs.json`: its inputs are the main store's, so it refuses unless its clones
+    and answer commit are the ones recorded there."""
+    built, shas, answer_commit = build(tmp, release)
+    recorded = _inputs_json(shas, answer_commit)
+    if release is not MAIN and (not INPUTS.is_file() or INPUTS.read_text("utf-8") != recorded):
+        print(f"generation failed, nothing written: {INPUTS.name} differs", file=sys.stderr)
+        return 1
+    for target, root in built.items():
+        _export(root, target)
+    if release is MAIN:
+        INPUTS.write_text(recorded, encoding="utf-8")
+    for target in built:
+        print(f"wrote {target} from {release.library}")
+    return 0
+
+
+def _release(argv: list[str]) -> Build | None:
+    """The release `--release <tag> [--out <dir>]` names, or None if it is not one
+    of `RELEASES` or the arguments are not that shape."""
+    if len(argv) not in (2, 4) or argv[0] != "--release":
+        return None
+    if len(argv) == 4 and argv[2] != "--out":
+        return None
+    version = argv[1].removeprefix("v")
+    if version not in RELEASES:
+        return None
+    return frozen(version, Path(argv[3]).resolve() if len(argv) == 4 else None)
+
+
 def main(argv: list[str]) -> int:
     check = argv == ["--check"]
-    if argv and not check:
-        print("usage: generate.py [--check]", file=sys.stderr)
+    release = MAIN if not argv else _release(argv)
+    if not check and release is None:
+        print(USAGE, file=sys.stderr)
+        print(f"frozen releases: {', '.join(RELEASES)}", file=sys.stderr)
+        return 2
+    if release is not None and not release.requirements.is_file():
+        print(f"no frozen requirements at {release.requirements}", file=sys.stderr)
         return 2
     with tempfile.TemporaryDirectory() as name:
         tmp = Path(name).resolve()
         try:
-            built, shas, answer_commit = build(tmp)
+            if not check:
+                assert release is not None
+                return _write_release(tmp, release)
+            differing = []
+            for index, each in enumerate([MAIN, *(frozen(version) for version in RELEASES)]):
+                differing += _check(tmp / str(index), each)
         except subprocess.CalledProcessError as failed:
             print(f"generation failed, nothing written: {failed}", file=sys.stderr)
             return 1
-        if check:
-            differing = []
-            for target, root in built.items():
-                fresh = tmp / "out" / target.name
-                _export(root, fresh)
-                differing += [f"{target.name}/{rel}" for rel in _differences(fresh, target)]
-            if not INPUTS.is_file() or INPUTS.read_text("utf-8") != _inputs_json(
-                shas, answer_commit
-            ):
-                differing.append(INPUTS.name)
-            for rel in differing:
-                print(f"differs: {rel}")
-            if differing:
-                print(f"recorded interpreter: {_recorded('interpreter')}")
-                print(f"this build's interpreter: {_running_interpreter(tmp)}")
-                print(f"recorded git: {_recorded('git')}")
-                print(f"this build's git: {_running_git()}")
-                return 1
-            print(f"store/ and no-index/ reproduce from {LIBRARY}")
-            return 0
-        for target, root in built.items():
-            _export(root, target)
-        INPUTS.write_text(_inputs_json(shas, answer_commit), encoding="utf-8")
-    for target in built:
-        print(f"wrote {target.relative_to(HERE.parent.parent)} from {LIBRARY}")
-    return 0
+    return 1 if differing else 0
 
 
 if __name__ == "__main__":

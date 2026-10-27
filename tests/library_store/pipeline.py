@@ -23,12 +23,22 @@ status and body `tracker_responses.json` gives it, and
 from `github_responses.json` and reads a fixed clock. A request either file does
 not hold raises, so a stage cannot read an unexpected one as "nothing".
 
-`--no-index` skips the `index` stage and nothing else.
+`--no-index` skips the `index` stage. A step that runs a stage the installed
+release does not have - an older frozen release, as `generate.py --release`
+builds - is skipped too: which stages a release has is read from its own
+`knowledgestore.cli.STAGES`, never assumed. v0.18.3 has no `json-schema` and no
+`minimum-standard*`; every other step here exists from v0.18.3 on. On the main
+pin, `generate.VERSION`, nothing is skipped: a missing stage there refuses.
+
+One release is given its clock another way: v0.19.0's `minimum-standard-settings`
+has no `now=` seam, so for that release only the stage module's `datetime` is
+rebound to a fixed clock for the one call (`REBOUND_CLOCK`).
 
 Exits 0 only when every layer in `EXPECTED` (and `EXPECTED_EXTRA`) is present
-in the manifest - `index` absent under `--no-index` - and every node in the
-committed graph carries a community; otherwise names what is wrong and exits 1,
-so `generate.py` commits nothing.
+in the manifest - `index` absent under `--no-index`, and a layer whose stage the
+release lacks (`LAYER_STAGES`) not required - and every node in the committed
+graph carries a community; otherwise names what is wrong and exits 1, so
+`generate.py` commits nothing.
 """
 
 from __future__ import annotations
@@ -40,6 +50,10 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+
+# The main store's pin. This file runs as a script from its own directory, so
+# `generate` is its sibling module (standard library only).
+from generate import VERSION as MAIN_VERSION
 
 ORG = "example-org"
 STORE_ID = "library-contract-store"
@@ -77,15 +91,19 @@ EXPECTED = (
 # The store's own layers, from `config/store-extra-layers.json`.
 EXPECTED_EXTRA = ("answers", "ownership_notes")
 INDEX = "index"
+# The layers a release can only have when it has the stage that writes them.
+LAYER_STAGES = {"minimum_standard": "minimum-standard"}
 
 # Hand-written community labels: the community holding each anchor node gets
 # the label; every other community is "Other <n>". Node ids are graphify's
 # scheme (path segments and symbol, lower-cased) behind `merge-graphs`' repository
-# prefix, and the json-schema stage's `jsonschema:<file>#<pointer>`.
+# prefix, and the json-schema stage's `jsonschema:<file>#<pointer>`. The third
+# field is the stage the anchor node needs, or None: a release without
+# `json-schema` has no schema node to label.
 ANCHORS = (
-    ("alpha-lib::src_refund_refund", "Refunds"),
-    ("beta-app::src_pay_paymentservice", "Payments"),
-    ("alpha-lib::jsonschema:schemas/refund.schema.json#", "Refund schema"),
+    ("alpha-lib::src_refund_refund", "Refunds", None),
+    ("beta-app::src_pay_paymentservice", "Payments", None),
+    ("alpha-lib::jsonschema:schemas/refund.schema.json#", "Refund schema", "json-schema"),
 )
 
 # Clones with no code for graphify to extract: deployment values only.
@@ -139,12 +157,27 @@ sys.exit(fetch_tickets.main([], opener=opener, sleep=lambda seconds: None, today
 # The clock: the stage stamps `read_at` from its `now=` seam, and the stamp is
 # copied into every minimum-standard file and the manifest's digests, so the
 # seam is given a fixed instant and every run writes the same bytes.
+#
+# v0.19.0, a frozen release, has no `now=` seam: it stamps with the module's
+# `datetime.now()`. For that release only (`REBOUND_CLOCK`), and for this one
+# call, the module's `datetime` is rebound to one whose `now()` is fixed, and
+# restored afterwards. Any other release without the seam refuses, so the
+# rebinding cannot spread to one nobody chose.
+REBOUND_CLOCK = ("0.19.0",)
 MINIMUM_STANDARD_SETTINGS = """\
-import json, subprocess, sys
+import inspect, json, subprocess, sys
 from datetime import datetime, timezone
-from knowledgestore import build_minimum_standard_settings
+from knowledgestore import __version__, build_minimum_standard_settings
 
 READ_AT = datetime(2026, 10, 20, tzinfo=timezone.utc)
+REBOUND_CLOCK = json.loads(sys.argv[2])
+
+
+class FixedClock(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return READ_AT.astimezone(tz) if tz is not None else READ_AT
+
 
 responses = json.loads(open(sys.argv[1], encoding="utf-8").read())
 
@@ -159,7 +192,19 @@ def runner(arguments):
     return json.dumps(answer["body"]) if answer["status"] == 200 else ""
 
 
-sys.exit(build_minimum_standard_settings.main(runner=runner, now=lambda: READ_AT))
+main = build_minimum_standard_settings.main
+seam = "now" in inspect.signature(main).parameters
+if seam == (__version__ in REBOUND_CLOCK):
+    raise SystemExit(f"{__version__}: now= seam {seam}, rebound clock releases {REBOUND_CLOCK}")
+if seam:
+    sys.exit(main(runner=runner, now=lambda: READ_AT))
+original = build_minimum_standard_settings.datetime
+build_minimum_standard_settings.datetime = FixedClock
+try:
+    status = main(runner=runner)
+finally:
+    build_minimum_standard_settings.datetime = original
+sys.exit(status)
 """
 
 # The agent-authored summaries `generate.py` writes, keyed by anchor node id;
@@ -237,6 +282,21 @@ def _run(
     subprocess.run(command, cwd=cwd or root, env=env, check=True)
 
 
+# The library stage each step runs, for a step not made by `stage`; a step in
+# neither runs graphify or this file's own code, never a library stage.
+NEEDS: dict[Callable[[Path], None], str] = {}
+
+
+def needs(name: str) -> Callable[[Callable[[Path], None]], Callable[[Path], None]]:
+    """Mark a step as running the library stage `name`."""
+
+    def mark(step: Callable[[Path], None]) -> Callable[[Path], None]:
+        NEEDS[step] = name
+        return step
+
+    return mark
+
+
 def stage(*arguments: str) -> Callable[[Path], None]:
     """A library stage, as `knowledgestore <arguments>` at the store root."""
 
@@ -244,7 +304,29 @@ def stage(*arguments: str) -> Callable[[Path], None]:
         _run(root, [sys.executable, "-m", "knowledgestore", *arguments])
 
     run.__name__ = arguments[0]
+    NEEDS[run] = arguments[0]
     return run
+
+
+def release_stages(root: Path) -> tuple[str, frozenset[str]]:
+    """The installed release's version and the stages it has: its own
+    `cli.STAGES`, read in a process with the stages' environment, since
+    `knowledgestore.config` reads its settings at import."""
+    script = (
+        "import json; from knowledgestore import __version__; "
+        "from knowledgestore.cli import STAGES; "
+        "print(json.dumps([__version__, sorted(STAGES)]))"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=root,
+        env=_environment(root),
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+    version, stages = json.loads(done.stdout)
+    return version, frozenset(stages)
 
 
 def _clones(root: Path) -> list[str]:
@@ -294,17 +376,22 @@ def detect(root: Path) -> None:
         )
 
 
+@needs("fetch-tickets")
 def fetch_tickets(root: Path) -> None:
     """The real `fetch-tickets`, through its `opener=` seam."""
     script = [sys.executable, "-c", FETCH_TICKETS, str(TRACKER_RESPONSES), TRACKER_TODAY]
     _run(root, script, extra=TRACKER_SETTINGS)
 
 
+@needs("minimum-standard-settings")
 def minimum_standard_settings(root: Path) -> None:
-    """The real `minimum-standard-settings`, through its `runner` and `now` seams."""
-    _run(root, [sys.executable, "-c", MINIMUM_STANDARD_SETTINGS, str(GITHUB_RESPONSES)])
+    """The real `minimum-standard-settings`, through its `runner` and `now` seams
+    (v0.19.0: its `runner` seam and the rebound clock)."""
+    rebound = json.dumps(REBOUND_CLOCK)
+    _run(root, [sys.executable, "-c", MINIMUM_STANDARD_SETTINGS, str(GITHUB_RESPONSES), rebound])
 
 
+@needs("json-schema")
 def json_schema(root: Path) -> None:
     unresolved = root.parent / "unresolved.json"
     _run(
@@ -366,11 +453,14 @@ def _community(nodes: list[dict], node_id: str) -> int:
     return found[0]
 
 
-def labels(root: Path) -> None:
-    """The authored community labels, keyed by the community holding each anchor."""
+def labels(root: Path, stages: frozenset[str]) -> None:
+    """The authored community labels, keyed by the community holding each anchor
+    whose stage the release has. `main` passes the release's stages."""
     nodes = _clustered(json.loads((root / GRAPH).read_text("utf-8"))["nodes"])
     named: dict[int, str] = {}
-    for node_id, text in ANCHORS:
+    for node_id, text, needed in ANCHORS:
+        if needed is not None and needed not in stages:
+            continue
         community = _community(nodes, node_id)
         if community in named:
             raise Refused(f"anchors {named[community]!r} and {text!r} share a community")
@@ -380,6 +470,7 @@ def labels(root: Path) -> None:
     (root / LABELS).write_text(json.dumps(body, indent=1) + "\n", encoding="utf-8")
 
 
+@needs("summaries")
 def summaries_merge(root: Path) -> None:
     """The authored summaries, keyed by the community holding each anchor, merged
     by the library's `summaries merge` as an authoring agent's `out` file is."""
@@ -397,6 +488,7 @@ def summaries_merge(root: Path) -> None:
     _run(root, [sys.executable, "-m", "knowledgestore", "summaries", "merge", str(out)])
 
 
+@needs("answers-layer")
 def answers_layer(root: Path) -> None:
     """The store's own repository, then `answers-layer`, which dates each answer by
     its `date:` or else its last commit. Only the answer with no `date:` is
@@ -420,13 +512,18 @@ def answers_layer(root: Path) -> None:
     )
 
 
-def verify(root: Path, index: bool = True) -> None:
+def verify(root: Path, stages: frozenset[str], index: bool = True) -> None:
     """Refuse a store missing an expected layer or a community on any node, or,
-    built without its index, one that has an index."""
+    built without its index, one that has an index. A layer whose stage the
+    release lacks is not expected."""
     manifest = json.loads((root / MANIFEST).read_text("utf-8"))
     layers = manifest.get("layers", {})
     extra = manifest.get("extra_layers", {})
-    wanted = [name for name in EXPECTED if index or name != INDEX]
+    wanted = [
+        name
+        for name in EXPECTED
+        if (index or name != INDEX) and (name not in LAYER_STAGES or LAYER_STAGES[name] in stages)
+    ]
     missing = [name for name in wanted if not layers.get(name, {}).get("present")]
     missing += [name for name in EXPECTED_EXTRA if not extra.get(name, {}).get("present")]
     if missing:
@@ -442,7 +539,8 @@ def verify(root: Path, index: bool = True) -> None:
 INDEX_STEP = stage("index")
 
 # In order. Later layers go in before `manifest`.
-STEPS: list[Callable[[Path], None]] = [
+# Every step takes the store root; `labels` alone also takes the release's stages.
+STEPS: list[Callable[..., None]] = [
     stage("sync"),
     stage("export-history"),
     stage("context"),
@@ -491,12 +589,24 @@ def main(argv: list[str]) -> int:
     root = Path(argv[0]).resolve()
     index = argv[1:] != ["--no-index"]
     try:
+        version, stages = release_stages(root)
         for step in STEPS:
             if step is INDEX_STEP and not index:
                 print("$ (skipped: --no-index) knowledgestore index", flush=True)
                 continue
-            step(root)
-        verify(root, index)
+            needed = NEEDS.get(step)
+            if needed is not None and needed not in stages:
+                # Skipping is for frozen older releases only: on the main pin, a
+                # missing stage is a rename or removal to act on, not to skip.
+                if version == MAIN_VERSION:
+                    raise Refused(f"{version} is the main pin and has no stage {needed}")
+                print(f"$ (skipped: this release has no stage {needed})", flush=True)
+                continue
+            if step is labels:
+                labels(root, stages)
+            else:
+                step(root)
+        verify(root, stages, index)
     except Refused as refused:
         print(f"pipeline refused: {refused}", file=sys.stderr)
         return 1
