@@ -9,8 +9,9 @@ The library is not a dependency of this repository: it is not on PyPI, its
 internal feed needs credentials CI does not hold, and installing it from git
 means building it, which CI's `uv sync --no-build` refuses on purpose. So its
 output is committed, and this script is how that output was made. It needs `uv`
-and `git` on PATH, and network access the first time, to build the frozen
-environment `requirements.txt` names.
+and `git` on PATH, and network access: the first run builds the frozen
+environment `requirements.txt` names, and every run, `--check` included,
+downloads the embedding model (about 90 MB) into the build's own cache.
 
 This script writes the inputs - four git repositories, their bare remotes, the
 store's `config/`, one extra layer, and what an agent authors in a real build

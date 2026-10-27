@@ -212,6 +212,12 @@ def _environment(root: Path) -> dict[str, str]:
     home too; its default is the system temp dir, shared across builds."""
     inherited = {name: value for name, value in os.environ.items() if not name.startswith("KSB_")}
     return {
+        # How fastembed's model is fetched, never what it is: the same files land
+        # either way, so these never reach the stored bytes. hf-xet has stalled a
+        # download outright, and the default 10-second read timeout fails a slow
+        # one. Defaults only: a value the caller exports wins.
+        "HF_HUB_DISABLE_XET": "1",
+        "HF_HUB_DOWNLOAD_TIMEOUT": "60",
         **inherited,
         **_home(root),
         "FASTEMBED_CACHE_PATH": str(root.parent / "home" / ".cache" / "fastembed"),

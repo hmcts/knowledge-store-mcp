@@ -430,7 +430,9 @@ class GraphContract(harness.Contract):
         """Catches: the `packages` stage's `provided_by` edge not read, or read the
         wrong way round, so the `@example/alpha-lib` package node does not lead out
         to the `package.json` that declares it; or an anchor on a JSON Schema node,
-        which v0.19.1 (#510) never writes, read as the provider."""
+        which v0.19.1 (#510) never writes, read as the provider. On these inputs
+        v0.19.0's rule picks the same node, so this pins the server's read of the
+        edge and its target, not the library's #510 change."""
         found = tools_graph.neighbours(self.session, PACKAGE["id"], relation="provided_by")
         self.assertEqual(self._without_community(found["node"]), PACKAGE)
         self.assertEqual(
