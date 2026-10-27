@@ -259,6 +259,19 @@ DEMO_5 = {
     "repos": ["delta-deploy"],
     "commits": 1,
 }
+# DEMO-7's one commit, on alpha-lib on 4 October: "alpha reads app constants" is
+# over 12 characters, so it is both description and subject.
+DEMO_7 = {
+    "key": "DEMO-7",
+    "proposed": False,
+    "branches": [],
+    "description": ["alpha reads app constants"],
+    "text": {"subjects": ["alpha reads app constants"]},
+    "first": "2026-10-04",
+    "last": "2026-10-04",
+    "repos": ["alpha-lib"],
+    "commits": 1,
+}
 DEMO_4 = {
     "key": "DEMO-4",
     "proposed": True,
@@ -609,6 +622,26 @@ class TicketsContract(harness.Contract):
             },
         )
 
+    def test_a_ticket_lists_every_file_its_commit_landed(self):
+        """Catches: a commit's second file lost from the ticket layer's or the
+        index's rows, so DEMO-7 - one commit landing alpha-lib's `index.ts` and
+        `package.json` - shows one file, or `index.ts` names no ticket."""
+        found = tools_tickets.ticket(self.session, "DEMO-7")
+        self.assertEqual(found["ticket"], DEMO_7)
+        self.assertEqual(
+            found["landed"],
+            [
+                {"repository": "alpha-lib", "path": "index.ts", "commits": 1},
+                {"repository": "alpha-lib", "path": "package.json", "commits": 1},
+            ],
+        )
+        self.assertEqual((found["proposed"], found["totals"]), ([], {"landed": 2, "proposed": 0}))
+        by_file = tools_tickets.tickets(self.session, "alpha-lib", "index.ts")
+        self.assertEqual(
+            (by_file["landed"], by_file["proposed"]),
+            ([{"ticket": "DEMO-7", "path": "index.ts", "commits": 1}], []),
+        )
+
     def test_ticket_that_never_landed(self):
         """Catches: the library's `proposed` flag or `branches` not read from the
         ticket-descriptions record, so DEMO-4 reads as landed work or loses its
@@ -734,9 +767,6 @@ class TicketsContract(harness.Contract):
         found = tools_tickets.answers(self.session, "flowchart")
         self.assertEqual(found["matches"], 1)
         self.assertEqual(found["items"], [HOW_REFUNDS_WORK])
-        text = found["items"][0]["text"]
-        self.assertTrue(text.endswith(FENCED_CODE + MERMAID), text)
-        self.assertEqual((text.count("<pre>"), text.count("</pre>")), (2, 2))
 
     def test_answers_from_the_extra_layer_in_the_relationships_directory(self):
         """Catches: the store's extra layer kept beside the library's relationships

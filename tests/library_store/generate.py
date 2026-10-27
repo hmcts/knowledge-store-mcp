@@ -536,11 +536,12 @@ def _commit(repo: Path, subject: str, date: str, files: dict[str, str]) -> None:
     _git(repo, "commit", "-q", "-m", subject, env=dated)
 
 
-def _sources(tmp: Path) -> dict[str, str]:
-    """Each repository, the estate's and `RETIRED`, built in `sources/`, pushed
-    bare to `remotes/`. Returns each estate repository's `main` sha."""
+def _sources(tmp: Path, retired: bool = False) -> dict[str, str]:
+    """Each estate repository, and with `retired` each of `RETIRED`, built in
+    `sources/`, pushed bare to `remotes/`. Returns each estate repository's
+    `main` sha."""
     shas = {}
-    for name, commits in {**COMMITS, **RETIRED}.items():
+    for name, commits in {**COMMITS, **(RETIRED if retired else {})}.items():
         repo = tmp / "sources" / name
         repo.mkdir(parents=True)
         _git(repo, "init", "-q", "-b", "main")
@@ -621,6 +622,8 @@ class Build:
     no_index: Path
     flags: tuple[str, ...] = ()
     gitignore: str = ""
+    # Whether `RETIRED`'s repositories are built for `pipeline.py --retire`.
+    retired: bool = False
 
     @property
     def library(self) -> str:
@@ -646,6 +649,7 @@ PARTIAL = Build(
         "history",
     ),
     gitignore=PARTIAL_GITIGNORE,
+    retired=True,
 )
 
 
@@ -760,7 +764,7 @@ def build(tmp: Path, release: Build) -> tuple[dict[Path, Path], dict[str, str], 
     root by the directory it is committed to, each clone's `main` sha, and the
     store's own commit of the answer dated by its commit, which both runs make
     identically. Refuses a store whose manifest names another release."""
-    shas = _sources(tmp)
+    shas = _sources(tmp, release.retired)
     built = {}
     for target, parent, flags in (
         (release.store, tmp / "full", release.flags),
