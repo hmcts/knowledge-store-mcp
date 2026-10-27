@@ -1,17 +1,17 @@
 """The contract with the library: `minimum_standard` over the layer
-knowledge-store-builder v0.19.0 wrote, read with the query index and without it.
+knowledge-store-builder v0.19.1 wrote, read with the query index and without it.
 
 Every expected record is derived by hand, before the store is read, from what
-`library_store/generate.py` writes and from v0.19.0's `build_minimum_standard.py`
+`library_store/generate.py` writes and from v0.19.1's `build_minimum_standard.py`
 (which item each point holds, and each reason's text) and
 `build_minimum_standard_settings.py` (what the snapshot records):
 
 - The snapshot is `github_responses.json`'s answers, read at 2026-10-20 (the
-  clock `pipeline.py` fixes). alpha-lib, beta-app and eta-portal are not
-  archived, on `main`, with secret scanning and Dependabot alerts on;
-  alpha-lib's and eta-portal's `main` is protected and beta-app's is not.
-  Every call for delta-deploy is 404, so each of its five settings is unread
-  (`null`). `example-org/.github` is private, so the
+  clock `pipeline.py` passes to the stage's `now=` seam). alpha-lib, beta-app
+  and eta-portal are not archived, on `main`, with secret scanning and
+  Dependabot alerts on; alpha-lib's and eta-portal's `main` is protected and
+  beta-app's is not. Every call for delta-deploy is 404, so each of its five
+  settings is unread (`null`). `example-org/.github` is private, so the
   organisation supplies no default security policy.
 - `owner`: the first CODEOWNERS found; beta-app's `* @example-org/payments-team`
   names a root owner. `security_contact`: the first SECURITY.md found; beta-app's
@@ -22,7 +22,9 @@ Every expected record is derived by hand, before the store is read, from what
   is clean and the point `not_determinable`. delta-deploy's `password:` setting
   is a `key-name` finding (line 1 of `config/application.yml`); its empty
   `deploy/signing.pem` is a `key-file` finding with no line, a value shape, so
-  the point is `absent`.
+  the point is `absent`. v0.19.1 (#511) reads a `.pem` for its `-----BEGIN`
+  labels; an empty one has none, and a `.pem` or `.key` with no boundary stays a
+  key file (`is_key_file`), so the finding is unchanged.
 - `hygiene` holds six items in this order: `branch_protection`,
   `code_scanning_workflow`, `dependency_updates`, `secret_scanning_setting`,
   `secret_scanning_workflow`, `vulnerability_alerts`. No clone has a
@@ -281,7 +283,7 @@ def hygiene_item(record: dict, item: str) -> dict:
 
 class MinimumStandardContract(harness.Contract):
     def test_the_whole_layer_is_each_repository_s_record(self):
-        """Catches: a v0.19.0 record misread - a renamed hygiene item, a setting
+        """Catches: a v0.19.1 record misread - a renamed hygiene item, a setting
         citation, a key-file finding with no line, the organisation-default
         citation or the last-commit citation dropped by the evidence filter - or a
         repository missing from the whole-layer answer, or the summary's notes
@@ -310,7 +312,7 @@ class MinimumStandardContract(harness.Contract):
         self.assertEqual(found["items"], [ALPHA, BETA])
 
     def test_an_unprotected_branch_is_cited_under_hygiene_and_keeps_it_from_present(self):
-        """Catches: the v0.19.0 item `branch_protection` not read under `hygiene`,
+        """Catches: the v0.19.1 item `branch_protection` not read under `hygiene`,
         or beta-app's unprotected `main` served as anything but `absent`, so the
         point reads as met; and the CodeQL workflow beta-app holds not cited as
         its `code_scanning_workflow`."""
@@ -335,7 +337,7 @@ class MinimumStandardContract(harness.Contract):
         """Catches: the key-file finding, which has no line, dropped as malformed or
         given a line, so delta-deploy's point is no longer `absent`; the key-name
         finding lost; or a library release that starts recording the setting's
-        value, `fixture-not-a-secret`, so it reaches the answer. (v0.19.0 writes
+        value, `fixture-not-a-secret`, so it reaches the answer. (v0.19.1 writes
         no value for the server to filter; that filter is pinned against the
         synthetic fixture in `test_tools_minimum_standard`.)"""
         found = tools_minimum_standard.minimum_standard(self.session, repos=["delta-deploy"])
@@ -362,7 +364,7 @@ class MinimumStandardContract(harness.Contract):
         self.assertEqual(record["points"]["unmaintained"], DELTA["points"]["unmaintained"])
 
     def test_a_live_repository_is_not_judged_unmaintained_and_cites_its_last_commit(self):
-        """Catches: v0.19.0's `unmaintained` - `not_determinable` for a repository
+        """Catches: v0.19.1's `unmaintained` - `not_determinable` for a repository
         that is not archived - served as present or absent, or its last-commit
         citation (commit and date) dropped."""
         found = tools_minimum_standard.minimum_standard(self.session, repos=["alpha-lib"])

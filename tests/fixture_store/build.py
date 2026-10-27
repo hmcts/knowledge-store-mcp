@@ -512,7 +512,7 @@ FAQ_DATA = {
 
 # --- The minimum-standard layer -----------------------------------------------------
 #
-# Transcribed from knowledge-store-builder v0.19.0's own writers: `build_minimum_standard.
+# Transcribed from knowledge-store-builder v0.19.1's own writers: `build_minimum_standard.
 # evidence_for` run over three synthetic clones, reading a settings snapshot made by
 # `build_minimum_standard_settings`, by the script DESIGN.md 11 names. Only the stamp
 # is left out of each record and the snapshot; `build` writes it, so a variant can

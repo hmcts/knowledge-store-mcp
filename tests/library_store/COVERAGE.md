@@ -1,7 +1,7 @@
 # What the library contract tests cover
 
 For every tool in `server.TOOLS`, every argument of every tool, and every layer
-field the server reads from a store knowledge-store-builder v0.19.0 wrote: the
+field the server reads from a store knowledge-store-builder v0.19.1 wrote: the
 test that fails if that read breaks. Each row is a claim you can check. Break
 the read it names and the cited test goes red.
 
@@ -93,7 +93,7 @@ schema's `allOf` were added for the paging, depth, cycle and `extends` rows.
 | Layer field | Library contract test | Note |
 |---|---|---|
 | manifest `library_version`, `format` | `test_library_generation.LibraryGenerationTest.test_manifest_is_the_pinned_release_and_format`, `test_library_graph.GraphWithIndex.test_store_info_reports_the_library_store` | |
-| manifest `layers.*.present`, every v0.19.0 layer (includes `semantic`, `explorer`, `context`, `content_files`, `history`, `repository_manifest`, `deployments`, which the server reads for presence only) | `test_library_generation.LibraryGenerationTest.test_every_library_layer_is_present`, `test_library_graph.GraphWithIndex.test_store_info_reports_the_library_store` | |
+| manifest `layers.*.present`, every v0.19.1 layer (includes `semantic`, `explorer`, `context`, `content_files`, `history`, `repository_manifest`, `deployments`, which the server reads for presence only) | `test_library_generation.LibraryGenerationTest.test_every_library_layer_is_present`, `test_library_graph.GraphWithIndex.test_store_info_reports_the_library_store` | |
 | manifest `sources_as_of` (`stale_days`, the date of summaries, briefs and dives) | `test_library_graph.GraphWithIndex.test_store_info_reports_the_library_store`, `test_library_graph.GraphWithIndex.test_community_has_its_label_members_and_summary`, `test_library_tickets.TicketsWithIndex.test_answers_from_every_library_answer_layer` | |
 | manifest flags `graph.source_urls`, `intent.reach`, `deployments.present` | `test_library_graph.GraphWithIndex.test_store_info_reports_the_library_store`, `test_library_tickets.TicketsWithIndex.test_tickets_for_a_file_list_the_landed_ticket` | |
 | manifest extra layers (`answers`, `ownership_notes`) | `test_library_graph.GraphWithIndex.test_store_info_reports_the_library_store`, `test_library_store.RelationshipsWithIndex.test_an_extra_layer_in_the_layer_directory_is_read_as_its_own_layer` | |
@@ -108,7 +108,8 @@ schema's `allOf` were added for the paging, depth, cycle and `extends` rows.
 | index label FTS / graph label search, ranking by bm25 then id | `test_library_graph.GraphWithIndex.test_search_limit_keeps_the_best_ranked_and_counts_every_match` | |
 | edges: relation and direction (graphify `calls`) | `test_library_graph.GraphWithIndex.test_neighbours_follow_a_calls_edge`, `test_library_graph.GraphWithIndex.test_neighbours_at_depth_two_reach_the_schema_s_other_parts` | |
 | json-schema `contains` and `references` edges | `test_library_graph.GraphWithIndex.test_a_schema_contains_its_definition_and_fields` | |
-| json-schema `extends` edges | `test_library_graph.GraphWithIndex.test_a_definition_extends_the_definition_its_all_of_names` | `credit`'s `allOf` names `money`, so v0.19.0 writes `credit` -> `money` as `extends` |
+| json-schema `extends` edges | `test_library_graph.GraphWithIndex.test_a_definition_extends_the_definition_its_all_of_names` | `credit`'s `allOf` names `money`, so v0.19.1 writes `credit` -> `money` as `extends` |
+| `packages` `provided_by` edge: package node -> provider's `package.json` node | `test_library_graph.GraphWithIndex.test_a_package_is_provided_by_its_manifest` | v0.19.1 (#510) anchors it on the manifest's own node, never a `.json` schema node |
 | graphify's keyword nodes for a schema file removed by the json-schema stage | `test_library_graph.GraphWithIndex.test_no_graphify_keyword_node_remains_for_the_schema` | |
 | `labels` keyed by community | `test_library_graph.GraphWithIndex.test_community_has_its_label_members_and_summary`, `test_library_graph.GraphWithIndex.test_a_community_without_a_summary` | |
 | `summaries` keyed by community | `test_library_graph.GraphWithIndex.test_community_has_its_label_members_and_summary`, `test_library_graph.GraphWithIndex.test_a_community_without_a_summary` | |
@@ -123,8 +124,8 @@ schema's `allOf` were added for the paging, depth, cycle and `extends` rows.
 | `topics`, `deep_dives` (`title`, `html`, `source`; `_metadata` skipped) | `test_library_tickets.TicketsWithIndex.test_answers_from_every_library_answer_layer`, `test_library_tickets.TicketsWithIndex.test_an_answer_query_nothing_matches` | |
 | `answers` extra layer `as_of`, `commit` | `test_library_tickets.TicketsWithIndex.test_answers_from_every_library_answer_layer` | |
 | `ownership_notes` extra layer in the relationships directory | `test_library_tickets.TicketsWithIndex.test_answers_from_the_extra_layer_in_the_relationships_directory` | |
-| `minimum_standard` records: each point's state, evidence and reason; v0.19.0 hygiene items | `test_library_minimum_standard.MinimumStandardWithIndex.test_the_whole_layer_is_each_repository_s_record`, `test_library_minimum_standard.MinimumStandardWithIndex.test_an_unprotected_branch_is_cited_under_hygiene_and_keeps_it_from_present`, `test_library_minimum_standard.MinimumStandardWithIndex.test_an_unreadable_setting_is_not_determinable_and_names_the_setting`, `test_library_minimum_standard.MinimumStandardWithIndex.test_a_live_repository_is_not_judged_unmaintained_and_cites_its_last_commit` | |
-| `minimum_standard` secret findings (key file, key name; never a value) | `test_library_minimum_standard.MinimumStandardWithIndex.test_a_secret_finding_is_where_and_which_rule_never_the_value` | v0.19.0 writes no value. `test_tools_minimum_standard.EvidenceNotVerdictTest.test_a_secret_finding_is_a_rule_a_path_and_a_line_and_never_a_value` covers the filter that drops one |
+| `minimum_standard` records: each point's state, evidence and reason; v0.19.1 hygiene items | `test_library_minimum_standard.MinimumStandardWithIndex.test_the_whole_layer_is_each_repository_s_record`, `test_library_minimum_standard.MinimumStandardWithIndex.test_an_unprotected_branch_is_cited_under_hygiene_and_keeps_it_from_present`, `test_library_minimum_standard.MinimumStandardWithIndex.test_an_unreadable_setting_is_not_determinable_and_names_the_setting`, `test_library_minimum_standard.MinimumStandardWithIndex.test_a_live_repository_is_not_judged_unmaintained_and_cites_its_last_commit` | |
+| `minimum_standard` secret findings (key file, key name; never a value) | `test_library_minimum_standard.MinimumStandardWithIndex.test_a_secret_finding_is_where_and_which_rule_never_the_value` | v0.19.1 writes no value. `test_tools_minimum_standard.EvidenceNotVerdictTest.test_a_secret_finding_is_a_rule_a_path_and_a_line_and_never_a_value` covers the filter that drops one |
 | `minimum_standard` summary `products`, `notes` | `test_library_minimum_standard.MinimumStandardWithIndex.test_a_product_is_the_repositories_the_summary_declares_for_it`, `test_library_minimum_standard.MinimumStandardWithIndex.test_the_whole_layer_is_each_repository_s_record` | |
 
 ## Fixture only: cases the library does not write
@@ -133,7 +134,7 @@ The library never writes these cases, so only the synthetic fixture covers them.
 
 | Case | Fixture test | Why library output cannot produce it |
 |---|---|---|
-| a secret value inside a finding | `test_tools_minimum_standard.EvidenceNotVerdictTest.test_a_secret_finding_is_a_rule_a_path_and_a_line_and_never_a_value` | v0.19.0 records where a finding is and which rule it broke, never the value |
+| a secret value inside a finding | `test_tools_minimum_standard.EvidenceNotVerdictTest.test_a_secret_finding_is_a_rule_a_path_and_a_line_and_never_a_value` | v0.19.1 records where a finding is and which rule it broke, never the value |
 | a repository depending on itself | `test_tools_relationships.DependentsTest.test_a_repository_depending_on_itself_is_a_cycle` | the library's relationships stage treats a self-reference as a self-reference, not an edge, and places it nowhere (`relationships.py` `_Resolver`, `_check_conservation`). It never writes a repository among its own dependents. |
 | a by-repo link escaping the store | `test_tools_relationships.EscapingLinkTest.test_a_by_repo_link_outside_the_store_is_skipped_and_counted` | the library writes files, not symlinks |
 | a damaged full-text table | `test_tools_graph.DamagedIndexTest.test_a_damaged_full_text_table_falls_back_to_the_graph_and_says_why` | the library writes a sound index |

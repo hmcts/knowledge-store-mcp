@@ -9,8 +9,9 @@ The library is not a dependency of this repository: it is not on PyPI, its
 internal feed needs credentials CI does not hold, and installing it from git
 means building it, which CI's `uv sync --no-build` refuses on purpose. So its
 output is committed, and this script is how that output was made. It needs `uv`
-and `git` on PATH, and network access the first time, to build the frozen
-environment `requirements.txt` names.
+and `git` on PATH, and network access: the first run builds the frozen
+environment `requirements.txt` names, and every run, `--check` included,
+downloads the embedding model (about 90 MB) into the build's own cache.
 
 This script writes the inputs - four git repositories, their bare remotes, the
 store's `config/`, one extra layer, and what an agent authors in a real build
@@ -34,9 +35,9 @@ The pins: `VERSION` and `GRAPHIFY` here; every other package, and the
 partitioner, interpreter and git the store was made with, in `requirements.txt`.
 Move a pin, regenerate, run `--check`, then the tests.
 
-One stand-in remains: `pipeline.py` rebinds the clock that
-`minimum-standard-settings` reads, because v0.19.0 has no seam for it. It moves
-to the library's `now=` seam when v0.19.1 ships.
+No library code is replaced: `pipeline.py` stands in for the IO edges only,
+through the library's own seams, and gives `minimum-standard-settings` a fixed
+clock through its `now=` seam.
 
 CI runs the tests over the committed output and never runs this script.
 `COVERAGE.md` is the claim of what those tests cover, and
@@ -53,11 +54,11 @@ from pathlib import Path
 
 # The release the committed store came from. The tests check the manifest's
 # `library_version` against it, so the record cannot drift from the bytes.
-VERSION = "0.19.0"
+VERSION = "0.19.1"
 GRAPHIFY = "0.9.93"
 LIBRARY = f"git+https://github.com/hmcts/knowledge-store-builder@v{VERSION}"
 # The interpreter the frozen environment was compiled for.
-PYTHON = "3.13"
+PYTHON = "3.14"
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "store"

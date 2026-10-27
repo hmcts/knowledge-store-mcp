@@ -33,7 +33,7 @@ from library_store.generate import INPUTS, NO_INDEX, OUT
 NOW = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
 SHAS: dict[str, str] = json.loads(INPUTS.read_text("utf-8"))["shas"]
 
-# Every layer v0.19.0's manifest names: its 18 `LAYERS` and `deployments`. The
+# Every layer v0.19.1's manifest names: its 18 `LAYERS` and `deployments`. The
 # one test-side list: `pipeline.py` keeps its own `EXPECTED`, since it runs in
 # the frozen environment and imports nothing from here.
 LIBRARY_LAYERS = (
