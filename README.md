@@ -11,7 +11,7 @@ One server, one set of tools, wherever the question is asked. Each front door be
 
 A plural parameter is a JSON array: call `minimum_standard` with `repos: ["repo-a", "repo-b"]`, up to 100 names. A comma-separated string is still accepted, for callers on v0.2.1.
 
-Every example launches the server with `uvx` at the `v0.1.0` release tag. That route is **confirmed**, decided on 2026-10-22; the spec's [Installation](docs/superpowers/specs/2026-10-20-knowledge-store-mcp-design.md#installation) section says what it needs and why it pins a tag. Replace `<id>` with the store's `store.id`. Askers need [`uv`](https://docs.astral.sh/uv/) installed; nothing else.
+Every example launches the server with `uvx` at the `v0.1.0` release tag. That route is **confirmed**, decided on 2026-10-22; the spec's [Installation](docs/superpowers/specs/2026-10-20-knowledge-store-mcp-design.md#installation) section says what it needs and why it pins a tag. Replace `<id>` with the store's `store.id`. Askers need [`uv`](https://docs.astral.sh/uv/) installed, and Python 3.13 or later, which uv downloads itself unless it is told not to (see Troubleshooting).
 
 `--store-id` finds the asker's clone through `~/.config/knowledge-store/locations`, which holds one absolute clone path per line. The `knowledge-store` skill writes that entry on first clone; anyone else adds the line by hand.
 
@@ -166,6 +166,8 @@ Two routes are possible later.
 | `other` | no `--store-id`, `--store` or `KNOWLEDGE_STORE_PATH` was given | add `--store-id <id>` to the server's arguments, or set `KNOWLEDGE_STORE_PATH` |
 
 The server looks again on every call, so a clone registered or pulled after the client started is picked up on the next question. Reconnecting is only needed if it is not.
+
+**The tools never appear, and no error is shown.** `uvx` could not find Python 3.13 or later and could not download one: uv has `UV_PYTHON_DOWNLOADS=never` or `UV_PYTHON_PREFERENCE=only-system` set, or the machine cannot reach python-build-standalone. Claude Code shows only that the server's tools are missing. Install Python 3.13 or later, or allow uv's managed Pythons (unset those variables, and allow the network route), then reconnect the server.
 
 **The server fails to start.** Only a wrong configuration stops it, and its reason is on stderr (exit status 2): a `--store-id` that is not a valid id, two clones in the locations file with the same `store.id`, a manifest in a format major version this server does not read, or a layer that points outside the store. Fix the configuration; waiting or pulling will not help.
 
