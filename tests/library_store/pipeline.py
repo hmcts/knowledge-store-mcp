@@ -27,7 +27,8 @@ not hold raises, so a stage cannot read an unexpected one as "nothing".
 release does not have - an older frozen release, as `generate.py --release`
 builds - is skipped too: which stages a release has is read from its own
 `knowledgestore.cli.STAGES`, never assumed. v0.18.3 has no `json-schema` and no
-`minimum-standard*`; every other step here exists from v0.18.3 on.
+`minimum-standard*`; every other step here exists from v0.18.3 on. On the main
+pin, `generate.VERSION`, nothing is skipped: a missing stage there refuses.
 
 One release is given its clock another way: v0.19.0's `minimum-standard-settings`
 has no `now=` seam, so for that release only the stage module's `datetime` is
@@ -49,6 +50,10 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+
+# The main store's pin. This file runs as a script from its own directory, so
+# `generate` is its sibling module (standard library only).
+from generate import VERSION as MAIN_VERSION
 
 ORG = "example-org"
 STORE_ID = "library-contract-store"
@@ -303,11 +308,15 @@ def stage(*arguments: str) -> Callable[[Path], None]:
     return run
 
 
-def release_stages(root: Path) -> frozenset[str]:
-    """The stages the installed release has: its own `cli.STAGES`, read in a
-    process with the stages' environment, since `knowledgestore.config` reads its
-    settings at import."""
-    script = "import json; from knowledgestore.cli import STAGES; print(json.dumps(sorted(STAGES)))"
+def release_stages(root: Path) -> tuple[str, frozenset[str]]:
+    """The installed release's version and the stages it has: its own
+    `cli.STAGES`, read in a process with the stages' environment, since
+    `knowledgestore.config` reads its settings at import."""
+    script = (
+        "import json; from knowledgestore import __version__; "
+        "from knowledgestore.cli import STAGES; "
+        "print(json.dumps([__version__, sorted(STAGES)]))"
+    )
     done = subprocess.run(
         [sys.executable, "-c", script],
         cwd=root,
@@ -316,7 +325,8 @@ def release_stages(root: Path) -> frozenset[str]:
         text=True,
         stdout=subprocess.PIPE,
     )
-    return frozenset(json.loads(done.stdout))
+    version, stages = json.loads(done.stdout)
+    return version, frozenset(stages)
 
 
 def _clones(root: Path) -> list[str]:
@@ -443,10 +453,9 @@ def _community(nodes: list[dict], node_id: str) -> int:
     return found[0]
 
 
-def labels(root: Path) -> None:
+def labels(root: Path, stages: frozenset[str]) -> None:
     """The authored community labels, keyed by the community holding each anchor
-    whose stage the release has."""
-    stages = release_stages(root)
+    whose stage the release has. `main` passes the release's stages."""
     nodes = _clustered(json.loads((root / GRAPH).read_text("utf-8"))["nodes"])
     named: dict[int, str] = {}
     for node_id, text, needed in ANCHORS:
@@ -530,7 +539,8 @@ def verify(root: Path, stages: frozenset[str], index: bool = True) -> None:
 INDEX_STEP = stage("index")
 
 # In order. Later layers go in before `manifest`.
-STEPS: list[Callable[[Path], None]] = [
+# Every step takes the store root; `labels` alone also takes the release's stages.
+STEPS: list[Callable[..., None]] = [
     stage("sync"),
     stage("export-history"),
     stage("context"),
@@ -579,16 +589,23 @@ def main(argv: list[str]) -> int:
     root = Path(argv[0]).resolve()
     index = argv[1:] != ["--no-index"]
     try:
-        stages = release_stages(root)
+        version, stages = release_stages(root)
         for step in STEPS:
             if step is INDEX_STEP and not index:
                 print("$ (skipped: --no-index) knowledgestore index", flush=True)
                 continue
             needed = NEEDS.get(step)
             if needed is not None and needed not in stages:
+                # Skipping is for frozen older releases only: on the main pin, a
+                # missing stage is a rename or removal to act on, not to skip.
+                if version == MAIN_VERSION:
+                    raise Refused(f"{version} is the main pin and has no stage {needed}")
                 print(f"$ (skipped: this release has no stage {needed})", flush=True)
                 continue
-            step(root)
+            if step is labels:
+                labels(root, stages)
+            else:
+                step(root)
         verify(root, stages, index)
     except Refused as refused:
         print(f"pipeline refused: {refused}", file=sys.stderr)
