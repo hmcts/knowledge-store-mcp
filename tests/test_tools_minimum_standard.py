@@ -38,6 +38,8 @@ VERDICTS = {"pass", "passed", "passes", "score", "scores", "compliant", "verdict
 
 # DESIGN.md 11: payments-api's one secret-scan finding, a location and a rule.
 PAYMENTS_FINDING = {"line": 4, "path": "config/application.yml", "rule": "key-name"}
+# DESIGN.md 11: reporting-worker's key file, named and never opened, so it has no line.
+KEY_FILE_FINDING = {"path": "deploy/signing.pem", "rule": "key-file"}
 
 UNSTAMPED = (
     "minimum_standard layer present but format unrecognised (found none, supports 1.x); not read"
@@ -446,13 +448,17 @@ class EvidenceNotVerdictTest(MinimumStandardTestCase):
 
     def test_a_secret_finding_is_a_rule_a_path_and_a_line_and_never_a_value(self):
         """Catches: a value, a line of the file or any other field of a finding
-        passed through, so a secret reaches the answer (DESIGN.md 11)."""
+        passed through, so a secret reaches the answer (DESIGN.md 11); among them a
+        `reason`, which other points' citations keep, so a finding filtered as a
+        citation would carry the line out."""
         value = "fixture-not-a-secret"
 
         def leak(root: Path) -> None:
             def add(document: dict) -> None:
                 finding = document["points"]["no_secrets"]["evidence"][0]
-                finding.update(value=value, text=f"password: {value}", match=value)
+                finding.update(
+                    value=value, text=f"password: {value}", match=value, reason=f"password: {value}"
+                )
 
             rewrite(root, "payments-api", add)
 
@@ -462,6 +468,23 @@ class EvidenceNotVerdictTest(MinimumStandardTestCase):
         evidence = found["items"][0]["points"]["no_secrets"]["evidence"]
         self.assertEqual(evidence, [PAYMENTS_FINDING])
         self.assertNotIn(value.encode("utf-8"), results.encode(found))
+
+    def test_a_key_file_finding_has_no_line_and_its_point_is_absent(self):
+        """Catches: a finding without a `line` dropped as malformed, or given a null or
+        made-up line, or its point's `absent` lost, so a private key committed to a
+        repository is answered as nothing found (DESIGN.md 11)."""
+        found = tools_minimum_standard.minimum_standard(self.session(), repos="reporting-worker")
+        self.assertEqual(
+            found["items"][0]["points"]["no_secrets"],
+            {
+                "state": "absent",
+                "evidence": [KEY_FILE_FINDING],
+                "reason": (
+                    "pattern scan of the current tree found these; values are not "
+                    "recorded and history is not scanned"
+                ),
+            },
+        )
 
     def test_other_evidence_keeps_only_the_layers_citation_fields(self):
         """Catches: an unknown evidence field passed through from a point other than

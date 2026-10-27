@@ -16,12 +16,12 @@
   "unresolved": 0
  },
  "npm_package": {
-  "edges": 1,
+  "edges": 3,
   "origin": "builtin",
   "pins": "version specs",
-  "references": 1,
+  "references": 3,
   "skipped": {},
-  "unresolved": 0
+  "unresolved": 1
  },
  "terraform_module": {
   "edges": 0,
