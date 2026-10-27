@@ -47,7 +47,7 @@ import json
 import tempfile
 import unittest
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from mcp import Client
@@ -113,8 +113,10 @@ class Release:
     format: dict[str, int]
     layers: tuple[str, ...]
     json_schema: bool
-    # The node `provided_by` leads to from alpha-lib's package (see above).
+    # The node `provided_by` leads to from alpha-lib's package (see above), and
+    # the file graphify made it for: a file node is labelled with its file name.
     provided_by: str
+    provided_by_file: str
 
 
 # v0.18.3's `store_manifest.LAYERS`, in its order, then `deployments`.
@@ -143,6 +145,7 @@ V0_18_3 = Release(
     ),
     json_schema=False,
     provided_by=INDEX,
+    provided_by_file="index.ts",
 )
 # v0.19.0's `store_manifest.LAYERS`, in its order, then `deployments`.
 V0_19_0 = Release(
@@ -171,6 +174,7 @@ V0_19_0 = Release(
     ),
     json_schema=True,
     provided_by=INDEX,
+    provided_by_file="index.ts",
 )
 
 # DEMO-1's landed files, from `generate.COMMITS`: the same in every release.
@@ -313,9 +317,10 @@ class OlderStoreContract(Contract):
             ],
         )
         served = await self.call("node", {"id": self.RELEASE.provided_by})
+        file = self.RELEASE.provided_by_file
         self.assertEqual(
             (served["node"]["repo"], served["node"]["file"], served["node"]["label"]),
-            ("alpha-lib", "index.ts", "index.ts"),
+            ("alpha-lib", file, PurePosixPath(file).name),
         )
 
     async def test_json_schema_nodes_are_served_where_the_release_wrote_them(self):

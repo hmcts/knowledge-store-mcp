@@ -51,8 +51,12 @@ never built; their texts are `test_library_tickets`' literals, rendered from the
 same Markdown with the same `config/repositories.txt`.
 """
 
+import gzip
 import json
+import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 
 import test_library_tickets as written
 from knowledgestore_mcp import tools_graph, tools_minimum_standard, tools_tickets
@@ -60,6 +64,8 @@ from library_store import harness
 from library_store.harness import LIBRARY_LAYERS
 
 MANIFEST = "knowledge/store-manifest.json"
+GRAPH = "graphify-out/graph.json.gz"
+INDEX = "knowledge/index/store.sqlite.gz"
 
 # The layers whose stage `PARTIAL_SKIP` names, as `_layers` and `compute` write
 # them when nothing is on disk: the fields beside `present` that a reader meets.
@@ -96,6 +102,41 @@ LOCAL_ONLY = {
 
 
 class PartialContract(harness.Contract):
+    def _held(self, repo: str) -> tuple[list[str] | None, int]:
+        """What the store's own artefact holds for `repo`, read without the
+        server: with the index, its `files` rows (None when `repos` does not
+        list it) and the nodes on them; without, None and the graph's nodes
+        whose `repo` it is."""
+        if not self.INDEXED:
+            with gzip.open(self.STORE / GRAPH, "rt", encoding="utf-8") as stream:
+                nodes = json.load(stream)["nodes"]
+            return None, sum(1 for node in nodes if node.get("repo") == repo)
+        with tempfile.TemporaryDirectory() as tmp:
+            plain = Path(tmp) / "store.sqlite"
+            with gzip.open(self.STORE / INDEX, "rb") as packed:
+                plain.write_bytes(packed.read())
+            connection = sqlite3.connect(plain)
+            try:
+                listed = connection.execute(
+                    "SELECT k FROM repos WHERE name = ?", (repo,)
+                ).fetchone()
+                if listed is None:
+                    return None, 0
+                files = [
+                    path
+                    for (path,) in connection.execute(
+                        "SELECT path FROM files WHERE repo = ? ORDER BY path", listed
+                    )
+                ]
+                (nodes,) = connection.execute(
+                    "SELECT count(*) FROM nodes JOIN files ON nodes.file = files.k"
+                    " WHERE files.repo = ?",
+                    listed,
+                ).fetchone()
+            finally:
+                connection.close()
+        return files, nodes
+
     def _layers(self) -> dict[str, dict]:
         """`store_info`'s layers in this mode: each as the manifest records it."""
         layers = {name: {"present": True} for name in LIBRARY_LAYERS}
@@ -187,9 +228,13 @@ class PartialContract(harness.Contract):
         self.assertEqual(
             (tickets["proposed"], tickets["totals"]), ([], {"landed": 1, "proposed": 0})
         )
-        # No graph node: graphify never saw its clone.
-        nodes = tools_graph.search(self.session, "refunds", repo="zeta-archive")
-        self.assertEqual((nodes["matches"], nodes["items"]), (0, []))
+        # No graph node: graphify never saw its clone. The index's `repos` lists
+        # it for its ticket alone, with one file row and no node on it; the graph
+        # holds no node for it at all.
+        files = ["exports/refunds.csv"] if self.INDEXED else None
+        self.assertEqual(self._held("zeta-archive"), (files, 0))
+        # The same reads find alpha-lib's nodes, so a zero is not a blind read.
+        self.assertGreater(self._held("alpha-lib")[1], 0)
         # No provenance record: the build's own `sync` ran without it.
         provenance = tools_graph.store_info(self.session)["items"]
         self.assertNotIn("zeta-archive", [item["repository"] for item in provenance])

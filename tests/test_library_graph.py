@@ -157,6 +157,26 @@ TOTAL = {
     "url": f"{ALPHA}/{SCHEMA_FILE}#L16",
 }
 
+# alpha-lib's root index.ts: graphify's file node, the bare stem `index`,
+# labelled with the file name on line 1 (`add_node(file_nid, path.name, 1)`), and
+# its function `currency` on line 1, `index_currency`, which the file `contains`.
+INDEX_FILE = {
+    "id": "alpha-lib::index",
+    "label": "index.ts",
+    "repo": "alpha-lib",
+    "kind": "",
+    "file": "index.ts",
+    "url": f"{ALPHA}/index.ts#L1",
+}
+CURRENCY = {
+    "id": "alpha-lib::index_currency",
+    "label": "currency()",
+    "repo": "alpha-lib",
+    "kind": "",
+    "file": "index.ts",
+    "url": f"{ALPHA}/index.ts#L1",
+}
+
 # alpha-lib's package, which beta-app depends on, and the manifest that declares it.
 PACKAGE = {
     "id": "alpha-lib::pkg:@example/alpha-lib",
@@ -372,6 +392,30 @@ class GraphContract(harness.Contract):
                 "node": None,
                 "searched": self._searched(self.reader),
             },
+        )
+
+    def test_a_root_file_is_served_by_its_bare_stem(self):
+        """Catches: graphify's node for a top-level file - alpha-lib's `index.ts`,
+        id `index` with no directory part, the node older releases anchor
+        `provided_by` on - not served, or served without its file or link; or
+        its function not found by its label or not reached from the file."""
+        found = tools_graph.node(self.session, INDEX_FILE["id"])
+        self.assertEqual(self._without_community(found["node"]), INDEX_FILE)
+        search = tools_graph.search(self.session, "currency")
+        self.assertEqual([self._without_community(item) for item in search["items"]], [CURRENCY])
+        contains = tools_graph.neighbours(self.session, INDEX_FILE["id"], relation="contains")
+        self.assertEqual(
+            [
+                (item["depth"], self._without_community(item["node"]), item["via"])
+                for item in contains["items"]
+            ],
+            [
+                (
+                    1,
+                    CURRENCY,
+                    [{"from": INDEX_FILE["id"], "relation": "contains", "direction": "out"}],
+                )
+            ],
         )
 
     # --- neighbours ---------------------------------------------------------------
