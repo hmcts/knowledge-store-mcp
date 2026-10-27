@@ -63,6 +63,7 @@ on either side that breaks the product's expected behaviour fails a test here.
   `minimum_standard` layer; v0.19.0 also adds the `json-schema` stage, which
   rewrites JSON Schema nodes in the merged graph). Graphify pinned at
   **`graphifyy[terraform,sql]==0.9.93`**, the library's floor.
+  (Since moved to v0.19.1: see docs/superpowers/plans/2026-10-27-library-v0.19.1.md.)
 - Graphify 0.9.93 `update` is offline, calls no model, and is deterministic:
   two runs over the same clone gave byte-identical `graph.json`, communities
   included (spike, 2026-10-23).
@@ -186,6 +187,7 @@ against v0.19.0 (hygiene items renamed: `code_scanning_workflow`, a
 secret-scanning pair, `vulnerability_alerts`, `branch_protection`; `unmaintained`
 now `not_determinable` when not archived), and fix the server if
 `minimum_standard` no longer reads the library's records correctly.
+(Since moved to v0.19.1: see docs/superpowers/plans/2026-10-27-library-v0.19.1.md.)
 
 ## Left to the builder
 

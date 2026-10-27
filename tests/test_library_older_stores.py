@@ -1,11 +1,12 @@
 """Older stores stay readable: every tool over stores older library releases wrote.
 
-Real stores lag the library. One in use is manifest format 1.3, built before the
-`json-schema` stage and before #510, while the contract stores move with each
-release. These tests serve the frozen stores in `library_store/frozen/` - the
-same inputs as the main store, built by v0.18.3 and by v0.19.0 (`generate.py
---release`) - over the wire, in both read modes, so a server change that reads
-only the newest release's shapes, or refuses an older format, fails here.
+Real stores can lag the library by a format minor: manifest format 1.3, built
+before the `json-schema` stage and before #510, is one such, while the contract
+stores move with each release. These tests serve the frozen stores in
+`library_store/frozen/` - the same inputs as the main store, built by v0.18.3
+and by v0.19.0 (`generate.py --release`) - over the wire, in both read modes,
+so a server change that reads only the newest release's shapes, or refuses an
+older format, fails here.
 
 What each release has, derived from its own source before the store is read:
 

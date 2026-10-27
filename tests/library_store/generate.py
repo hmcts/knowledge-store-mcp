@@ -59,8 +59,10 @@ reading its own `cli.STAGES`, and gives v0.19.0, which has no `now=` seam, its
 fixed clock by rebinding the stage module's `datetime` for the one call: the one
 place library code is replaced, and only for that release. `--release` rebuilds
 one (into `--out`, by default its own directory); regenerate one only when its
-release is dropped from support or its requirements are recompiled. `--check`
-covers every one.
+requirements are recompiled or the shared inputs in this file change; when its
+release is dropped from support, remove it from `RELEASES` and delete its
+directory rather than rebuild it.
+`--check` covers every one.
 
 CI runs the tests over the committed output and never runs this script.
 `COVERAGE.md` is the claim of what those tests cover, and
@@ -857,21 +859,28 @@ def _check(tmp: Path, release: Build) -> list[str]:
     return differing
 
 
-def _write_release(tmp: Path, release: Build) -> int:
-    """Build `release` and write its two stores. Only `MAIN` writes `inputs.json`:
-    the partial and frozen stores' inputs are the main store's, so each refuses
-    unless its clones and answer commit are the ones recorded there."""
-    built, shas, answer_commit = build(tmp, release)
-    recorded = _inputs_json(shas, answer_commit)
-    if release is not MAIN and (not INPUTS.is_file() or INPUTS.read_text("utf-8") != recorded):
+def _write_releases(tmp: Path, releases: list[Build]) -> int:
+    """Build every release in `releases`, and only then write their stores, so a
+    failed build leaves nothing written. Only `MAIN` writes `inputs.json`: the
+    partial and frozen stores' inputs are the main store's, so each refuses
+    unless its clones and answer commit are the ones `MAIN` records, from this
+    run when `MAIN` is among `releases`, else from the committed file."""
+    builds = []
+    for index, release in enumerate(releases):
+        built, shas, answer_commit = build(tmp / str(index), release)
+        builds.append((release, built, _inputs_json(shas, answer_commit)))
+    main = [recorded for release, _, recorded in builds if release is MAIN]
+    expected = main[0] if main else INPUTS.read_text("utf-8") if INPUTS.is_file() else None
+    if any(release is not MAIN and recorded != expected for release, _, recorded in builds):
         print(f"generation failed, nothing written: {INPUTS.name} differs", file=sys.stderr)
         return 1
-    for target, root in built.items():
-        _export(root, target)
-    if release is MAIN:
-        INPUTS.write_text(recorded, encoding="utf-8")
-    for target in built:
-        print(f"wrote {target} from {release.library}")
+    for release, built, recorded in builds:
+        for target, root in built.items():
+            _export(root, target)
+        if release is MAIN:
+            INPUTS.write_text(recorded, encoding="utf-8")
+        for target in built:
+            print(f"wrote {target} from {release.library}")
     return 0
 
 
@@ -903,13 +912,10 @@ def main(argv: list[str]) -> int:
         try:
             if not check:
                 assert release is not None
-                if release is not MAIN:
-                    return _write_release(tmp, release)
-                # The main pin's two builds: the partial store's inputs are the
-                # main store's, so it follows the `inputs.json` MAIN writes.
-                return _write_release(tmp / "main", MAIN) or _write_release(
-                    tmp / "partial", PARTIAL
-                )
+                # The main pin's two builds, both before either is written: the
+                # partial store's inputs are the main store's, so it is held to
+                # the `inputs.json` MAIN is about to write.
+                return _write_releases(tmp, [MAIN, PARTIAL] if release is MAIN else [release])
             differing = []
             builds = [MAIN, PARTIAL, *(frozen(version) for version in RELEASES)]
             for index, each in enumerate(builds):
