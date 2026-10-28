@@ -18,6 +18,9 @@ MANIFEST = Path("knowledge") / "store-manifest.json"
 STORE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 SOURCES = ("--store", "KNOWLEDGE_STORE_PATH", "--store-id", "CLAUDE_PLUGIN_ROOT")
+# The source of a clone found through the locations file: by `--store-id`, or by a
+# switch from the plugin root to the clone registered for the same store.
+LISTED, PLUGIN_ROOT = SOURCES[2], SOURCES[3]
 
 
 @dataclass(frozen=True)
@@ -129,6 +132,16 @@ def _by_store_id(store_id: str, listing: Path) -> tuple[Path | None, list[str]]:
     if len(matches) > 1:
         raise AmbiguousStoreId(store_id, matches)
     return (matches[0] if matches else None), skipped
+
+
+def registered_clone(store_id: str, home: Path) -> Path | None:
+    """The clone the locations file lists for `store_id`, `realpath`-resolved; None
+    when none is listed, or more than one is, since neither can be picked then."""
+    try:
+        found, _ = _by_store_id(store_id, locations_file(home))
+    except AmbiguousStoreId:
+        return None
+    return found
 
 
 def resolve(args: argparse.Namespace, env: Mapping[str, str], home: Path) -> Resolved:

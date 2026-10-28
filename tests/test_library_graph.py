@@ -51,6 +51,7 @@ writes, before the store is read:
   so no test names one: each asks a node for its community and reads that.
 """
 
+import json
 import unittest
 from typing import Any
 
@@ -269,6 +270,17 @@ class GraphContract(harness.Contract):
                 "digest_mismatch": [],
                 "digest_missing": [],
                 "digest_unchecked": ["history", "minimum_standard", "relationships"],
+                # A session built here is told no source: none is claimed. The
+                # digest is the one the library wrote into this store's manifest.
+                "store_source": None,
+                "served": {
+                    "store_id": "library-contract-store",
+                    "digest": json.loads(
+                        (self.STORE / "knowledge" / "store-manifest.json").read_text("utf-8")
+                    )["digest"],
+                    "sources_as_of": SOURCES_AS_OF,
+                    "plugin_root": False,
+                },
                 "items": PROVENANCE,
                 "total": 4,
                 "page": 1,

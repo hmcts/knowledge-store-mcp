@@ -22,7 +22,7 @@ from typing import Any
 from . import digests, index, manifest
 from .digests import DigestCheck
 from .index import INDEX_ARCHIVE, Fallback, IndexHandle
-from .locate import MANIFEST, OutsideStore, contained
+from .locate import LISTED, MANIFEST, PLUGIN_ROOT, OutsideStore, contained
 from .manifest import Manifest, Refused
 
 
@@ -37,6 +37,17 @@ RELOADED = Notice("reloaded: store digest changed")
 RELOADED_ARCHIVE = Notice("reloaded: index archive changed")
 DEFERRED = Notice("reload deferred: manifest unreadable")
 ESCAPING = Notice("reload refused: a layer path leaves the store; still serving the previous store")
+SWITCHED = Notice("reloaded: now serving the registered clone")
+
+
+@dataclass(frozen=True)
+class Relocate:
+    """How a session served from the plugin root finds and opens the clone the
+    asker registered later. `registered` maps a `store.id` to the clone the
+    locations file lists for it, or None; `open` opens a store at a root."""
+
+    registered: Callable[[str], Path | None]
+    open: Callable[[Path], "Store"]
 
 
 class LayerEscapes(Refused):
@@ -180,16 +191,39 @@ class Session:
     """The current store, reloaded when the manifest digest on disk changes.
 
     A `Store` returned by `current()` stays valid until a later call reloads.
+
+    `source` is the rule that chose the store (`locate.SOURCES`). A store chosen
+    through the plugin root gives way to the clone the locations file lists for
+    the same `store.id`, once one is listed (`relocate`): the asker's setup
+    registers its clone after the server has started. No other source switches,
+    and a switch is never undone.
     """
 
-    def __init__(self, store_factory: Callable[[], Store], clock: Callable[[], datetime]):
+    def __init__(
+        self,
+        store_factory: Callable[[], Store],
+        clock: Callable[[], datetime],
+        *,
+        source: str | None = None,
+        relocate: Relocate | None = None,
+    ):
         self._factory = store_factory
         self._clock = clock
         self._store = store_factory()
         self._manifest_sha256 = _manifest_sha256(self._store.root)
         self._archive_state = self._store.archive_state
+        self.source = source
+        self._relocate = relocate
+
+    def digest(self) -> str | None:
+        """The served copy's identity, as the reload check compares it: the
+        manifest's `digest`, or the sha256 of its bytes when it carries none."""
+        return self._store.manifest.digest or self._manifest_sha256
 
     def current(self) -> tuple[Store, Notice | None]:
+        switched = self._switch()
+        if switched is not None:
+            return switched
         root = self._store.root
         try:
             on_disk = manifest.load(root)
@@ -211,6 +245,35 @@ class Session:
             # Touched, not changed: remember the new stat so it is hashed once.
             self._archive_state = state
         return self._store, None
+
+    def _switch(self) -> tuple[Store, Notice] | None:
+        """The registered clone, opened in place of the plugin root's copy, or None
+        when there is none to switch to. The locations file is read only while the
+        plugin root is served. A clone that cannot be opened is not switched to,
+        and is looked for again on the next call."""
+        if self.source != PLUGIN_ROOT or self._relocate is None:
+            return None
+        relocate, store_id = self._relocate, self._store.manifest.store_id
+        clone = relocate.registered(store_id)
+        if clone is None or clone == self._store.root:
+            return None
+        # Hash before loading, as `_reload` does.
+        manifest_sha256 = _manifest_sha256(clone)
+        try:
+            fresh = relocate.open(clone)
+        except Refused:
+            return None
+        if fresh.manifest.store_id != store_id:
+            # Rewritten since the locations file was read: not the same store.
+            fresh.close()
+            return None
+        previous, self._store = self._store, fresh
+        self._factory = lambda: relocate.open(clone)
+        self._manifest_sha256 = manifest_sha256
+        self._archive_state = fresh.archive_state
+        self.source = LISTED
+        previous.close()
+        return fresh, SWITCHED
 
     def _reload(self, notice: Notice) -> tuple[Store, Notice | None]:
         # Hash before loading: a change in between then shows as a change next call.

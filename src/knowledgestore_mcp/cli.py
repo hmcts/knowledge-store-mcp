@@ -84,11 +84,21 @@ def main(argv: list[str] | None = None) -> int:
     home = Path.home()
     cache = index.cache_home(os.environ, home)
 
-    def resolve() -> Path:
-        return locate.resolve(args, os.environ, home).root
+    def resolve() -> locate.Resolved:
+        return locate.resolve(args, os.environ, home)
+
+    def registered(store_id: str) -> Path | None:
+        return locate.registered_clone(store_id, home)
 
     try:
-        served = KnowledgeStoreServer(resolve(), cache, max_response_bytes=args.max_response_bytes)
+        found = resolve()
+        served = KnowledgeStoreServer(
+            found.root,
+            cache,
+            max_response_bytes=args.max_response_bytes,
+            source=found.source,
+            registered=registered,
+        )
     except (NotFound, NoManifest) as absent:
         # Not there yet: serve, and tell the asker on every call (see `unavailable`).
         print(
@@ -100,6 +110,7 @@ def main(argv: list[str] | None = None) -> int:
             max_response_bytes=args.max_response_bytes,
             resolve=resolve,
             explain=lambda reason: explain(reason, args, os.environ),
+            registered=registered,
         )
     except (AmbiguousStoreId, Refused) as refusal:
         print(f"knowledge-store-mcp: {refusal}", file=sys.stderr)
