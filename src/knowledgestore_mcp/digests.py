@@ -2,9 +2,11 @@
 
 The server takes a store's identity and freshness from its manifest. A manifest
 written before a layer file was rewritten or restored still claims the old
-digest, and nothing else says so. So when a store is opened, each single-file
-layer that records a digest - library layers and extra layers alike - is hashed
-the library's way and compared.
+digest, and nothing else says so. So each single-file layer that records a
+digest - library layers and extra layers alike - is hashed the library's way and
+compared. `Store.digest_check` runs this on the first `store_info` of each loaded
+store, never at open: hashing at open would slow start-up, and a reload after a
+pull runs inside whichever tool call notices it.
 
 A directory layer is not checked. Its digest is taken over the files a git clone
 of the store receives (knowledge-store-builder v0.19.1 `store_manifest._probe`),
@@ -15,6 +17,7 @@ Every field holds layer names only, never a path or file contents.
 """
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -77,9 +80,12 @@ def _recorded(entry: Any) -> str | None:
     return digest if isinstance(digest, str) and digest else None
 
 
-def check(root: Path, found: Manifest) -> DigestCheck:
+def check(root: Path, found: Manifest, known: Mapping[str, str] | None = None) -> DigestCheck:
     """Hash each declared single-file layer under `root` and compare. A file
-    that is gone, unreadable or outside the store is missing, never a mismatch."""
+    that is gone, not a file, unreadable or outside the store is missing, never a
+    mismatch. `known` maps a store-relative path to a digest already taken of it,
+    which is used rather than hashing the file again."""
+    known = known or {}
     mismatch: set[str] = set()
     missing: set[str] = set()
     unchecked: set[str] = set()
@@ -91,7 +97,7 @@ def check(root: Path, found: Manifest) -> DigestCheck:
             path = contained(root, rel)
             if not path.is_file():
                 missing.add(name)
-            elif file_digest(path) != recorded:
+            elif (known.get(rel) or file_digest(path)) != recorded:
                 mismatch.add(name)
         except (OSError, OutsideStore):
             missing.add(name)

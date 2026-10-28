@@ -21,7 +21,7 @@ from typing import Any
 
 from . import digests, index, manifest
 from .digests import DigestCheck
-from .index import Fallback, IndexHandle
+from .index import INDEX_ARCHIVE, Fallback, IndexHandle
 from .locate import MANIFEST, OutsideStore, contained
 from .manifest import Manifest, Refused
 
@@ -57,17 +57,12 @@ class Store:
         manifest: Manifest,
         index: IndexHandle | Fallback,
         archive_state: tuple[int, int] | None = None,
-        *,
-        digests: DigestCheck,
     ):
         self.root = root
         self.manifest = manifest
         self.index = index
         # The archive's (size, mtime_ns) when the index was opened.
         self.archive_state = archive_state
-        # Each layer file against its manifest digest, checked when this store was
-        # opened: a reload opens a new store, so it is checked again.
-        self.digests = digests
         self._layers: dict[str, Any] = {}
         self._memo: dict[str, Any] = {}
         self._closers: list[Callable[[], None]] = []
@@ -95,6 +90,16 @@ class Store:
             if close is not None:
                 self._closers.append(lambda: close(value))
         return self._memo[key]
+
+    def digest_check(self) -> DigestCheck:
+        """Each layer file against its manifest digest, hashed on first use and held
+        for this store: a reload builds a new store, so it is checked again. The
+        index archive's digest is taken from the open handle, which hashed the
+        archive as it read it, rather than hashed a second time."""
+        known: dict[str, str] = {}
+        if isinstance(self.index, IndexHandle) and self.index.archive_sha256:
+            known[INDEX_ARCHIVE.as_posix()] = self.index.archive_sha256[:16]
+        return self.memo("digests", lambda: digests.check(self.root, self.manifest, known))
 
     def read(self, name: str) -> Any:
         """`layer(name)` without keeping it: for a layer turned into another form at
@@ -129,7 +134,7 @@ def open_store(
     # Stat before opening: a change in between is then seen as a change next call.
     state = index.archive_state(root)
     opened = index.open_index(root, loaded, cache_home, max_bytes=max_index_bytes)
-    return Store(root, loaded, opened, state, digests=digests.check(root, loaded))
+    return Store(root, loaded, opened, state)
 
 
 def _declared_paths(found: Manifest) -> list[tuple[str, Any]]:

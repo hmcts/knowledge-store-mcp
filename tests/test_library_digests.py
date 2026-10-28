@@ -16,6 +16,7 @@ from the v0.19.1 manifest by hand: `answers` is the extra layer at
 `graphify-out/graph.json.gz`, the first of its two paths.
 """
 
+import gzip
 import hashlib
 import json
 import shutil
@@ -30,6 +31,13 @@ from library_store.harness import Contract
 
 UNCHECKED = ["history", "minimum_standard", "relationships"]
 FIELDS = ("digest_mismatch", "digest_missing", "digest_unchecked")
+# The files one check hashes, in either mode: v0.19.1's 14 present single-file
+# layers other than `index` (graph, labels, provenance, repository_manifest,
+# context, content_files, intent, ticket_descriptions, ticket_tracker, summaries,
+# topics, deep_dives, semantic, explorer) and the 2 extra layers. The index
+# archive is not hashed: with the index its digest comes from the open handle,
+# and the store without it records no index.
+ONE_PASS = 16
 
 
 class DigestContract(Contract):
@@ -120,15 +128,20 @@ class DigestContract(Contract):
                 self.assertNotIn(str(self.STORE), name, field)
 
     def test_digests_are_computed_once_per_loaded_store_and_again_on_reload(self):
-        """Catches: every `store_info` call hashing the store again, or a reload
-        keeping the answer computed for the store it replaced."""
+        """Catches: hashing at open, which slows start-up and puts a reload's
+        hashing inside another asker's call; every `store_info` call hashing the
+        store again; a reload keeping the answer computed for the store it
+        replaced; or the index archive hashed again when the open index handle
+        already holds its sha256."""
         with mock.patch.object(digests, "file_digest", wraps=digests.file_digest) as hashed:
             session = self.reopened()
-            opened = hashed.call_count
-            self.assertGreater(opened, 0)
+            self.assertEqual(hashed.call_count, 0, "hashed at open")
             tools_graph.store_info(session)
+            self.assertEqual(hashed.call_count, ONE_PASS)
             tools_graph.store_info(session)
-            self.assertEqual(hashed.call_count, opened)
+            self.assertEqual(hashed.call_count, ONE_PASS)
+            hashed_paths = [call.args[0].name for call in hashed.call_args_list]
+            self.assertNotIn("store.sqlite.gz", hashed_paths)
 
             # A pull that changes a layer file and the manifest's own digest.
             (self.STORE / "knowledge/answers.json").write_bytes(b"{}")
@@ -137,7 +150,35 @@ class DigestContract(Contract):
             document["digest"] = "0000000000000000"
             manifest.write_text(json.dumps(document), "utf-8")
             self.assertEqual(self.checked(session)["digest_mismatch"], ["answers"])
-            self.assertGreater(hashed.call_count, opened)
+            self.assertEqual(hashed.call_count, 2 * ONE_PASS)
+
+    def test_a_layer_file_replaced_by_a_directory_is_missing(self):
+        """Catches: a directory where the manifest declares a file hashed as a
+        directory, named unchecked or mismatched, or raising out of
+        `store_info`."""
+        path = self.STORE / "knowledge/topics/briefs.json"
+        path.unlink()
+        path.mkdir()
+        (path / "inside.json").write_text("{}", "utf-8")
+        self.assertEqual(
+            self.checked(self.reopened()),
+            {"digest_mismatch": [], "digest_missing": ["topics"], "digest_unchecked": UNCHECKED},
+        )
+
+    def test_a_changed_index_archive_is_named(self):
+        """Catches: the index archive's digest taken from the open handle in a
+        form other than the library's (the whole sha256, or the decompressed
+        index's), so a changed archive goes unseen or an unchanged one is named."""
+        if not self.INDEXED:
+            self.skipTest("the store without the index has no archive")
+        archive = self.STORE / "knowledge/index/store.sqlite.gz"
+        # The same index, compressed with another gzip timestamp: a valid archive
+        # the server opens, whose bytes differ from the ones the library digested.
+        archive.write_bytes(gzip.compress(gzip.decompress(archive.read_bytes()), mtime=1))
+        self.assertEqual(
+            self.checked(self.reopened()),
+            {"digest_mismatch": ["index"], "digest_missing": [], "digest_unchecked": UNCHECKED},
+        )
 
 
 DigestWithIndex, DigestWithoutIndex = harness.both_modes(DigestContract)
