@@ -42,6 +42,9 @@ builds - is skipped too: which stages a release has is read from its own
 `minimum-standard*`; every other step here exists from v0.18.3 on. On the main
 pin, `generate.VERSION`, nothing is skipped: a missing stage there refuses.
 
+After `semantic`, `record_model` adds to the semantic manifest the revision and
+file hashes of the model fastembed downloaded, which it cannot be told to pin.
+
 One release is given its clock another way: v0.19.0's `minimum-standard-settings`
 has no `now=` seam, so for that release only the stage module's `datetime` is
 rebound to a fixed clock for the one call (`REBOUND_CLOCK`).
@@ -56,6 +59,7 @@ graph carries a community; otherwise names what is wrong and exits 1, so
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import os
 import shutil
@@ -533,6 +537,50 @@ def answers_layer(root: Path) -> None:
     )
 
 
+# The semantic stage's reproducibility manifest, beside its neighbour map. It
+# names the model but not which revision of it.
+SEMANTIC_MANIFEST = Path("knowledge/semantic/manifest.json")
+# The key `record_model` adds to it.
+MODEL_FILES = "model_files"
+
+
+def _model_cache(root: Path) -> Path:
+    """`FASTEMBED_CACHE_PATH`, as `_environment` sets it."""
+    return root.parent / "home" / ".cache" / "fastembed"
+
+
+@needs("semantic")
+def record_model(root: Path) -> None:
+    """Add to the semantic manifest the model fastembed downloaded: its hub
+    repository, the revision, and each file's sha256. fastembed 0.9.1 takes no
+    `revision=` (it downloads whatever the hub serves as `main`), so the model
+    cannot be pinned, only recorded: the manifest is committed, so `generate.py
+    --check` compares the record with every other byte, and a model that moved
+    fails it by name. The one key this script writes into a library file; the
+    library's own keys keep its bytes (`io.write_json`, `indent=1`, no newline)."""
+    models = sorted(_model_cache(root).glob("models--*"))
+    if len(models) != 1:
+        raise Refused(f"expected one model in fastembed's cache, found {len(models)}")
+    model = models[0]
+    revision = (model / "refs" / "main").read_text("utf-8").strip()
+    snapshot = model / "snapshots" / revision
+    hashes = {
+        path.relative_to(snapshot).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(snapshot.rglob("*"))
+        if path.is_file()
+    }
+    if not hashes:
+        raise Refused(f"no files in fastembed's snapshot {revision}")
+    path = root / SEMANTIC_MANIFEST
+    record = json.loads(path.read_text("utf-8"))
+    record[MODEL_FILES] = {
+        "repository": model.name.removeprefix("models--").replace("--", "/"),
+        "revision": revision,
+        "sha256": hashes,
+    }
+    path.write_text(json.dumps(record, indent=1, ensure_ascii=False), encoding="utf-8")
+
+
 def verify(
     root: Path,
     stages: frozenset[str],
@@ -619,6 +667,7 @@ STEPS: list[Callable[..., None]] = [
     stage("deepdive", "merge"),
     answers_layer,
     stage("semantic"),
+    record_model,
     stage("explorer"),
     INDEX_STEP,
     stage("manifest"),

@@ -12,12 +12,14 @@
 # with networkx's Louvain; record-clustering writes the same into
 # store/graphify-out/clustering-inputs.json.
 # partitioner: louvain
-# The interpreter and platform, and the git, store/ was generated and checked
-# on; generate.py --check prints each line beside its own when the store does not
-# reproduce. git made every commit and the library's stages read them through it,
-# so how it writes a date reaches the store: 2.55's `%cI` gives UTC as `Z`.
-# interpreter: 3.14.7 darwin arm64
-# git: 2.55.0
+# The image the stores beside this file were generated and checked in
+# (tests/library_store/Dockerfile, generate.py --in-container): its base,
+# pinned by digest, and the Dockerfile's sha256, which fixes what it adds: git
+# (2.55.0, whose `%cI` gives UTC as `Z`), gzip and the interpreter with its
+# SQLite and zlib. generate.py --check prints each line beside the running
+# image's when they differ, and whenever a store does not reproduce.
+# image: ghcr.io/astral-sh/uv:0.12.17-trixie@sha256:c573e7ef44ae1b3a2faa60ceacc1f22e2bfb5f036373402bfa17b4b6d12db3e8
+# dockerfile: sha256:ba61738dd6fec054a4eb7dd1328c1d6df7e5f7f01894e887f02b810aec0418e2
 #
 anyio==4.15.1
     # via httpx

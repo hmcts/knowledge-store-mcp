@@ -1,0 +1,41 @@
+name: Contract stores
+
+# Rebuilds every committed library contract store (tests/library_store/) inside
+# the generator image (tests/library_store/Dockerfile) and fails if any byte
+# differs from what is committed. On a failure the log names each differing
+# file and prints the image the stores record beside the one that ran.
+#
+# Not a required check: it needs the network for the library's tags, the frozen
+# packages and the embedding model. It runs where drift starts, on a change to
+# the stores or their generator, and weekly, for drift from outside: the model's
+# hub revision, or a package index.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "tests/library_store/**"
+      - ".github/workflows/contract-stores.yml"
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Contract stores reproduce in the image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # The host only launches the container: generate.py needs nothing on it
+      # but Python's standard library and Docker, which the runner has.
+      - name: Rebuild every store in the image and compare
+        run: python3 tests/library_store/generate.py --check --in-container

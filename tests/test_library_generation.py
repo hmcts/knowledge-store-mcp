@@ -8,6 +8,7 @@ the generator's inputs and the frozen environment it runs in.
 """
 
 import gzip
+import hashlib
 import json
 import re
 import sqlite3
@@ -16,7 +17,15 @@ import unittest
 
 from pathlib import Path
 
-from library_store.generate import NO_INDEX, OUT, PARTIAL, REQUIREMENTS, RETIRED
+from library_store.generate import (
+    NO_INDEX,
+    OUT,
+    PARTIAL,
+    RELEASES,
+    REQUIREMENTS,
+    RETIRED,
+    frozen,
+)
 from library_store.harness import LIBRARY_LAYERS
 
 MANIFEST = "knowledge/store-manifest.json"
@@ -55,6 +64,55 @@ class LibraryGenerationTest(unittest.TestCase):
         record = json.loads((OUT / "graphify-out/clustering-inputs.json").read_text("utf-8"))
         self.assertEqual(record["partitioner"], named.group(1))
         self.assertEqual(named.group(1), "louvain")
+
+    def test_every_store_records_the_image_it_was_made_in(self):
+        """Catches: `Dockerfile` edited (its base, git, gzip or the interpreter)
+        without every store being regenerated in the new image, or one frozen
+        `requirements.txt` left naming an older image - `--check` would then hold
+        stores made in one image to another, and the record would say otherwise."""
+        dockerfile = (REQUIREMENTS.parent / "Dockerfile").read_bytes()
+        froms = [
+            line for line in dockerfile.decode("utf-8").splitlines() if line.startswith("FROM ")
+        ]
+        self.assertEqual(len(froms), 1)
+        base = froms[0].removeprefix("FROM ")
+        self.assertRegex(base, r"@sha256:[0-9a-f]{64}$")
+        wanted = [
+            f"# image: {base}",
+            f"# dockerfile: sha256:{hashlib.sha256(dockerfile).hexdigest()}",
+        ]
+        for requirements in (REQUIREMENTS, *(frozen(each).requirements for each in RELEASES)):
+            with self.subTest(requirements=requirements.parent.name):
+                lines = requirements.read_text("utf-8").splitlines()
+                recorded = [
+                    line for line in lines if line.startswith(("# image:", "# dockerfile:"))
+                ]
+                self.assertEqual(recorded, wanted)
+
+    def test_every_store_records_the_embedding_model_it_used(self):
+        """Catches: a store committed without the semantic manifest, or with one
+        that names no model revision - fastembed cannot be pinned, so the record
+        is the only thing `--check` can hold a moved model to. All of them share
+        one model: fastembed 0.9.1 serves `sentence-transformers/all-MiniLM-L6-v2`
+        from the hub repository `Qdrant/all-MiniLM-L6-v2-onnx`."""
+        stores = [
+            OUT,
+            NO_INDEX,
+            PARTIAL.store,
+            PARTIAL.no_index,
+            *(path for each in RELEASES for path in (frozen(each).store, frozen(each).no_index)),
+        ]
+        revisions = set()
+        for store in stores:
+            with self.subTest(store=store.relative_to(OUT.parent).as_posix()):
+                record = json.loads((store / "knowledge/semantic/manifest.json").read_text("utf-8"))
+                self.assertEqual(record["model"], "sentence-transformers/all-MiniLM-L6-v2")
+                files = record["model_files"]
+                self.assertEqual(files["repository"], "Qdrant/all-MiniLM-L6-v2-onnx")
+                self.assertRegex(files["revision"], r"^[0-9a-f]{40}$")
+                self.assertIn("model.onnx", files["sha256"])
+                revisions.add(json.dumps(files, sort_keys=True))
+        self.assertEqual(len(revisions), 1)
 
     def test_every_library_layer_is_present(self):
         """Catches: a library stage that exits 0 and writes nothing (fetch-tickets

@@ -38,8 +38,8 @@ Every expected record is derived by hand, before the store is read, from what
 - eta-portal holds only a `package.json`, with the same snapshot answers as
   alpha-lib, so its record is alpha-lib's with its own name and last commit.
 - `as_of` is each clone's `main` HEAD, its date as git's `%cI` writes it: the
-  generator's git, recorded as `# git:` in `library_store/requirements.txt`,
-  writes UTC as `Z` (2.55). The shas are `inputs.json`'s.
+  generator image's git (2.55.0, fixed by `library_store/Dockerfile`) writes UTC
+  as `Z`. The shas are `inputs.json`'s.
 """
 
 import unittest

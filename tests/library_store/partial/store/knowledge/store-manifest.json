@@ -1,5 +1,5 @@
 {
- "digest": "b56be90590605685",
+ "digest": "635acce4bd838aec",
  "extra_layers": {
   "answers": {
    "description": "Written journeys and findings.",
@@ -73,7 +73,7 @@
    "present": false
   },
   "index": {
-   "digest": "b7937c2ed8132e32",
+   "digest": "619e3f2cdf3d36de",
    "paths": [
     "knowledge/index/store.sqlite.gz",
     "knowledge/index/store.sqlite"

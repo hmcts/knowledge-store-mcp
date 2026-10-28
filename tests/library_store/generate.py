@@ -2,17 +2,30 @@
 wrote, at the release named in `VERSION`, with the graph graphify `GRAPHIFY`
 extracted; and `partial/`, the same release with some stages not run.
 
-    uv run python tests/library_store/generate.py           # rebuild main and partial
-    uv run python tests/library_store/generate.py --check   # rebuild everything elsewhere, compare
-    uv run python tests/library_store/generate.py --release v0.18.3 [--out DIR]
+    uv run python tests/library_store/generate.py --in-container           # rebuild main and partial
+    uv run python tests/library_store/generate.py --check --in-container   # rebuild all, compare
+    uv run python tests/library_store/generate.py --release v0.18.3 [--out DIR] --in-container
+
+`--in-container` builds the image `Dockerfile` describes, if this machine does
+not have it yet, and runs this script inside it with the repository mounted,
+passing every other argument through. The image fixes every tool whose
+behaviour reaches a stored byte: git (its `%cI` dates), gzip (the graph's
+recompression), and the interpreter with the SQLite and zlib built into it (the
+index, and every `.gz` layer the library writes). Only there do the stores
+reproduce byte for byte; run anywhere else, this script still works but warns
+that its result is that machine's. The host needs Docker (or Podman, named by
+`CONTAINER_ENGINE`) and network access, nothing else.
 
 The library is not a dependency of this repository: it is not on PyPI, its
 internal feed needs credentials CI does not hold, and installing it from git
 means building it, which CI's `uv sync --no-build` refuses on purpose. So its
-output is committed, and this script is how that output was made. It needs `uv`
-and `git` on PATH, and network access: the first run builds the frozen
-environment `requirements.txt` names, and every run, `--check` included,
-downloads the embedding model (about 90 MB) into the build's own cache.
+output is committed, and this script is how that output was made. It needs
+network access: every run builds the frozen environment `requirements.txt` names,
+and downloads the embedding model (about 90 MB) into the build's own cache.
+fastembed takes whatever revision of the model the hub serves, so `pipeline.py`
+records the revision and each model file's sha256 in
+`knowledge/semantic/manifest.json`, which is committed, and `--check` compares
+it with every other byte.
 
 This script writes the inputs - four git repositories and `RETIRED`'s one, their
 bare remotes, the store's `config/`, one extra layer, and what an agent authors in a real build
@@ -22,9 +35,10 @@ environment, which runs the library's real stages in their documented order. It
 runs it twice over the same inputs: once whole for `store/`, and once with
 `--no-index` for `no-index/`, so the second store records its index absent
 exactly as the library does. Everything copied into either is the library's or
-graphify's own bytes. Every commit carries a fixed identity and date, so the
+graphify's own bytes, but the one `model_files` key `pipeline.py` adds to the
+semantic manifest. Every commit carries a fixed identity and date, so the
 shas recorded in `inputs.json` and every byte of both stores are the same on
-every run; `--check` proves that by rebuilding and comparing.
+every run in the image; `--check` proves that by rebuilding and comparing.
 
 Hand-written: this script's clone contents, commit messages and `config/`, the
 tracker and GitHub answers (`tracker_responses.json`, `github_responses.json`),
@@ -32,9 +46,10 @@ and the agent-authored inputs above. Library output: everything under `store/`
 and `no-index/`; never edit those by hand. `inputs.json` is this script's record
 of each clone's HEAD.
 
-The pins: `VERSION` and `GRAPHIFY` here; every other package, and the
-partitioner, interpreter and git the store was made with, in `requirements.txt`.
-Move a pin, regenerate, run `--check`, then the tests.
+The pins: `VERSION` and `GRAPHIFY` here; every other package and the
+partitioner in `requirements.txt`, whose header also records the image the
+stores were made in (`# image:`, its base by digest, and `# dockerfile:`, the
+sha256 of `Dockerfile`). Move a pin, regenerate, run `--check`, then the tests.
 
 No library code is replaced at `VERSION`: `pipeline.py` stands in for the IO
 edges only, through the library's own seams, and gives `minimum-standard-settings`
@@ -69,6 +84,7 @@ CI runs the tests over the committed output and never runs this script.
 `test_library_coverage` keeps it honest.
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -82,8 +98,8 @@ from pathlib import Path
 # `library_version` against it, so the record cannot drift from the bytes.
 VERSION = "0.19.1"
 GRAPHIFY = "0.9.93"
-# The interpreter the frozen environment was compiled for.
-PYTHON = "3.14"
+# The interpreter the frozen environment was compiled for: the image's, exactly.
+PYTHON = "3.14.7"
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "store"
@@ -91,6 +107,16 @@ NO_INDEX = HERE / "no-index"
 INPUTS = HERE / "inputs.json"
 REQUIREMENTS = HERE / "requirements.txt"
 PIPELINE = HERE / "pipeline.py"
+
+# The image every store is generated and checked in. Inside it, the file it was
+# built from sits at `IN_IMAGE`: its presence says this script runs in the image,
+# and its sha256 says which. The repository is mounted at `MOUNT`.
+DOCKERFILE = HERE / "Dockerfile"
+IN_IMAGE = Path("/opt/library-store-generator/Dockerfile")
+REPOSITORY = HERE.parent.parent
+MOUNT = "/work"
+IMAGE_NAME = "knowledge-store-mcp-library-store"
+IN_CONTAINER = "--in-container"
 
 # Older releases whose stores are kept, frozen, beside the main one: v0.18.3
 # writes manifest format 1.3, before `json-schema` and `minimum_standard`;
@@ -499,8 +525,11 @@ PRODUCTS_JSON = '{"payments": ["alpha-lib", "beta-app"]}\n'
 # archives a store commits instead.
 NOT_COPIED = ("graphify-out/graph.json", "knowledge/index/store.sqlite")
 # Committed although no layer names it: the partitioner record travels with the
-# graph so a reader can tell whether its environment reproduces the clustering.
-ALSO_COPIED = ("graphify-out/clustering-inputs.json",)
+# graph so a reader can tell whether its environment reproduces the clustering;
+# and the semantic layer's reproducibility manifest, with the model revision and
+# file hashes `pipeline.py` adds to it, travels with the neighbour map.
+SEMANTIC_MANIFEST = "knowledge/semantic/manifest.json"
+ALSO_COPIED = ("graphify-out/clustering-inputs.json", SEMANTIC_MANIFEST)
 
 
 def _write(path: Path, text: str) -> None:
@@ -683,9 +712,26 @@ def _recorded(requirements: Path, field: str) -> str:
     return "not recorded"
 
 
+def _image(dockerfile: Path) -> dict[str, str]:
+    """The `# image:` and `# dockerfile:` lines `dockerfile` gives: its base
+    image, pinned by digest, and its own sha256."""
+    text = dockerfile.read_bytes()
+    lines = text.decode("utf-8").splitlines()
+    base = next((line.split()[1] for line in lines if line.startswith("FROM ")), "unknown")
+    return {"image": base, "dockerfile": f"sha256:{hashlib.sha256(text).hexdigest()}"}
+
+
+def _running_image() -> dict[str, str]:
+    """The image this script runs in, or a statement that it runs in none."""
+    if not IN_IMAGE.is_file():
+        return {"image": "none: not running in the image", "dockerfile": "none"}
+    return _image(IN_IMAGE)
+
+
 def _running_git() -> str:
-    """This machine's git, which made every commit and which the library's stages
-    ran: how it writes a date (`%cI` gives UTC as `Z` on 2.55) reaches the store."""
+    """The git this build ran, which made every commit and which the library's
+    stages ran: how it writes a date (`%cI` gives UTC as `Z` on 2.55) reaches the
+    store. The image fixes it; printed when a store does not reproduce."""
     done = subprocess.run(["git", "--version"], text=True, stdout=subprocess.PIPE)
     return done.stdout.strip().removeprefix("git version ") or "unknown"
 
@@ -831,28 +877,53 @@ def _differences(built: Path, committed: Path) -> list[str]:
     return sorted(differing)
 
 
-USAGE = "usage: generate.py [--check | --release <tag> [--out <dir>]]"
+USAGE = "usage: generate.py [--check | --release <tag> [--out <dir>]] [--in-container]"
+
+
+def _model(manifest: Path) -> str:
+    """The model and revision a semantic manifest records, for messages."""
+    if not manifest.is_file():
+        return "none"
+    record = json.loads(manifest.read_text("utf-8")).get("model_files") or {}
+    return f"{record.get('repository', 'unknown')}@{record.get('revision', 'unknown')}"
+
+
+def _image_lines(requirements: Path, always: bool) -> None:
+    """Print the image `requirements` records beside the running one: when they
+    differ, or with `always`."""
+    running = _running_image()
+    recorded = {field: _recorded(requirements, field) for field in running}
+    if not always and recorded == running:
+        return
+    for field in running:
+        print(f"recorded {field}: {recorded[field]}")
+        print(f"this build's {field}: {running[field]}")
 
 
 def _check(tmp: Path, release: Build) -> list[str]:
     """Build `release` in `tmp` and name each file that differs from what is
-    committed, `inputs.json` included; print the interpreter and git beside the
-    recorded ones when any does."""
+    committed, `inputs.json` included. Print the image `release` records beside
+    the running one when they differ, and whenever a file does, with the
+    interpreter and git this build ran; and when a semantic manifest differs,
+    the model revision it records beside the one this build downloaded."""
     built, shas, answer_commit = build(tmp, release)
     differing = []
     for target, root in built.items():
         fresh = tmp / "out" / target.name
         _export(root, fresh)
         where = target.relative_to(HERE).as_posix()
-        differing += [f"{where}/{rel}" for rel in _differences(fresh, target)]
+        differs = _differences(fresh, target)
+        if SEMANTIC_MANIFEST in differs:
+            print(f"recorded model ({where}): {_model(target / SEMANTIC_MANIFEST)}")
+            print(f"this build's model ({where}): {_model(fresh / SEMANTIC_MANIFEST)}")
+        differing += [f"{where}/{rel}" for rel in differs]
     if not INPUTS.is_file() or INPUTS.read_text("utf-8") != _inputs_json(shas, answer_commit):
         differing.append(f"{INPUTS.name} (from {release.library})")
     for rel in differing:
         print(f"differs: {rel}")
+    _image_lines(release.requirements, always=bool(differing))
     if differing:
-        print(f"recorded interpreter: {_recorded(release.requirements, 'interpreter')}")
         print(f"this build's interpreter: {_running_interpreter(tmp, release.requirements)}")
-        print(f"recorded git: {_recorded(release.requirements, 'git')}")
         print(f"this build's git: {_running_git()}")
     else:
         print(f"{release.name}store/ and {release.name}no-index/ reproduce from {release.library}")
@@ -897,7 +968,102 @@ def _release(argv: list[str]) -> Build | None:
     return frozen(version, Path(argv[3]).resolve() if len(argv) == 4 else None)
 
 
+def _engine() -> str:
+    return os.environ.get("CONTAINER_ENGINE") or "docker"
+
+
+def _image_tag() -> str:
+    """The image's local tag: named by `Dockerfile`'s own hash, so an edit to it
+    builds a new image rather than reusing a stale one."""
+    digest = _image(DOCKERFILE)["dockerfile"].removeprefix("sha256:")
+    return f"{IMAGE_NAME}:{digest[:12]}"
+
+
+def _ensure_image(tag: str) -> None:
+    """Build `tag` from `Dockerfile` unless this machine has it. The build context
+    holds `Dockerfile` alone, so nothing else in the repository reaches it."""
+    present = subprocess.run(
+        [_engine(), "image", "inspect", tag],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if present.returncode == 0:
+        return
+    with tempfile.TemporaryDirectory() as context:
+        shutil.copyfile(DOCKERFILE, Path(context) / "Dockerfile")
+        subprocess.run([_engine(), "build", "--tag", tag, context], check=True)
+
+
+def _in_container_argv(argv: list[str]) -> list[str] | None:
+    """`argv` as the script inside the container takes it: `--out` named by its
+    path under the mount. None when `--out` is outside the repository, which the
+    container cannot see."""
+    if "--out" not in argv:
+        return argv
+    at = argv.index("--out") + 1
+    if at >= len(argv):
+        return argv
+    out = Path(argv[at]).resolve()
+    if not out.is_relative_to(REPOSITORY):
+        return None
+    inside = f"{MOUNT}/{out.relative_to(REPOSITORY).as_posix()}"
+    return [*argv[:at], inside, *argv[at + 1 :]]
+
+
+def _run_in_container(argv: list[str]) -> int:
+    """This script, with `argv`, inside the image: the repository mounted, and
+    written to as the calling user."""
+    inside = _in_container_argv(argv)
+    if inside is None:
+        print("--out must be inside the repository to run --in-container", file=sys.stderr)
+        return 2
+    tag = _image_tag()
+    try:
+        _ensure_image(tag)
+    except (OSError, subprocess.CalledProcessError) as failed:
+        print(f"could not build the image {tag}: {failed}", file=sys.stderr)
+        return 1
+    script = (HERE / "generate.py").relative_to(REPOSITORY).as_posix()
+    command = [
+        _engine(),
+        "run",
+        "--rm",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+        "--volume",
+        f"{REPOSITORY}:{MOUNT}",
+        "--workdir",
+        MOUNT,
+        "--env",
+        "HOME=/tmp",
+        "--env",
+        "UV_CACHE_DIR=/tmp/uv-cache",
+        tag,
+        "uv",
+        "run",
+        "--no-project",
+        "--python",
+        PYTHON,
+        "python",
+        f"{MOUNT}/{script}",
+        *inside,
+    ]
+    print(f"running in {tag}", flush=True)
+    return subprocess.run(command).returncode
+
+
 def main(argv: list[str]) -> int:
+    if IN_CONTAINER in argv:
+        argv = [each for each in argv if each != IN_CONTAINER]
+        if not IN_IMAGE.is_file():
+            return _run_in_container(argv)
+    if not IN_IMAGE.is_file():
+        print(
+            "warning: not running in the generator image (tests/library_store/Dockerfile), "
+            "so this result is only this machine's: the stores reproduce only in the "
+            "image; pass --in-container",
+            file=sys.stderr,
+        )
     check = argv == ["--check"]
     release = MAIN if not argv else _release(argv)
     if not check and release is None:
