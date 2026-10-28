@@ -267,7 +267,8 @@ def store_info(
     cap_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
 ) -> dict[str, Any]:
     """The store's format, versions, layer states and flags, as recorded, and
-    `stale_days` from the session's clock; with each repository's provenance as the
+    `stale_days` from the session's clock; the layers whose files no longer match
+    the manifest's digests, are missing, or are directories left unchecked; with each repository's provenance as the
     `items`, paged under the cap by name, since that list grows with the estate."""
     store, notice = session.current()
     found = store.manifest
@@ -305,6 +306,10 @@ def store_info(
         },
         unread=list(found.unread),
         flags={f"{layer}.{flag}": _flag(found.layers.get(layer), flag) for layer, flag in FLAGS},
+        # Layer names only, checked when the store was opened (`digests.check`).
+        digest_mismatch=list(store.digests.mismatch),
+        digest_missing=list(store.digests.missing),
+        digest_unchecked=list(store.digests.unchecked),
     )
 
 

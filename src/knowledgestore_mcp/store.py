@@ -19,7 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import index, manifest
+from . import digests, index, manifest
+from .digests import DigestCheck
 from .index import Fallback, IndexHandle
 from .locate import MANIFEST, OutsideStore, contained
 from .manifest import Manifest, Refused
@@ -56,12 +57,17 @@ class Store:
         manifest: Manifest,
         index: IndexHandle | Fallback,
         archive_state: tuple[int, int] | None = None,
+        *,
+        digests: DigestCheck,
     ):
         self.root = root
         self.manifest = manifest
         self.index = index
         # The archive's (size, mtime_ns) when the index was opened.
         self.archive_state = archive_state
+        # Each layer file against its manifest digest, checked when this store was
+        # opened: a reload opens a new store, so it is checked again.
+        self.digests = digests
         self._layers: dict[str, Any] = {}
         self._memo: dict[str, Any] = {}
         self._closers: list[Callable[[], None]] = []
@@ -123,7 +129,7 @@ def open_store(
     # Stat before opening: a change in between is then seen as a change next call.
     state = index.archive_state(root)
     opened = index.open_index(root, loaded, cache_home, max_bytes=max_index_bytes)
-    return Store(root, loaded, opened, state)
+    return Store(root, loaded, opened, state, digests=digests.check(root, loaded))
 
 
 def _declared_paths(found: Manifest) -> list[tuple[str, Any]]:
