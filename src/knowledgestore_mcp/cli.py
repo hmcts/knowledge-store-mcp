@@ -87,8 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     def resolve() -> locate.Resolved:
         return locate.resolve(args, os.environ, home)
 
-    def registered(store_id: str) -> Path | None:
-        return locate.registered_clone(store_id, home)
+    registered = locate.Registered(home)
 
     try:
         found = resolve()

@@ -122,26 +122,61 @@ def _listed_clones(path: Path) -> tuple[list[Path], list[str]]:
     return clones, skipped
 
 
-def _by_store_id(store_id: str, listing: Path) -> tuple[Path | None, list[str]]:
+def _matching(store_id: str, clones: list[Path]) -> Path | None:
     matches: list[Path] = []
-    clones, skipped = _listed_clones(listing)
     for clone in clones:
         # The same clone listed twice, or by a symlinked path, is one entry.
         if _store_id_of(clone) == store_id and clone not in matches:
             matches.append(clone)
     if len(matches) > 1:
         raise AmbiguousStoreId(store_id, matches)
-    return (matches[0] if matches else None), skipped
+    return matches[0] if matches else None
 
 
-def registered_clone(store_id: str, home: Path) -> Path | None:
-    """The clone the locations file lists for `store_id`, `realpath`-resolved; None
-    when none is listed, or more than one is, since neither can be picked then."""
+def _by_store_id(store_id: str, listing: Path) -> tuple[Path | None, list[str]]:
+    clones, skipped = _listed_clones(listing)
+    return _matching(store_id, clones), skipped
+
+
+def _stat(path: Path) -> tuple[int, int] | None:
+    """(mtime_ns, size), or None when there is nothing to stat."""
     try:
-        found, _ = _by_store_id(store_id, locations_file(home))
-    except AmbiguousStoreId:
+        found = path.stat()
+    except OSError:
         return None
-    return found
+    return found.st_mtime_ns, found.st_size
+
+
+class Registered:
+    """The clone the locations file lists for a `store.id`, looked up again only
+    when something it depends on has changed.
+
+    The key is the locations file's (mtime_ns, size) and that of each listed
+    clone's manifest, as the last scan found them. A call whose key is unchanged
+    returns None without reading anything but those stats: the last scan found no
+    clone to switch to, and nothing it read has moved. A clone pulled after it was
+    listed changes its manifest's stat, so it is found without a locations write.
+    """
+
+    def __init__(self, home: Path):
+        self._listing = locations_file(home)
+        self._clones: list[Path] = []
+        self._seen: tuple | None = None
+
+    def _key(self, clones: list[Path]) -> tuple:
+        return _stat(self._listing), tuple(_stat(clone / MANIFEST) for clone in clones)
+
+    def __call__(self, store_id: str) -> Path | None:
+        """The listed clone carrying `store_id`, or None. Raises `AmbiguousStoreId`
+        when more than one does; that too is not looked at again until it changes."""
+        if self._seen is not None and self._key(self._clones) == self._seen:
+            return None
+        # Stat before reading: a change in between is then seen as a change next call.
+        listing = _stat(self._listing)
+        clones, _ = _listed_clones(self._listing)
+        self._clones = clones
+        self._seen = (listing, tuple(_stat(clone / MANIFEST) for clone in clones))
+        return _matching(store_id, clones)
 
 
 def resolve(args: argparse.Namespace, env: Mapping[str, str], home: Path) -> Resolved:

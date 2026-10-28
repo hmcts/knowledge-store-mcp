@@ -40,7 +40,7 @@ FIELDS = ("digest_mismatch", "digest_missing", "digest_unchecked")
 ONE_PASS = 16
 
 
-class DigestContract(Contract):
+class DigestCopy(Contract):
     """Each test copies `STORE` and serves the copy."""
 
     def setUp(self):
@@ -68,6 +68,10 @@ class DigestContract(Contract):
     def checked(self, session: store.Session) -> dict:
         info = tools_graph.store_info(session)
         return {field: info[field] for field in FIELDS}
+
+
+class DigestContract(DigestCopy):
+    """Run over the store with its index and the one without."""
 
     def test_the_library_store_matches_its_manifest(self):
         """Catches: a digest scheme that differs from the library's (the whole
@@ -165,12 +169,21 @@ class DigestContract(Contract):
             {"digest_mismatch": [], "digest_missing": ["topics"], "digest_unchecked": UNCHECKED},
         )
 
+
+DigestWithIndex, DigestWithoutIndex = harness.both_modes(DigestContract)
+
+
+class DigestIndexArchive(DigestCopy, harness.LibraryStoreCase):
+    """Over the store with its index only: the store without it has no archive,
+    so this has no `WithoutIndex` twin."""
+
+    STORE = harness.OUT
+    INDEXED = True
+
     def test_a_changed_index_archive_is_named(self):
         """Catches: the index archive's digest taken from the open handle in a
         form other than the library's (the whole sha256, or the decompressed
         index's), so a changed archive goes unseen or an unchanged one is named."""
-        if not self.INDEXED:
-            self.skipTest("the store without the index has no archive")
         archive = self.STORE / "knowledge/index/store.sqlite.gz"
         # The same index, compressed with another gzip timestamp: a valid archive
         # the server opens, whose bytes differ from the ones the library digested.
@@ -179,9 +192,6 @@ class DigestContract(Contract):
             self.checked(self.reopened()),
             {"digest_mismatch": ["index"], "digest_missing": [], "digest_unchecked": UNCHECKED},
         )
-
-
-DigestWithIndex, DigestWithoutIndex = harness.both_modes(DigestContract)
 
 
 class FileDigestTest(unittest.TestCase):

@@ -19,13 +19,14 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 from mcp import Client
 from mcp.client.stdio import StdioServerParameters
 from mcp_types import TextContent
 
 from fixture_store.build import MANIFEST, build
-from knowledgestore_mcp import locate, results
+from knowledgestore_mcp import locate, results, server, store
 from knowledgestore_mcp.server import KnowledgeStoreServer
 
 SCRIPT = Path(sys.executable).parent / "knowledge-store-mcp"
@@ -40,6 +41,7 @@ AS_OF = "2026-10-15T23:30:00-02:00"
 PLUGIN_DIGEST = "b1a6b1a6b1a6b1a6"
 CLONE_DIGEST = "c10ec10ec10ec10e"
 SWITCHED = "reloaded: now serving the registered clone"
+AMBIGUOUS = "reload deferred: more than one registered clone carries this store id"
 
 # Small enough that the store's repositories take more than one page.
 PAGED_CAP = 2048
@@ -92,7 +94,7 @@ class ServedCopyTestCase(unittest.TestCase):
             max_response_bytes=cap,
             clock=lambda: NOW,
             source=source,
-            registered=lambda store_id: locate.registered_clone(store_id, self.home),
+            registered=locate.Registered(self.home),
         )
         self.addCleanup(served.close)
         return served
@@ -286,6 +288,87 @@ class SwitchRuleTest(ServedCopyTestCase):
                 self.assertEqual(answer["served"]["digest"], PLUGIN_DIGEST)
                 self.assertEqual(answer["store_source"], source)
                 self.assertIsNone(answer["store"]["notice"])
+
+
+class SwitchSafetyTest(ServedCopyTestCase):
+    def test_two_clones_carrying_the_store_id_are_said_once_until_the_listing_changes(self):
+        """Catches: two registered clones with the plugin store's id leaving the
+        plugin copy served with no signal, so the asker never learns why their
+        clone is not answering; or the notice repeated on every answer."""
+        twin = stamp(build(self.tmp / "twin", index="none"), digest="7a1a7a1a7a1a7a1a")
+        served = self.served(self.plugin, "CLAUDE_PLUGIN_ROOT")
+        self.register(self.clone, twin)
+        said, again = self.call(served), self.call(served)
+        for answer, is_error, _ in (said, again):
+            self.assertFalse(is_error, answer)
+            self.assertEqual(answer["served"]["digest"], PLUGIN_DIGEST)
+            self.assertEqual(answer["store_source"], "CLAUDE_PLUGIN_ROOT")
+        self.assertEqual(said[0]["store"]["notice"], AMBIGUOUS)
+        self.assertIsNone(again[0]["store"]["notice"])
+
+        # Put right in the locations file: the next call switches.
+        self.register(self.clone)
+        answer, is_error, _ = self.call(served)
+        self.assertFalse(is_error, answer)
+        self.assertEqual(answer["served"]["digest"], CLONE_DIGEST)
+        self.assertEqual(answer["store"]["notice"], SWITCHED)
+
+    def test_the_listing_is_not_read_again_while_nothing_it_names_has_changed(self):
+        """Catches: the locations file, and every listed clone's manifest, read on
+        every call while the plugin root is served, though nothing has changed
+        since the last read found no clone to switch to; or a change to the file
+        not read."""
+        set_store_id(self.clone, "other-store")
+        self.register(self.clone)
+        served = self.served(self.plugin, "CLAUDE_PLUGIN_ROOT")
+        with mock.patch.object(locate, "_listed_clones", wraps=locate._listed_clones) as listed:
+            for _ in range(3):
+                answer, is_error, _ = self.call(served)
+                self.assertFalse(is_error, answer)
+            self.assertEqual(listed.call_count, 1)
+            # Another line in the file, so its size changes: read once more.
+            self.register(self.clone, self.tmp / "not-a-clone")
+            self.call(served)
+            self.call(served)
+            self.assertEqual(listed.call_count, 2)
+
+    def test_a_listed_clone_pulled_later_is_switched_to_without_a_locations_write(self):
+        """Catches: a clone listed before it held a manifest never looked at again,
+        because the locations file itself did not change after it was pulled."""
+        held = self.tmp / "manifest-aside.json"
+        (self.clone / MANIFEST).rename(held)
+        self.register(self.clone)
+        served = self.served(self.plugin, "CLAUDE_PLUGIN_ROOT")
+        answer, _, _ = self.call(served)
+        self.assertEqual(answer["served"]["digest"], PLUGIN_DIGEST)
+
+        held.rename(self.clone / MANIFEST)
+        answer, is_error, _ = self.call(served)
+        self.assertFalse(is_error, answer)
+        self.assertEqual(answer["served"]["digest"], CLONE_DIGEST)
+        self.assertEqual(answer["store"]["notice"], SWITCHED)
+
+    def test_a_clone_that_fails_to_open_leaves_the_plugin_copy_answering(self):
+        """Catches: a registered clone whose opening fails in a way other than a
+        refusal (here, any exception) turning every answer into an error, where
+        the plugin copy answered before the clone was registered."""
+        clone, real = self.clone, store.open_store
+
+        def opening(root, cache_home):
+            if root == clone:
+                raise RuntimeError("the clone could not be opened")
+            return real(root, cache_home)
+
+        with mock.patch.object(server, "open_store", opening):
+            served = self.served(self.plugin, "CLAUDE_PLUGIN_ROOT")
+            self.register(self.clone)
+            with self.assertLogs("knowledgestore_mcp.store", "WARNING"):
+                answer, is_error, text = self.call(served)
+        self.assertFalse(is_error, answer)
+        self.assertEqual(answer["served"]["digest"], PLUGIN_DIGEST)
+        self.assertEqual(answer["store_source"], "CLAUDE_PLUGIN_ROOT")
+        self.assertIsNone(answer["store"]["notice"])
+        self.assertNoHostPath(text)
 
 
 class CursorAcrossSwitchTest(ServedCopyTestCase):
