@@ -237,7 +237,8 @@ class GraphContract(harness.Contract):
         """Catches: a manifest field read from the wrong key or re-formatted, a
         library layer reported unread as if a newer minor had added it, the index
         schema not read from the library's `meta` table, provenance shas or dates
-        mis-read, or `stale_days` not counted from `sources_as_of`."""
+        mis-read, `stale_days` not counted from `sources_as_of`, or a layer the
+        library digested reported as changed or missing."""
         info = tools_graph.store_info(self.session)
         layers = {name: {"present": True} for name in LIBRARY_LAYERS}
         if self.INDEXED:
@@ -265,6 +266,9 @@ class GraphContract(harness.Contract):
                     "intent.reach": True,
                     "deployments.present": True,
                 },
+                "digest_mismatch": [],
+                "digest_missing": [],
+                "digest_unchecked": ["history", "minimum_standard", "relationships"],
                 "items": PROVENANCE,
                 "total": 4,
                 "page": 1,

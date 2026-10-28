@@ -365,6 +365,11 @@ class StoreInfoTest(ToolTestCase):
                     "intent.reach": True,
                     "deployments.present": None,
                 },
+                # The fixture writes the library's digests; its one present
+                # directory layer is relationships.
+                "digest_mismatch": [],
+                "digest_missing": [],
+                "digest_unchecked": ["relationships"],
             },
         )
 
@@ -394,6 +399,11 @@ class StoreInfoTest(ToolTestCase):
                     "intent.reach": True,
                     "deployments.present": None,
                 },
+                # The fixture writes the library's digests; its one present
+                # directory layer is relationships.
+                "digest_mismatch": [],
+                "digest_missing": [],
+                "digest_unchecked": ["relationships"],
             },
         )
 

@@ -210,6 +210,8 @@ The server looks again on every call, so a clone registered or pulled after the 
 
 **The server fails to start.** Only a wrong configuration stops it, and its reason is on stderr (exit status 2): a `--store-id` that is not a valid id, two clones in the locations file with the same `store.id`, a manifest in a format major version this server does not read, or a layer that points outside the store. Fix the configuration; waiting or pulling will not help.
 
+**`store_info` lists a layer under `digest_mismatch` or `digest_missing`.** The store's manifest describes files the clone no longer holds. A layer under `digest_mismatch` has a file whose content differs from the digest the manifest records: the file was rewritten or restored after the manifest was written. A layer under `digest_missing` has a file the manifest declares that is not on disk, or not readable as a file. Either way the server still answers, but the store's freshness and identity come from a manifest that is wrong about those layers. Whoever maintains the store re-runs `knowledgestore manifest`, or rebuilds the layer, and commits the result; then pull the clone. The server checks on the first `store_info` after it loads or reloads the store. `digest_unchecked` names the directory layers, which the server does not check: their digest depends on which files a git clone receives.
+
 ## For contributors
 
 ```bash
