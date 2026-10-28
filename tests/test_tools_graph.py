@@ -342,13 +342,21 @@ def layers(index_present: bool) -> dict:
     }
 
 
+# A store digest of our own, so `served.digest` is a literal here.
+DIGEST = "5e55105e55105e55"
+
+
+def set_digest(document: dict) -> None:
+    document["digest"] = DIGEST
+
+
 class StoreInfoTest(ToolTestCase):
     def test_store_info_with_the_index(self):
         """Catches: a missing or wrong provenance row, `stale_days` not read from the
         injected clock (4 at 2026-10-20T12:00Z, DESIGN.md 9.2), a layer's state
         dropped or coerced, or a null flag reported as false (DESIGN.md 9.3)."""
         self.assertEqual(
-            tools_graph.store_info(self.session()),
+            tools_graph.store_info(self.session(edit=set_digest)),
             {
                 **envelope(INDEXED, ["provenance"]),
                 "stale_days": 4,
@@ -370,6 +378,14 @@ class StoreInfoTest(ToolTestCase):
                 "digest_mismatch": [],
                 "digest_missing": [],
                 "digest_unchecked": ["relationships"],
+                # A session built here is told no source: none is claimed.
+                "store_source": None,
+                "served": {
+                    "store_id": "example-store",
+                    "digest": DIGEST,
+                    "sources_as_of": "2026-10-15T23:30:00-02:00",
+                    "plugin_root": False,
+                },
             },
         )
 
@@ -377,7 +393,7 @@ class StoreInfoTest(ToolTestCase):
         """Catches: a fallback store that looks indexed, or one that does not say why
         it fell back (spec, Start-up step 3: says so in store_info)."""
         self.assertEqual(
-            tools_graph.store_info(self.session("none")),
+            tools_graph.store_info(self.session("none", edit=set_digest)),
             {
                 **envelope(FALLBACK, ["provenance"]),
                 "stale_days": 4,
@@ -404,6 +420,14 @@ class StoreInfoTest(ToolTestCase):
                 "digest_mismatch": [],
                 "digest_missing": [],
                 "digest_unchecked": ["relationships"],
+                # A session built here is told no source: none is claimed.
+                "store_source": None,
+                "served": {
+                    "store_id": "example-store",
+                    "digest": DIGEST,
+                    "sources_as_of": "2026-10-15T23:30:00-02:00",
+                    "plugin_root": False,
+                },
             },
         )
 

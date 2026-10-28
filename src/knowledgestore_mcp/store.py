@@ -13,6 +13,7 @@ the archive's content is not the one the loaded index came from.
 import gzip
 import hashlib
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,8 +23,10 @@ from typing import Any
 from . import digests, index, manifest
 from .digests import DigestCheck
 from .index import INDEX_ARCHIVE, Fallback, IndexHandle
-from .locate import MANIFEST, OutsideStore, contained
+from .locate import LISTED, MANIFEST, PLUGIN_ROOT, AmbiguousStoreId, OutsideStore, contained
 from .manifest import Manifest, Refused
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,20 @@ RELOADED = Notice("reloaded: store digest changed")
 RELOADED_ARCHIVE = Notice("reloaded: index archive changed")
 DEFERRED = Notice("reload deferred: manifest unreadable")
 ESCAPING = Notice("reload refused: a layer path leaves the store; still serving the previous store")
+SWITCHED = Notice("reloaded: now serving the registered clone")
+AMBIGUOUS = Notice("reload deferred: more than one registered clone carries this store id")
+
+
+@dataclass(frozen=True)
+class Relocate:
+    """How a session served from the plugin root finds and opens the clone the
+    asker registered later. `registered` maps a `store.id` to the clone the
+    locations file lists for it, or None, and raises `AmbiguousStoreId` when more
+    than one carries it; it may answer None without looking again while nothing
+    it reads has changed (`locate.Registered`). `open` opens a store at a root."""
+
+    registered: Callable[[str], Path | None]
+    open: Callable[[Path], "Store"]
 
 
 class LayerEscapes(Refused):
@@ -180,16 +197,44 @@ class Session:
     """The current store, reloaded when the manifest digest on disk changes.
 
     A `Store` returned by `current()` stays valid until a later call reloads.
+
+    `source` is the rule that chose the store (`locate.SOURCES`). A store chosen
+    through the plugin root gives way to the clone the locations file lists for
+    the same `store.id`, once one is listed (`relocate`): the asker's setup
+    registers its clone after the server has started. No other source switches,
+    and a switch is never undone.
     """
 
-    def __init__(self, store_factory: Callable[[], Store], clock: Callable[[], datetime]):
+    def __init__(
+        self,
+        store_factory: Callable[[], Store],
+        clock: Callable[[], datetime],
+        *,
+        source: str | None = None,
+        relocate: Relocate | None = None,
+    ):
         self._factory = store_factory
         self._clock = clock
         self._store = store_factory()
         self._manifest_sha256 = _manifest_sha256(self._store.root)
         self._archive_state = self._store.archive_state
+        self.source = source
+        self._relocate = relocate
+
+    def digest(self) -> str | None:
+        """The served copy's identity, as the reload check compares it: the
+        manifest's `digest`, or the sha256 of its bytes when it carries none."""
+        return self._store.manifest.digest or self._manifest_sha256
 
     def current(self) -> tuple[Store, Notice | None]:
+        switch = self._switch()
+        if switch is SWITCHED:
+            return self._store, SWITCHED
+        store, notice = self._check()
+        # A reload's notice comes first; a deferred switch is said when nothing else is.
+        return store, notice or switch
+
+    def _check(self) -> tuple[Store, Notice | None]:
         root = self._store.root
         try:
             on_disk = manifest.load(root)
@@ -211,6 +256,42 @@ class Session:
             # Touched, not changed: remember the new stat so it is hashed once.
             self._archive_state = state
         return self._store, None
+
+    def _switch(self) -> Notice | None:
+        """Open the registered clone in place of the plugin root's copy: `SWITCHED`
+        when it did, `AMBIGUOUS` when more than one clone carries the store id, else
+        None. The locations file is read only while the plugin root is served. A
+        clone that cannot be opened, for any reason, is not switched to: the plugin
+        copy keeps answering, so a bad clone never makes serving worse."""
+        if self.source != PLUGIN_ROOT or self._relocate is None:
+            return None
+        relocate, store_id = self._relocate, self._store.manifest.store_id
+        try:
+            clone = relocate.registered(store_id)
+        except AmbiguousStoreId:
+            return AMBIGUOUS
+        if clone is None or clone == self._store.root:
+            return None
+        # Hash before loading, as `_reload` does.
+        manifest_sha256 = _manifest_sha256(clone)
+        try:
+            fresh = relocate.open(clone)
+        except Exception:
+            log.warning(
+                "the registered clone could not be opened; serving the plugin copy", exc_info=True
+            )
+            return None
+        if fresh.manifest.store_id != store_id:
+            # Rewritten since the locations file was read: not the same store.
+            fresh.close()
+            return None
+        previous, self._store = self._store, fresh
+        self._factory = lambda: relocate.open(clone)
+        self._manifest_sha256 = manifest_sha256
+        self._archive_state = fresh.archive_state
+        self.source = LISTED
+        previous.close()
+        return SWITCHED
 
     def _reload(self, notice: Notice) -> tuple[Store, Notice | None]:
         # Hash before loading: a change in between then shows as a change next call.

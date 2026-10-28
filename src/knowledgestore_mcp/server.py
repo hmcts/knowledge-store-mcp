@@ -55,10 +55,10 @@ from . import (
     tools_tickets,
 )
 from .graph import GraphRefused
-from .locate import AmbiguousStoreId, NotFound, OutsideStore
+from .locate import AmbiguousStoreId, NotFound, OutsideStore, Resolved
 from .manifest import NoManifest, Refused
 from .results import CursorRefused, LayerUnrecognised
-from .store import Session, open_store
+from .store import Relocate, Session, Store, open_store
 from .tools_graph import INT64, ArgumentRefused
 from .unavailable import NOT_YET, StoreUnavailable
 
@@ -179,7 +179,8 @@ TOOLS: tuple[ToolSpec, ...] = (
         tools_graph.store_info,
         "The store's format and library version, each repository's pinned commit, which "
         "layers are present, whether the query index answers, and `stale_days`: how old "
-        "the newest source the store reflects is. The repositories are the paged `items`.",
+        "the newest source the store reflects is; `served` and `store_source` say which copy "
+        "of the store answers and what chose it. The repositories are the paged `items`.",
         (CURSOR,),
     ),
     ToolSpec(
@@ -457,8 +458,12 @@ class KnowledgeStoreServer:
     before anything is served. Given `root=None` with a `resolve` and an `explain`,
     the server starts with no store: every call then looks for one again, answers
     from it once there is one, and until then refuses with `explain`'s
-    `StoreUnavailable`. `resolve` returns the root; `explain` turns a `NotFound` or
-    `NoManifest` into the refusal.
+    `StoreUnavailable`. `resolve` returns the root and the rule that chose it;
+    `explain` turns a `NotFound` or `NoManifest` into the refusal.
+
+    `source` is the rule that chose `root`, which `store_info` reports. With
+    `registered` (a `store.id` to the clone the locations file lists for it), a
+    store chosen through the plugin root gives way to that clone (`Session`).
     """
 
     def __init__(
@@ -468,14 +473,18 @@ class KnowledgeStoreServer:
         *,
         max_response_bytes: int = results.DEFAULT_MAX_RESPONSE_BYTES,
         clock: Callable[[], datetime] = _now,
-        resolve: Callable[[], Path] | None = None,
+        resolve: Callable[[], Resolved] | None = None,
         explain: Callable[[NotFound | NoManifest], StoreUnavailable] | None = None,
+        source: str | None = None,
+        registered: Callable[[str], Path | None] | None = None,
     ):
         self.cap = max_response_bytes
         self._cache_home = cache_home
         self._clock = clock
         self._resolve = resolve
         self._explain = explain
+        self._source = source
+        self._registered = registered
         self._session: Session | None = None
         # One worker: the thread that opens the store is the only one that reads it.
         self._thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix=NAME)
@@ -513,7 +522,11 @@ class KnowledgeStoreServer:
         return CallToolResult(content=[TextContent(text=text)], is_error=is_error)
 
     def _open(self, root: Path) -> Session:
-        return Session(lambda: open_store(root, self._cache_home), self._clock)
+        def opened(at: Path) -> Store:
+            return open_store(at, self._cache_home)
+
+        relocate = None if self._registered is None else Relocate(self._registered, opened)
+        return Session(lambda: opened(root), self._clock, source=self._source, relocate=relocate)
 
     def _session_now(self) -> Session:
         """The session, opened now if no call has found a store yet. Raises
@@ -523,7 +536,9 @@ class KnowledgeStoreServer:
         if self._resolve is None or self._explain is None:
             raise RuntimeError("a server without a store needs resolve and explain")
         try:
-            self._session = self._open(self._resolve())
+            resolved = self._resolve()
+            self._source = resolved.source
+            self._session = self._open(resolved.root)
         except NOT_YET as reason:
             raise self._explain(reason) from None
         return self._session

@@ -25,6 +25,7 @@ from typing import Any
 from . import graph, queries, results
 from .graph import TOKENIZER, Edge, GraphReader, as_node
 from .index import IndexHandle
+from .locate import PLUGIN_ROOT
 from .results import DEFAULT_MAX_RESPONSE_BYTES, Known
 from .store import Notice, Session, Store
 
@@ -312,6 +313,15 @@ def store_info(
         digest_mismatch=list(checked.mismatch),
         digest_missing=list(checked.missing),
         digest_unchecked=list(checked.unchecked),
+        # Which rule chose the store, and which copy it is: compared by a skill
+        # with the clone it checked. Never the path (SECURITY.md).
+        store_source=session.source,
+        served={
+            "store_id": found.store_id,
+            "digest": session.digest(),
+            "sources_as_of": found.sources_as_of,
+            "plugin_root": session.source == PLUGIN_ROOT,
+        },
     )
 
 
