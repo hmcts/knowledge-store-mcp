@@ -1,5 +1,13 @@
 # knowledge-store-mcp
 
+> **Moved.** The server is now part of [knowledge-store-builder](https://github.com/hmcts/knowledge-store-builder), as `knowledgestore serve`. Launch it with:
+>
+> ```bash
+> uvx --from "hmcts-knowledge-store-builder[server] @ git+https://github.com/hmcts/knowledge-store-builder@<release>" knowledgestore serve --store-id <id>
+> ```
+>
+> `<release>` is the latest tag on the library's [releases page](https://github.com/hmcts/knowledge-store-builder/releases/latest). How to use it: [docs/mcp-server.md](https://github.com/hmcts/knowledge-store-builder/blob/main/docs/mcp-server.md). Existing `knowledge-store-mcp@<tag>` pins keep working, but get no further changes. This repository is archived.
+
 A server that lets Claude, GitHub Copilot or another AI assistant answer questions about your team's code, with a source for every answer. It answers from a knowledge store: facts about a team's repositories, built by [knowledge-store-builder](https://github.com/hmcts/knowledge-store-builder) and kept in a Git repository. It is for HMCTS teams who have a store.
 
 - **Every answer cites its source:** a link to the file at a pinned commit, or a path in the store.
